@@ -1,0 +1,42 @@
+# 환경변수
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+.eggs/
+site-packages/
+
+# 가상환경
+venv/
+.venv/
+env/
+.env_folder/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 로그
+*.log
+logs/
+
+# DB 파일 (로컬용)
+*.db
+*.sqlite3

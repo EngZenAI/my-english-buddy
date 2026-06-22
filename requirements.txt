@@ -1,0 +1,15 @@
+gradio==5.33.0
+
+psycopg2-binary==2.9.10
+
+langchain==0.3.25
+langchain-core==0.3.60
+langchain-community==0.3.24
+langgraph==0.4.8
+
+langchain-ollama==0.3.3
+langchain-ibm==0.3.8
+
+requests==2.32.3
+
+python-dotenv==1.1.0
