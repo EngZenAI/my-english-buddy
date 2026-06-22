@@ -10,6 +10,6 @@ langgraph==0.4.8
 langchain-ollama==0.3.3
 langchain-ibm==0.3.8
 
-requests==2.32.3
+requests==2.33.0
 
 python-dotenv==1.1.0
