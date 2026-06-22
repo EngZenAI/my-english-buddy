@@ -3,7 +3,7 @@ gradio==5.33.0
 psycopg2-binary==2.9.10
 
 langchain==0.3.25
-langchain-core==0.3.60
+langchain-core==1.3.3
 langchain-community==0.3.24
 langgraph==0.4.8
 
