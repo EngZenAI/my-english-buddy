@@ -5,7 +5,7 @@ psycopg2-binary==2.9.10
 langchain==0.3.25
 langchain-core==0.3.60
 langchain-community==0.3.24
-langgraph==0.4.8
+langgraph==1.0.10rc1
 
 langchain-ollama==0.3.3
 langchain-ibm==0.3.8
