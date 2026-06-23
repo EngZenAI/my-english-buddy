@@ -12,13 +12,9 @@ from fastapi_users.password import PasswordHelper
 from pwdlib import PasswordHash
 from sqlalchemy import select
 
-from backend.auth.config import (
-    AUTH_COOKIE_MAX_AGE,
-    AUTH_COOKIE_NAME,
-    AUTH_COOKIE_SECURE,
-)
 from backend.auth.dependencies import AccessTokenDatabaseDep, UserDatabaseDep
 from backend.auth.models import AccessToken, User
+from backend.config import settings
 from backend.database import SessionFactory
 
 logger = logging.getLogger(__name__)
@@ -37,16 +33,19 @@ async def get_user_manager(user_db: UserDatabaseDep):
 
 
 cookie_transport = CookieTransport(
-    cookie_name=AUTH_COOKIE_NAME,
-    cookie_max_age=AUTH_COOKIE_MAX_AGE,
-    cookie_secure=AUTH_COOKIE_SECURE,
+    cookie_name=settings.auth_cookie_name,
+    cookie_max_age=settings.auth_cookie_max_age,
+    cookie_secure=settings.auth_cookie_secure,
 )
 
 
 def get_database_strategy(
     access_token_db: AccessTokenDatabaseDep,
 ) -> DatabaseStrategy:
-    return DatabaseStrategy(access_token_db, lifetime_seconds=AUTH_COOKIE_MAX_AGE)
+    return DatabaseStrategy(
+        access_token_db,
+        lifetime_seconds=settings.auth_cookie_max_age,
+    )
 
 
 auth_backend = AuthenticationBackend(
@@ -65,7 +64,8 @@ async def get_current_user_id_from_token(token: str) -> str | None:
             select(AccessToken.user_id).join(User, User.id == AccessToken.user_id).where(
                 AccessToken.token == token,
                 AccessToken.created_at
-                > datetime.now(timezone.utc) - timedelta(seconds=AUTH_COOKIE_MAX_AGE),
+                > datetime.now(timezone.utc)
+                - timedelta(seconds=settings.auth_cookie_max_age),
                 User.is_active.is_(True),
             )
         )
@@ -74,7 +74,7 @@ async def get_current_user_id_from_token(token: str) -> str | None:
 
 
 def get_current_user_id_from_cookie(request: Request) -> str | None:
-    token = request.cookies.get(AUTH_COOKIE_NAME)
+    token = request.cookies.get(settings.auth_cookie_name)
     if not token:
         return None
 
