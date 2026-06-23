@@ -32,6 +32,7 @@ LLM 기반 나만의 영어 학습 앱
 conda create -n english-app python=3.11
 conda activate english-app
 pip install -r backend/requirements.txt
+# pip install --upgrade -r backend/requirements.txt
 ```
 
 ### 2. 환경변수 설정
