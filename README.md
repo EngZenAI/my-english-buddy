@@ -31,7 +31,7 @@ LLM 기반 나만의 영어 학습 앱
 ```bash
 conda create -n english-app python=3.11
 conda activate english-app
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 ```
 
 ### 2. 환경변수 설정
@@ -57,7 +57,7 @@ ollama pull qwen2.5:7b
 
 ### 4. 실행
 ```bash
-python app.py
+python -m backend.app
 ```
 
 ---
@@ -65,10 +65,10 @@ python app.py
 ## 프로젝트 구조
 ```
 english-learning-app/
-├── app.py
 ├── .env.example
-├── requirements.txt
 └── backend/
+    ├── requirements.txt
+    ├── app.py
     ├── dictionary.py   # 사전 + 번역 API
     ├── database.py     # DB 연결
     └── llm.py          # LLM 퀴즈/롤플레잉
