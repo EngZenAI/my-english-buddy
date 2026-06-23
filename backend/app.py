@@ -10,8 +10,6 @@ from backend.database   import (init_db, save_word, get_all_words,
 from backend.llm        import (generate_quiz, grade_quiz,
                                  start_roleplay, continue_roleplay)
 
-# 앱 시작시 DB 테이블 자동 생성
-init_db()
 
 # ── 전역 변수 ──────────────────────────────────────────────
 quiz_state = {"words": [], "quiz_text": ""}
@@ -410,5 +408,5 @@ with gr.Blocks(title="나만의 영어 학습 앱", theme=gr.themes.Soft(), css=
         send_btn.click(chat, inputs=[chatbot, msg_in], outputs=[chatbot, msg_in])
         msg_in.submit(chat,  inputs=[chatbot, msg_in], outputs=[chatbot, msg_in])
 
-app.launch()
-
+if __name__ == "__main__":
+    app.launch()
