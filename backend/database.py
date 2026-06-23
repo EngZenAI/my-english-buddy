@@ -1,17 +1,50 @@
+import os
+import urllib.parse
+from importlib import import_module
+from collections.abc import AsyncGenerator
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Annotated
+
+from fastapi import Depends
+from dotenv import load_dotenv
 import psycopg2
 import psycopg2.extras
-from datetime import datetime, timedelta
-import os
-from dotenv import load_dotenv
-from pathlib import Path
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase
+
+from backend.config import settings
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", encoding='utf-8-sig')
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+
+class Base(DeclarativeBase):
+    pass
+
+
+engine = create_async_engine(settings.async_database_url, pool_pre_ping=True)
+SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
+
+
+async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
+    async with SessionFactory() as session:
+        yield session
+
+
+SessionDep = Annotated[AsyncSession, Depends(get_async_session)]
+
+
+async def create_db_schema():
+    import_module("backend.auth.models")
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
 def get_conn():
     # URL 방식 대신 직접 파라미터로 연결
-    import urllib.parse
     result = urllib.parse.urlparse(DATABASE_URL)
     return psycopg2.connect(
         host=result.hostname,
