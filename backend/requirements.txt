@@ -19,3 +19,6 @@ langchain-ibm==0.3.8
 requests==2.32.3
 
 python-dotenv==1.1.0
+
+gtts==2.5.4 --no-deps
+click==8.4.1
