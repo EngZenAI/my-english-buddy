@@ -79,6 +79,14 @@ def init_db():
             """)
         conn.commit()
 
+def is_word_saved(word: str) -> bool:
+    if not word or not word.strip():
+        return False
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM words WHERE word = %s", (word.strip().lower(),))
+            return cur.fetchone() is not None
+
 def save_word(word, korean, english_def, example, phonetic, context):
     with get_conn() as conn:
         with conn.cursor() as cur:
