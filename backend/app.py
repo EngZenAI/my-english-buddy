@@ -1,4 +1,5 @@
 import gradio as gr
+import html
 import io
 import base64
 import time
@@ -9,6 +10,7 @@ from backend.database   import (init_db, save_word, get_all_words,
                                  get_words_to_review, update_review)
 from backend.llm        import (generate_quiz, grade_quiz,
                                  start_roleplay, continue_roleplay)
+from backend.auth.users import get_current_user_from_cookie
 
 
 # ── 전역 변수 ──────────────────────────────────────────────
@@ -183,6 +185,111 @@ def preview_signup(email, password, password_confirm):
         return "비밀번호가 일치하지 않습니다."
     return "회원가입 확인 완료."
 
+async def load_auth_state(request: gr.Request):
+    user = await get_current_user_from_cookie(request)
+    if user:
+        email = html.escape(user["email"])
+        return (
+            f'<span class="auth-status-text">로그인됨: {email}</span>',
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(visible=True),
+        )
+    return (
+        "",
+        gr.update(visible=True),
+        gr.update(visible=True),
+        gr.update(visible=False),
+    )
+
+
+# ── Google 로그인 svg HTML ─────────────────────────────────────────────
+GOOGLE_LOGIN_HTML = """
+<a class="google-oauth-button" href="/auth/google/login">
+    <svg aria-hidden="true" viewBox="0 0 24 24" class="google-oauth-icon">
+        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+        <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.84z"/>
+        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06L5.84 9.9C6.71 7.31 9.14 5.38 12 5.38z"/>
+    </svg>
+    <span>Google로 로그인</span>
+</a>
+"""
+
+
+GOOGLE_SIGNUP_HTML = """
+<a class="google-oauth-button" href="/auth/google/login">
+    <svg aria-hidden="true" viewBox="0 0 24 24" class="google-oauth-icon">
+        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+        <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.84z"/>
+        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06L5.84 9.9C6.71 7.31 9.14 5.38 12 5.38z"/>
+    </svg>
+    <span>Google로 회원가입</span>
+</a>
+"""
+
+
+LOGOUT_HTML = """
+<a class="auth-logout-link" href="/auth/logout">로그아웃</a>
+"""
+
+# ── JavaScript 코드 (Gradio 내 동작 임시 코드) ────────────────────────────
+LOGIN_JS = """
+async (email, password) => {
+    if (!email.trim() || !password.trim()) {
+        return "이메일과 비밀번호를 입력해주세요.";
+    }
+
+    const form = new URLSearchParams();
+    form.append("username", email.trim());
+    form.append("password", password);
+
+    const response = await fetch("/auth/cookie/login", {
+        method: "POST",
+        headers: {"Content-Type": "application/x-www-form-urlencoded"},
+        body: form,
+        credentials: "same-origin"
+    });
+
+    if (response.ok) {
+        window.location.href = "/app";
+        return "로그인되었습니다.";
+    }
+
+    return "이메일 또는 비밀번호를 확인해주세요.";
+}
+"""
+
+
+SIGNUP_JS = """
+async (email, password, passwordConfirm) => {
+    if (!email.trim() || !password.trim() || !passwordConfirm.trim()) {
+        return "이메일과 비밀번호를 모두 입력해주세요.";
+    }
+    if (password !== passwordConfirm) {
+        return "비밀번호가 일치하지 않습니다.";
+    }
+
+    const response = await fetch("/auth/register", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({email: email.trim(), password}),
+        credentials: "same-origin"
+    });
+
+    if (response.ok) {
+        return "회원가입이 완료되었습니다. 로그인해주세요.";
+    }
+
+    const data = await response.json().catch(() => ({}));
+    if (data.detail === "REGISTER_USER_ALREADY_EXISTS") {
+        return "이미 가입된 이메일입니다.";
+    }
+    return "회원가입에 실패했습니다. 입력값을 확인해주세요.";
+}
+"""
+
 
 # ── CSS ───────────────────────────────────────────────────
 custom_css = """
@@ -201,12 +308,61 @@ custom_css = """
     justify-content: flex-end !important;
     align-items: center !important;
     gap: 8px !important;
+    flex-wrap: wrap !important;
+}
+#auth-nav-actions > .block {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+}
+#auth-nav-actions .html-container {
+    padding: 0 !important;
+    margin: 0 !important;
+}
+#auth-status {
+    width: auto !important;
+    min-width: 0 !important;
+    flex: 0 1 auto !important;
+}
+#auth-status .html-container,
+#auth-status .prose {
+    padding: 0 !important;
+    margin: 0 !important;
+}
+.auth-status-text {
+    color: #475569 !important;
+    font-size: 13px !important;
+    line-height: 36px !important;
+    white-space: nowrap !important;
+    display: inline-block !important;
+    max-width: 260px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    vertical-align: middle !important;
 }
 #auth-nav-actions button {
     min-width: 104px !important;
     height: 36px !important;
     white-space: nowrap !important;
     font-weight: 600 !important;
+}
+.auth-logout-link {
+    min-width: 104px !important;
+    height: 36px !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 8px !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-decoration: none !important;
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    box-sizing: border-box !important;
+}
+.auth-logout-link:hover {
+    background: #f8fafc !important;
 }
 #auth-login-page,
 #auth-signup-page {
@@ -240,8 +396,44 @@ custom_css = """
 .auth-form {
     width: 100% !important;
 }
+.auth-form > .block,
+.auth-form > .form,
+.auth-form .html-container {
+    width: 100% !important;
+    max-width: none !important;
+}
+.auth-form .html-container {
+    padding: 0 !important;
+    margin: 0 !important;
+}
 .auth-form button {
+    width: 100% !important;
     height: 40px !important;
+}
+.google-oauth-button {
+    width: 100% !important;
+    height: 40px !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 8px !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    cursor: pointer !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 10px !important;
+    text-decoration: none !important;
+    box-sizing: border-box !important;
+}
+.google-oauth-button:hover {
+    background: #f8fafc !important;
+}
+.google-oauth-icon {
+    width: 18px !important;
+    height: 18px !important;
+    flex: 0 0 auto !important;
 }
 .auth-message .prose p {
     margin: 0 !important;
@@ -344,8 +536,10 @@ with gr.Blocks(title="나만의 영어 학습 앱", theme=gr.themes.Soft(), css=
     with gr.Row(elem_id="auth-navbar"):
         with gr.Row(elem_id="auth-nav-actions"):
             home_nav_btn = gr.Button("홈", variant="secondary", scale=0)
+            auth_status = gr.HTML("", elem_id="auth-status")
             login_nav_btn = gr.Button("로그인", variant="secondary", scale=0)
             signup_nav_btn = gr.Button("회원가입", variant="primary", scale=0)
+            logout_link = gr.HTML(LOGOUT_HTML, visible=False)
 
     with gr.Column(visible=False, elem_id="auth-login-page") as login_page:
         with gr.Column(elem_classes="auth-card"):
@@ -356,6 +550,7 @@ with gr.Blocks(title="나만의 영어 학습 앱", theme=gr.themes.Soft(), css=
                 login_email = gr.Textbox(label="이메일", placeholder="you@example.com", lines=1)
                 login_password = gr.Textbox(label="비밀번호", type="password", lines=1)
                 login_submit_btn = gr.Button("로그인", variant="primary")
+                gr.HTML(GOOGLE_LOGIN_HTML)
                 login_status = gr.Markdown("", elem_classes="auth-message")
                 login_to_signup_btn = gr.Button("계정이 없으신가요? 회원가입", variant="secondary")
 
@@ -369,6 +564,7 @@ with gr.Blocks(title="나만의 영어 학습 앱", theme=gr.themes.Soft(), css=
                 signup_password = gr.Textbox(label="비밀번호", type="password", lines=1)
                 signup_password_confirm = gr.Textbox(label="비밀번호 확인", type="password", lines=1)
                 signup_submit_btn = gr.Button("계정 만들기", variant="primary")
+                gr.HTML(GOOGLE_SIGNUP_HTML)
                 signup_status = gr.Markdown("", elem_classes="auth-message")
                 signup_to_login_btn = gr.Button("이미 계정이 있으신가요? 로그인", variant="secondary")
 
@@ -559,15 +755,22 @@ with gr.Blocks(title="나만의 영어 학습 앱", theme=gr.themes.Soft(), css=
         show_progress="hidden",
     )
     login_submit_btn.click(
-        preview_login,
+        None,
         inputs=[login_email, login_password],
         outputs=login_status,
+        js=LOGIN_JS,
         show_progress="hidden",
     )
     signup_submit_btn.click(
-        preview_signup,
+        None,
         inputs=[signup_email, signup_password, signup_password_confirm],
         outputs=signup_status,
+        js=SIGNUP_JS,
+        show_progress="hidden",
+    )
+    app.load(
+        load_auth_state,
+        outputs=[auth_status, login_nav_btn, signup_nav_btn, logout_link],
         show_progress="hidden",
     )
 
