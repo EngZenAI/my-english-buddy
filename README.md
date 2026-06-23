@@ -60,6 +60,11 @@ ollama pull qwen2.5:7b
 python -m backend.app
 ```
 
+FastAPI 포함 실행:
+```bash
+uvicorn backend.main:app
+```
+
 ---
 
 ## 프로젝트 구조
