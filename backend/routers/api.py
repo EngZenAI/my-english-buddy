@@ -4,7 +4,7 @@
 (검색 / 단어장 / 퀴즈 / 롤플레잉 / 슬랭 / TTS)을 HTTP 엔드포인트로 노출한다.
 """
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from backend.auth.users import get_current_user_from_cookie
@@ -63,6 +63,13 @@ class SlangIn(BaseModel):
     korean: str = ""
 
 
+async def require_user_id(request: Request) -> str:
+    user = await get_current_user_from_cookie(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Login required")
+    return user["id"]
+
+
 # ── 현재 사용자 ─────────────────────────────────────────────
 @router.get("/me")
 async def me(request: Request):
@@ -104,24 +111,33 @@ def create_label(payload: LabelIn):
 
 # ── 단어장 ─────────────────────────────────────────────────
 @router.get("/words")
-def list_words(tag: str = ""):
-    return {"words": get_all_words(tag or None)}
+async def list_words(request: Request, tag: str = ""):
+    user_id = await require_user_id(request)
+    return {"words": get_all_words(user_id, tag or None)}
 
 
 @router.get("/words/saved")
-def word_saved(word: str = ""):
-    return {"saved": is_word_saved(word)}
+async def word_saved(request: Request, word: str = ""):
+    user_id = await require_user_id(request)
+    return {"saved": is_word_saved(user_id, word)}
 
 
 @router.post("/words")
-def create_word(payload: SaveWordIn):
+async def create_word(request: Request, payload: SaveWordIn):
+    user_id = await require_user_id(request)
     word = payload.word.strip()
     if not word:
         return {"ok": False, "message": "단어가 비어 있습니다."}
     final_def = payload.slang_def.strip() or payload.english_def
     tag = payload.tag.strip() or "미지정"  # 라벨 미선택 시 기본값
     message = save_word(
-        word.lower(), payload.korean, payload.korean_detail, final_def, payload.example, tag
+        user_id,
+        word.lower(),
+        payload.korean,
+        payload.korean_detail,
+        final_def,
+        payload.example,
+        tag,
     )
     return {"ok": True, "message": message, "saved": True}
 
@@ -137,8 +153,9 @@ def slang(payload: SlangIn):
 
 # ── 퀴즈 ───────────────────────────────────────────────────
 @router.post("/quiz/generate")
-def quiz_generate():
-    words = get_words_to_review()
+async def quiz_generate(request: Request):
+    user_id = await require_user_id(request)
+    words = get_words_to_review(user_id)
     quiz_text = generate_quiz(words)
     return {"words": words, "quiz_text": quiz_text}
 
@@ -151,8 +168,9 @@ def quiz_grade(payload: QuizGradeIn):
 
 # ── 롤플레잉 ───────────────────────────────────────────────
 @router.post("/roleplay/start")
-def roleplay_start():
-    words = get_words_to_review()
+async def roleplay_start(request: Request):
+    user_id = await require_user_id(request)
+    words = get_words_to_review(user_id)
     history = start_roleplay(words)  # [("", response)]
     return {"history": [list(pair) for pair in history]}
 
