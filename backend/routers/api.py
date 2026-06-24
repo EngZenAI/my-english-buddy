@@ -10,10 +10,13 @@ from pydantic import BaseModel
 from backend.auth.users import get_current_user_from_cookie
 from backend.database import (
     add_label,
+    count_words_by_tag,
+    delete_label,
     get_all_words,
     get_labels,
     get_words_to_review,
     is_word_saved,
+    rename_label,
     save_word,
 )
 from backend.llm import (
@@ -45,6 +48,11 @@ class SaveWordIn(BaseModel):
 
 class LabelIn(BaseModel):
     name: str
+
+
+class RenameLabelIn(BaseModel):
+    old_name: str
+    new_name: str
 
 
 class QuizGradeIn(BaseModel):
@@ -100,6 +108,23 @@ def list_labels():
 def create_label(payload: LabelIn):
     labels, ok = add_label(payload.name)
     return {"labels": labels, "ok": ok, "max": 20}
+
+
+@router.post("/labels/rename")
+def rename_label_ep(payload: RenameLabelIn):
+    labels, ok, message = rename_label(payload.old_name, payload.new_name)
+    return {"labels": labels, "ok": ok, "message": message}
+
+
+@router.get("/labels/word-count")
+def label_word_count(tag: str = ""):
+    return {"count": count_words_by_tag(tag) if tag else 0}
+
+
+@router.delete("/labels")
+def delete_label_ep(name: str = ""):
+    labels, ok, message, deleted = delete_label(name)
+    return {"labels": labels, "ok": ok, "message": message, "deleted": deleted}
 
 
 # ── 단어장 ─────────────────────────────────────────────────

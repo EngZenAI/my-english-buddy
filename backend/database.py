@@ -224,7 +224,10 @@ def update_review(word_id: int, correct: bool):
 def get_labels() -> list[str]:
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT name FROM labels ORDER BY id ASC")
+            cur.execute(
+                "SELECT name FROM labels "
+                "ORDER BY (name = '미지정') DESC, id ASC"
+            )
             return [r[0] for r in cur.fetchall()]
 
 
@@ -247,3 +250,53 @@ def add_label(name: str) -> tuple[list[str], bool]:
             )
         conn.commit()
     return get_labels(), True
+
+
+def count_words_by_tag(tag: str) -> int:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM words WHERE tag = %s", (tag,))
+            return cur.fetchone()[0]
+
+
+def rename_label(old: str, new: str) -> tuple[list[str], bool, str]:
+    """태그 이름 변경 + 해당 태그를 쓰는 단어들의 tag 값도 일괄 변경."""
+    old = (old or "").strip()
+    new = (new or "").strip()
+    if not old or not new:
+        return get_labels(), False, "태그 이름이 비어 있습니다."
+    if old == "미지정":
+        return get_labels(), False, "'미지정' 태그는 변경할 수 없습니다."
+    existing = get_labels()
+    if old not in existing:
+        return existing, False, "존재하지 않는 태그입니다."
+    if new == old:
+        return existing, True, "변경 사항이 없습니다."
+    if new in existing:
+        return existing, False, "이미 있는 태그 이름입니다."
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE labels SET name = %s WHERE name = %s", (new, old))
+            cur.execute("UPDATE words SET tag = %s WHERE tag = %s", (new, old))
+        conn.commit()
+    return get_labels(), True, "변경되었습니다."
+
+
+def delete_label(name: str) -> tuple[list[str], bool, str, int]:
+    """태그 삭제 + 해당 태그를 쓰는 단어들도 함께 삭제.
+    '미지정'은 삭제 불가, 최소 1개의 태그는 남겨야 함."""
+    name = (name or "").strip()
+    if name == "미지정":
+        return get_labels(), False, "'미지정' 태그는 삭제할 수 없습니다.", 0
+    existing = get_labels()
+    if name not in existing:
+        return existing, False, "존재하지 않는 태그입니다.", 0
+    if len(existing) <= 1:
+        return existing, False, "최소 1개의 태그는 있어야 합니다.", 0
+    deleted = count_words_by_tag(name)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM words WHERE tag = %s", (name,))
+            cur.execute("DELETE FROM labels WHERE name = %s", (name,))
+        conn.commit()
+    return get_labels(), True, "삭제되었습니다.", deleted

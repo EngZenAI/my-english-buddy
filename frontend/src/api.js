@@ -57,6 +57,15 @@ export const api = {
   listLabels: () => jsonFetch("/api/labels"),
   addLabel: (name) =>
     jsonFetch("/api/labels", { method: "POST", body: JSON.stringify({ name }) }),
+  renameLabel: (oldName, newName) =>
+    jsonFetch("/api/labels/rename", {
+      method: "POST",
+      body: JSON.stringify({ old_name: oldName, new_name: newName }),
+    }),
+  labelWordCount: (tag) =>
+    jsonFetch(`/api/labels/word-count?tag=${encodeURIComponent(tag)}`),
+  deleteLabel: (name) =>
+    jsonFetch(`/api/labels?name=${encodeURIComponent(name)}`, { method: "DELETE" }),
 
   // ── 단어장 ──
   listWords: (tag) =>

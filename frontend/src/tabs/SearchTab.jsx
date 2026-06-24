@@ -47,9 +47,9 @@ export default function SearchTab() {
   const [phonetic, setPhonetic] = useState("");
   const [saved, setSaved] = useState(false);
 
-  // 라벨(카테고리)
+  // 태그(카테고리)
   const [labels, setLabels] = useState([]);
-  const [label, setLabel] = useState("미지정"); // 현재 선택된 라벨 (기본: 미지정)
+  const [label, setLabel] = useState("미지정"); // 현재 선택된 태그 (기본: 미지정)
   const [newLabel, setNewLabel] = useState("");
   const [adding, setAdding] = useState(false);
   const [labelError, setLabelError] = useState("");
@@ -63,7 +63,7 @@ export default function SearchTab() {
   const reqSeq = useRef(0);
   const cache = useRef({});
 
-  // 라벨 목록 로드
+  // 태그 목록 로드
   useEffect(() => {
     api.listLabels().then(({ labels }) => setLabels(labels)).catch(() => {});
   }, []);
@@ -173,7 +173,7 @@ export default function SearchTab() {
       korean_detail: korDetail,
       english_def: engDef,
       example: customExample, // 내 맞춤 예문을 저장
-      tag: label,              // 선택한 라벨
+      tag: label,              // 선택한 태그
       slang_def: slangText,
     });
     if (res.saved) setSaved(true);
@@ -183,19 +183,19 @@ export default function SearchTab() {
     const name = newLabel.trim();
     if (!name) return;
     if (labels.length >= 20 && !labels.includes(name)) {
-      setLabelError("라벨은 최대 20개까지 추가할 수 있어요.");
+      setLabelError("태그는 최대 20개까지 추가할 수 있어요.");
       return;
     }
     try {
       const { labels: next, ok } = await api.addLabel(name);
       setLabels(next);
       if (ok) {
-        setLabel(name); // 추가한 라벨 바로 선택
+        setLabel(name); // 추가한 태그 바로 선택
         setNewLabel("");
         setAdding(false);
         setLabelError("");
       } else {
-        setLabelError("라벨은 최대 20개까지 추가할 수 있어요.");
+        setLabelError("태그는 최대 20개까지 추가할 수 있어요.");
       }
     } catch {
       /* 무시 */
@@ -305,12 +305,10 @@ export default function SearchTab() {
 
       <ReadOnlyField label="📖 영어 뜻" value={engDef} rows={4} />
       <ReadOnlyField label="🇰🇷 한국어 뜻" value={korDetail} rows={3} />
-      <ReadOnlyField label="✏️ 예문 (사전 제공)" value={example} rows={3} />
-
       {/* 편집 가능한 내 맞춤 예문 */}
       <div className="mb-3">
         <label className="block text-sm text-slate-500 mb-1">
-          ✏️ 예문 (편집 가능) — 내 상황에 맞게 고쳐서 저장돼요
+          ✏️ 예문 — 사전 예문이 기본으로 들어가요. 클릭해서 내 상황에 맞게 고칠 수 있어요
         </label>
         <textarea
           rows={3}
@@ -323,10 +321,10 @@ export default function SearchTab() {
         />
       </div>
 
-      {/* 라벨(카테고리) 선택 */}
+      {/* 태그(카테고리) 선택 */}
       <div className="mb-3">
         <label className="block text-sm text-slate-500 mb-1">
-          🏷️ 라벨 (카테고리) — 단어장에서 라벨별로 모아볼 수 있어요
+          🏷️ 태그 (카테고리) — 단어장에서 태그별로 모아볼 수 있어요
         </label>
         <div className="flex flex-wrap items-center gap-2">
           {labels.map((name) => {
@@ -359,7 +357,7 @@ export default function SearchTab() {
                     setNewLabel("");
                   }
                 }}
-                placeholder="새 라벨"
+                placeholder="새 태그"
                 className="w-24 rounded-full border border-slate-300 px-3 h-8 text-[13px]
                            focus:outline-none focus:ring-2 focus:ring-brand-200"
               />
@@ -379,10 +377,10 @@ export default function SearchTab() {
               className="rounded-full text-[13px] font-medium px-3 h-8 border border-dashed
                          border-slate-300 text-slate-500 hover:bg-slate-50"
             >
-              + 라벨 추가
+              + 태그 추가
             </button>
           ) : (
-            <span className="text-[11px] text-slate-400">라벨 최대 20개</span>
+            <span className="text-[11px] text-slate-400">태그 최대 20개</span>
           )}
         </div>
         {labelError && (
