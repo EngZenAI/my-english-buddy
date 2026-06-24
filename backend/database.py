@@ -145,16 +145,19 @@ def init_db():
 
                 CREATE TABLE IF NOT EXISTS labels (
                     id          SERIAL PRIMARY KEY,
-                    name        TEXT NOT NULL UNIQUE,
+                    user_id     UUID NOT NULL,
+                    name        TEXT NOT NULL,
                     created_at  TIMESTAMP DEFAULT NOW()
                 );
+
+                -- 라벨도 사용자별로 전환
+                ALTER TABLE labels ADD COLUMN IF NOT EXISTS user_id UUID;
+                ALTER TABLE labels DROP CONSTRAINT IF EXISTS labels_name_key;
+                DELETE FROM labels WHERE user_id IS NULL;  -- 기존 전역 라벨 정리(사용자별로 재시드)
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_labels_user_name
+                    ON labels (user_id, name);
             """)
-            # 기본 라벨 시드 (이미 있으면 무시)
-            for name in DEFAULT_LABELS:
-                cur.execute(
-                    "INSERT INTO labels (name) VALUES (%s) ON CONFLICT (name) DO NOTHING",
-                    (name,),
-                )
+        # 기본 라벨은 사용자가 처음 접근할 때(get_labels) 사용자별로 시드한다.
         conn.commit()
 
 def is_word_saved(user_id: str, word: str) -> bool:
@@ -250,54 +253,78 @@ def update_review(user_id: str, word_id: int, correct: bool):
         conn.commit()
 
 
-# ── 라벨(카테고리) ──────────────────────────────────────────
-def get_labels() -> list[str]:
+# ── 라벨(카테고리) — 사용자별 ──────────────────────────────
+def _seed_default_labels(user_id: str) -> None:
+    """해당 사용자에게 기본 태그를 1회 시드 (이미 있으면 무시)."""
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT name FROM labels "
-                "ORDER BY (name = '미지정') DESC, id ASC"
-            )
-            return [r[0] for r in cur.fetchall()]
+            for name in DEFAULT_LABELS:
+                cur.execute(
+                    "INSERT INTO labels (user_id, name) VALUES (%s, %s) "
+                    "ON CONFLICT (user_id, name) DO NOTHING",
+                    (user_id, name),
+                )
+        conn.commit()
 
 
-def add_label(name: str) -> tuple[list[str], bool]:
-    """라벨 추가. (전체 라벨 목록, 성공여부)를 반환.
-    이미 있는 이름이면 성공으로 간주, 최대 개수(MAX_LABELS) 초과 시 거부."""
+def get_labels(user_id: str) -> list[str]:
+    def _fetch():
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT name FROM labels WHERE user_id = %s "
+                    "ORDER BY (name = '미지정') DESC, id ASC",
+                    (user_id,),
+                )
+                return [r[0] for r in cur.fetchall()]
+
+    rows = _fetch()
+    if not rows:
+        _seed_default_labels(user_id)  # 첫 사용 → 기본 태그 시드
+        rows = _fetch()
+    return rows
+
+
+def add_label(user_id: str, name: str) -> tuple[list[str], bool]:
+    """라벨 추가. (전체 라벨 목록, 성공여부). 이미 있으면 성공, MAX_LABELS 초과 시 거부."""
     name = (name or "").strip()
-    existing = get_labels()
+    existing = get_labels(user_id)
     if not name:
         return existing, False
     if name in existing:
-        return existing, True  # 이미 있으면 idempotent 성공
+        return existing, True
     if len(existing) >= MAX_LABELS:
-        return existing, False  # 개수 초과 → 거부
+        return existing, False
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO labels (name) VALUES (%s) ON CONFLICT (name) DO NOTHING",
-                (name,),
+                "INSERT INTO labels (user_id, name) VALUES (%s, %s) "
+                "ON CONFLICT (user_id, name) DO NOTHING",
+                (user_id, name),
             )
         conn.commit()
-    return get_labels(), True
+    return get_labels(user_id), True
 
 
-def count_words_by_tag(tag: str) -> int:
+def count_words_by_tag(user_id: str, tag: str) -> int:
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM words WHERE tag = %s", (tag,))
+            cur.execute(
+                "SELECT COUNT(*) FROM words WHERE user_id = %s AND tag = %s",
+                (user_id, tag),
+            )
             return cur.fetchone()[0]
 
 
-def rename_label(old: str, new: str) -> tuple[list[str], bool, str]:
-    """태그 이름 변경 + 해당 태그를 쓰는 단어들의 tag 값도 일괄 변경."""
+def rename_label(user_id: str, old: str, new: str) -> tuple[list[str], bool, str]:
+    """태그 이름 변경 + 해당 사용자의 그 태그 단어들의 tag 값도 일괄 변경."""
     old = (old or "").strip()
     new = (new or "").strip()
     if not old or not new:
-        return get_labels(), False, "태그 이름이 비어 있습니다."
+        return get_labels(user_id), False, "태그 이름이 비어 있습니다."
     if old == "미지정":
-        return get_labels(), False, "'미지정' 태그는 변경할 수 없습니다."
-    existing = get_labels()
+        return get_labels(user_id), False, "'미지정' 태그는 변경할 수 없습니다."
+    existing = get_labels(user_id)
     if old not in existing:
         return existing, False, "존재하지 않는 태그입니다."
     if new == old:
@@ -306,27 +333,33 @@ def rename_label(old: str, new: str) -> tuple[list[str], bool, str]:
         return existing, False, "이미 있는 태그 이름입니다."
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("UPDATE labels SET name = %s WHERE name = %s", (new, old))
-            cur.execute("UPDATE words SET tag = %s WHERE tag = %s", (new, old))
+            cur.execute(
+                "UPDATE labels SET name = %s WHERE user_id = %s AND name = %s",
+                (new, user_id, old),
+            )
+            cur.execute(
+                "UPDATE words SET tag = %s WHERE user_id = %s AND tag = %s",
+                (new, user_id, old),
+            )
         conn.commit()
-    return get_labels(), True, "변경되었습니다."
+    return get_labels(user_id), True, "변경되었습니다."
 
 
-def delete_label(name: str) -> tuple[list[str], bool, str, int]:
-    """태그 삭제 + 해당 태그를 쓰는 단어들도 함께 삭제.
+def delete_label(user_id: str, name: str) -> tuple[list[str], bool, str, int]:
+    """태그 삭제 + 해당 사용자의 그 태그 단어들도 함께 삭제.
     '미지정'은 삭제 불가, 최소 1개의 태그는 남겨야 함."""
     name = (name or "").strip()
     if name == "미지정":
-        return get_labels(), False, "'미지정' 태그는 삭제할 수 없습니다.", 0
-    existing = get_labels()
+        return get_labels(user_id), False, "'미지정' 태그는 삭제할 수 없습니다.", 0
+    existing = get_labels(user_id)
     if name not in existing:
         return existing, False, "존재하지 않는 태그입니다.", 0
     if len(existing) <= 1:
         return existing, False, "최소 1개의 태그는 있어야 합니다.", 0
-    deleted = count_words_by_tag(name)
+    deleted = count_words_by_tag(user_id, name)
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM words WHERE tag = %s", (name,))
-            cur.execute("DELETE FROM labels WHERE name = %s", (name,))
+            cur.execute("DELETE FROM words WHERE user_id = %s AND tag = %s", (user_id, name))
+            cur.execute("DELETE FROM labels WHERE user_id = %s AND name = %s", (user_id, name))
         conn.commit()
-    return get_labels(), True, "삭제되었습니다.", deleted
+    return get_labels(user_id), True, "삭제되었습니다.", deleted
