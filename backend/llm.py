@@ -1,3 +1,4 @@
+import logging
 import os
 from dotenv import load_dotenv
 from pathlib import Path
@@ -8,6 +9,7 @@ from langgraph.graph import StateGraph, END
 from typing import TypedDict
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", encoding='utf-8-sig')
+logger = logging.getLogger(__name__)
 
 # ── 1. LLM 세팅 ───────────────────────────────────────────
 qwen_llm   = ChatOllama(model="qwen2.5:7b")
@@ -28,11 +30,11 @@ if all([watsonx_api_key, watsonx_project_id, watsonx_url]):
             project_id=watsonx_project_id,
             params={"max_tokens": 500}
         )
-        print("[OK] WatsonX 연결됨")
+        logger.info("[OK] WatsonX 연결됨")
     except Exception as e:
-        print(f"[WARN] WatsonX 연결 실패: {e}")
+        logger.warning("[WARN] WatsonX 연결 실패: %s", e)
 else:
-    print("[WARN] WatsonX 환경변수 없음 -> Ollama(qwen)로 대체")
+    logger.warning("[WARN] WatsonX 환경변수 없음 -> Ollama(qwen)로 대체")
 
 llms = {"qwen": qwen_llm, "exaone": exaone_llm}
 if watson_llm:
@@ -40,7 +42,7 @@ if watson_llm:
 
 ACTIVE_MODEL = "watsonx" if watson_llm else "qwen"
 llm = llms[ACTIVE_MODEL]
-print(f"[OK] 기본 모델: {ACTIVE_MODEL}")
+logger.info("[OK] 기본 모델: %s", ACTIVE_MODEL)
 
 # ── 2. 파서 ───────────────────────────────────────────────
 parser = StrOutputParser()
