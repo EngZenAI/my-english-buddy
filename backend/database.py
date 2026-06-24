@@ -114,7 +114,8 @@ def init_db():
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS words (
                     id            SERIAL PRIMARY KEY,
-                    word          TEXT NOT NULL UNIQUE,
+                    user_id       UUID NOT NULL,
+                    word          TEXT NOT NULL,
                     korean        TEXT,
                     korean_detail TEXT,
                     english_def   TEXT,
@@ -125,16 +126,22 @@ def init_db():
                 );
 
                 -- 기존 테이블에 korean_detail 컬럼이 없으면 추가
+                ALTER TABLE words ADD COLUMN IF NOT EXISTS user_id UUID;
                 ALTER TABLE words ADD COLUMN IF NOT EXISTS korean_detail TEXT;
                 ALTER TABLE words ALTER COLUMN next_review SET DEFAULT NOW() + INTERVAL '7 days';
                 ALTER TABLE words DROP COLUMN IF EXISTS phonetic;
+                ALTER TABLE words DROP CONSTRAINT IF EXISTS words_word_key;
+
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_words_user_word
+                    ON words (user_id, lower(word));
 
                 CREATE TABLE IF NOT EXISTS quiz_history (
                     id          SERIAL PRIMARY KEY,
-                    word_id     INTEGER REFERENCES words(id),
+                    word_id     INTEGER,
                     result      BOOLEAN,
                     reviewed_at TIMESTAMP DEFAULT NOW()
                 );
+                ALTER TABLE quiz_history DROP CONSTRAINT IF EXISTS quiz_history_word_id_fkey;
 
                 CREATE TABLE IF NOT EXISTS labels (
                     id          SERIAL PRIMARY KEY,
@@ -150,69 +157,92 @@ def init_db():
                 )
         conn.commit()
 
-def is_word_saved(word: str) -> bool:
+def is_word_saved(user_id: str, word: str) -> bool:
     if not word or not word.strip():
         return False
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id FROM words WHERE word = %s", (word.strip().lower(),))
+            cur.execute(
+                "SELECT id FROM words WHERE user_id = %s AND lower(word) = lower(%s)",
+                (user_id, word.strip()),
+            )
             return cur.fetchone() is not None
 
-def save_word(word, korean, korean_detail, english_def, example, tag):
+def save_word(user_id, word, korean, korean_detail, english_def, example, tag):
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id FROM words WHERE word = %s", (word,))
-            if cur.fetchone():
+            cur.execute(
+                "SELECT id FROM words WHERE user_id = %s AND lower(word) = lower(%s)",
+                (user_id, word),
+            )
+            row = cur.fetchone()
+            if row:
                 # 이미 있으면 예문/태그/한국어 상세를 최신값으로 갱신
                 cur.execute(
                     """UPDATE words
-                       SET example = %s, tag = %s, korean_detail = %s
-                       WHERE word = %s""",
-                    (example, tag, korean_detail, word),
+                       SET korean = %s,
+                           english_def = %s,
+                           example = %s,
+                           tag = %s,
+                           korean_detail = %s
+                       WHERE id = %s AND user_id = %s""",
+                    (korean, english_def, example, tag, korean_detail, row[0], user_id),
                 )
                 conn.commit()
                 return "✏️ 단어 정보를 업데이트했어요!"
             cur.execute("""
                 INSERT INTO words
-                    (word, korean, korean_detail, english_def, example, tag, next_review)
-                VALUES (%s, %s, %s, %s, %s, %s, NOW() + INTERVAL '7 days')
-            """, (word, korean, korean_detail, english_def, example, tag))
+                    (user_id, word, korean, korean_detail, english_def, example, tag, next_review)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW() + INTERVAL '7 days')
+            """, (user_id, word, korean, korean_detail, english_def, example, tag))
         conn.commit()
     return "✅ 단어장에 저장됐어요!"
 
-def get_all_words(tag: str | None = None):
-    cols = """word, korean, korean_detail, english_def, example,
+def get_all_words(user_id: str, tag: str | None = None):
+    cols = """id, word, korean, korean_detail, english_def, example,
               tag, created_at, next_review"""
     with get_conn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             if tag:
                 cur.execute(
-                    f"SELECT {cols} FROM words WHERE tag = %s ORDER BY created_at DESC",
-                    (tag,),
+                    f"""SELECT {cols}
+                        FROM words
+                        WHERE user_id = %s AND tag = %s
+                        ORDER BY created_at DESC""",
+                    (user_id, tag),
                 )
             else:
-                cur.execute(f"SELECT {cols} FROM words ORDER BY created_at DESC")
+                cur.execute(
+                    f"""SELECT {cols}
+                        FROM words
+                        WHERE user_id = %s
+                        ORDER BY created_at DESC""",
+                    (user_id,),
+                )
             return [dict(row) for row in cur.fetchall()]
 
-def get_words_to_review():
+def get_words_to_review(user_id: str):
     with get_conn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             cur.execute("""
                 SELECT * FROM words
-                WHERE next_review <= NOW()
+                WHERE user_id = %s AND next_review <= NOW()
                 ORDER BY next_review ASC
-            """)
+            """, (user_id,))
             return [dict(row) for row in cur.fetchall()]
 
-def update_review(word_id: int, correct: bool):
+def update_review(user_id: str, word_id: int, correct: bool):
     days = 7 if correct else 1
     next_review = datetime.now() + timedelta(days=days)
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE words SET next_review = %s WHERE id = %s",
-                (next_review, word_id)
+                "UPDATE words SET next_review = %s WHERE id = %s AND user_id = %s",
+                (next_review, word_id, user_id)
             )
+            if cur.rowcount == 0:
+                conn.commit()
+                return
             cur.execute(
                 "INSERT INTO quiz_history (word_id, result) VALUES (%s, %s)",
                 (word_id, correct)

@@ -16,8 +16,8 @@ FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    init_db()
     await create_db_schema()
+    init_db()
     yield
 
 
