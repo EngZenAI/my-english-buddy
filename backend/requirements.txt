@@ -1,6 +1,6 @@
 gradio==5.33.0
 fastapi==0.115.12
-fastapi-users[sqlalchemy]==14.0.1
+fastapi-users[sqlalchemy,oauth]==14.0.1
 uvicorn[standard]==0.34.3
 asyncpg==0.30.0
 pydantic-settings==2.14.2
@@ -20,5 +20,5 @@ requests==2.32.3
 
 python-dotenv==1.1.0
 
-gtts==2.5.4 --no-deps
-click==8.4.1
+gtts==2.5.4
+click==8.1.8

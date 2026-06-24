@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     auth_cookie_name: str = "engzen_"
     auth_cookie_max_age: int = 60 * 60 * 24 * 7
     auth_cookie_secure: bool = False
+    auth_secret: str  # .env 에서 값 필수 설정
+    oauth_success_redirect_url: str = "/app"
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
 
     @property
     def async_database_url(self) -> str:
