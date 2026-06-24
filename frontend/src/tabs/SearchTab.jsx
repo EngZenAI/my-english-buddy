@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import AudioButton from "../components/AudioButton";
+import MemberNotice from "../components/MemberNotice";
 
 const LabelChip = ({ children }) => (
   <span className="inline-flex items-center justify-center bg-brand-50 text-brand-600
@@ -37,15 +38,16 @@ const ReadOnlyField = ({ label, value, rows = 3 }) => (
 
 const DEBOUNCE_MS = 150;
 
-export default function SearchTab() {
+export default function SearchTab({ user, onRequireLogin }) {
   const [eng, setEng] = useState("");
   const [kor, setKor] = useState("");
   const [engDef, setEngDef] = useState("");
   const [korDetail, setKorDetail] = useState("");
-  const [example, setExample] = useState("");          // 사전 제공 예문 (읽기 전용)
+  const [example, setExample] = useState("");
   const [customExample, setCustomExample] = useState(""); // 내 맞춤 예문 (편집/저장 대상)
   const [phonetic, setPhonetic] = useState("");
   const [saved, setSaved] = useState(false);
+  const [saveGate, setSaveGate] = useState(false); // 비회원 저장 시도 안내
 
   // 태그(카테고리)
   const [labels, setLabels] = useState([]);
@@ -63,23 +65,24 @@ export default function SearchTab() {
   const reqSeq = useRef(0);
   const cache = useRef({});
 
-  // 태그 목록 로드
+  // 태그 목록 로드 (회원만)
   useEffect(() => {
+    if (!user) return;
     api.listLabels().then(({ labels }) => setLabels(labels)).catch(() => {});
-  }, []);
+  }, [user]);
 
-  // 결과 영역(뜻/예문/발음)만 갱신. 맞춤 예문은 사전 예문으로 초기화.
   const applyCommon = (r) => {
     setEngDef(r.english_def);
     setKorDetail(r.korean_detail);
     setExample(r.example);
-    setCustomExample(r.example); // 맞춤 예문 시작값 = 사전 예문 (이후 사용자가 편집)
+    setCustomExample(r.example); // 맞춤 예문 시작값 = 사전 예문
     setPhonetic(r.phonetic || "");
     setSlangVisible(!!r.english_word);
     setSlangText("");
   };
 
   const refreshSaved = async (englishWord, myseq) => {
+    if (!user) return; // 비회원: 저장 배지 비활성
     if (!englishWord) {
       if (myseq === reqSeq.current) setSaved(false);
       return;
@@ -166,14 +169,18 @@ export default function SearchTab() {
   }, [kor]);
 
   const handleSave = async () => {
+    if (!user) {
+      setSaveGate(true); // 비회원 → 회원 기능 안내
+      return;
+    }
     if (!eng.trim()) return;
     const res = await api.saveWord({
       word: eng,
       korean: kor,
       korean_detail: korDetail,
       english_def: engDef,
-      example: customExample, // 내 맞춤 예문을 저장
-      tag: label,              // 선택한 태그
+      example: customExample,
+      tag: label,
       slang_def: slangText,
     });
     if (res.saved) setSaved(true);
@@ -190,7 +197,7 @@ export default function SearchTab() {
       const { labels: next, ok } = await api.addLabel(name);
       setLabels(next);
       if (ok) {
-        setLabel(name); // 추가한 태그 바로 선택
+        setLabel(name);
         setNewLabel("");
         setAdding(false);
         setLabelError("");
@@ -301,10 +308,17 @@ export default function SearchTab() {
         )}
       </div>
 
+      {saveGate && !user && (
+        <div className="mt-3">
+          <MemberNotice feature="단어장 저장" onRequireLogin={onRequireLogin} />
+        </div>
+      )}
+
       <hr className="my-4 border-slate-200" />
 
       <ReadOnlyField label="📖 영어 뜻" value={engDef} rows={4} />
       <ReadOnlyField label="🇰🇷 한국어 뜻" value={korDetail} rows={3} />
+
       {/* 편집 가능한 내 맞춤 예문 */}
       <div className="mb-3">
         <label className="block text-sm text-slate-500 mb-1">
@@ -321,72 +335,74 @@ export default function SearchTab() {
         />
       </div>
 
-      {/* 태그(카테고리) 선택 */}
-      <div className="mb-3">
-        <label className="block text-sm text-slate-500 mb-1">
-          🏷️ 태그 (카테고리) — 단어장에서 태그별로 모아볼 수 있어요
-        </label>
-        <div className="flex flex-wrap items-center gap-2">
-          {labels.map((name) => {
-            const active = label === name;
-            return (
-              <button
-                key={name}
-                type="button"
-                onClick={() => setLabel(active ? "" : name)}
-                className={`rounded-full text-[13px] font-medium px-3 h-8 border transition-colors
-                  ${active
-                    ? "bg-brand-600 text-white border-brand-600"
-                    : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"}`}
-              >
-                {name}
-              </button>
-            );
-          })}
+      {/* 태그(카테고리) 선택 — 회원만 (저장 기능과 연결됨) */}
+      {user && (
+        <div className="mb-3">
+          <label className="block text-sm text-slate-500 mb-1">
+            🏷️ 태그 (카테고리) — 단어장에서 태그별로 모아볼 수 있어요
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            {labels.map((name) => {
+              const active = label === name;
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  onClick={() => setLabel(active ? "" : name)}
+                  className={`rounded-full text-[13px] font-medium px-3 h-8 border transition-colors
+                    ${active
+                      ? "bg-brand-600 text-white border-brand-600"
+                      : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"}`}
+                >
+                  {name}
+                </button>
+              );
+            })}
 
-          {adding ? (
-            <span className="inline-flex items-center gap-1">
-              <input
-                autoFocus
-                value={newLabel}
-                onChange={(e) => setNewLabel(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleAddLabel();
-                  if (e.key === "Escape") {
-                    setAdding(false);
-                    setNewLabel("");
-                  }
-                }}
-                placeholder="새 태그"
-                className="w-24 rounded-full border border-slate-300 px-3 h-8 text-[13px]
-                           focus:outline-none focus:ring-2 focus:ring-brand-200"
-              />
+            {adding ? (
+              <span className="inline-flex items-center gap-1">
+                <input
+                  autoFocus
+                  value={newLabel}
+                  onChange={(e) => setNewLabel(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleAddLabel();
+                    if (e.key === "Escape") {
+                      setAdding(false);
+                      setNewLabel("");
+                    }
+                  }}
+                  placeholder="새 태그"
+                  className="w-24 rounded-full border border-slate-300 px-3 h-8 text-[13px]
+                             focus:outline-none focus:ring-2 focus:ring-brand-200"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddLabel}
+                  className="rounded-full text-[13px] font-medium px-3 h-8 bg-brand-50
+                             text-brand-600 border border-brand-200 hover:bg-brand-100"
+                >
+                  추가
+                </button>
+              </span>
+            ) : labels.length < 20 ? (
               <button
                 type="button"
-                onClick={handleAddLabel}
-                className="rounded-full text-[13px] font-medium px-3 h-8 bg-brand-50
-                           text-brand-600 border border-brand-200 hover:bg-brand-100"
+                onClick={() => setAdding(true)}
+                className="rounded-full text-[13px] font-medium px-3 h-8 border border-dashed
+                           border-slate-300 text-slate-500 hover:bg-slate-50"
               >
-                추가
+                + 태그 추가
               </button>
-            </span>
-          ) : labels.length < 20 ? (
-            <button
-              type="button"
-              onClick={() => setAdding(true)}
-              className="rounded-full text-[13px] font-medium px-3 h-8 border border-dashed
-                         border-slate-300 text-slate-500 hover:bg-slate-50"
-            >
-              + 태그 추가
-            </button>
-          ) : (
-            <span className="text-[11px] text-slate-400">태그 최대 20개</span>
+            ) : (
+              <span className="text-[11px] text-slate-400">태그 최대 20개</span>
+            )}
+          </div>
+          {labelError && (
+            <p className="text-[11px] text-rose-500 mt-1">{labelError}</p>
           )}
         </div>
-        {labelError && (
-          <p className="text-[11px] text-rose-500 mt-1">{labelError}</p>
-        )}
-      </div>
+      )}
     </div>
   );
 }

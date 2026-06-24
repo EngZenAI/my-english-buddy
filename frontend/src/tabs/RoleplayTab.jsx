@@ -1,8 +1,9 @@
 import { useRef, useState } from "react";
 import { api } from "../api";
+import MemberNotice from "../components/MemberNotice";
 
 // history: [[user, bot], ...] — 백엔드 형식 그대로 유지
-export default function RoleplayTab() {
+export default function RoleplayTab({ user, onRequireLogin }) {
   const [history, setHistory] = useState([]);
   const [msg, setMsg] = useState("");
   const [starting, setStarting] = useState(false);
@@ -48,11 +49,13 @@ export default function RoleplayTab() {
         복습할 단어들이 대화 속에 자연스럽게 등장해요 🎭
       </p>
 
+      {!user && <MemberNotice feature="롤플레잉" onRequireLogin={onRequireLogin} />}
+
       <button
         onClick={start}
-        disabled={starting}
+        disabled={starting || !user}
         className="rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-60
-                   px-4 py-2 text-sm font-semibold mb-3"
+                   disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold mb-3"
       >
         {starting ? "시작 중…" : "🎭 롤플레잉 시작"}
       </button>
@@ -63,16 +66,18 @@ export default function RoleplayTab() {
       >
         {history.length === 0 && (
           <p className="text-slate-400 text-sm text-center mt-32">
-            "롤플레잉 시작"을 눌러 대화를 시작하세요.
+            {user
+              ? '"롤플레잉 시작"을 눌러 대화를 시작하세요.'
+              : "로그인하면 AI 튜터와 영어로 대화할 수 있어요."}
           </p>
         )}
-        {history.map(([user, bot], i) => (
+        {history.map(([userMsg, bot], i) => (
           <div key={i} className="space-y-2">
-            {user && (
+            {userMsg && (
               <div className="flex justify-end">
                 <div className="bg-brand-600 text-white rounded-2xl rounded-br-sm px-3 py-2
                                 text-sm max-w-[80%] whitespace-pre-wrap">
-                  {user}
+                  {userMsg}
                 </div>
               </div>
             )}
@@ -93,15 +98,16 @@ export default function RoleplayTab() {
           value={msg}
           onChange={(e) => setMsg(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
+          disabled={!user}
           placeholder="영어로 대답해봐요! (엔터로 전송)"
           className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm
-                     focus:outline-none focus:ring-2 focus:ring-brand-200"
+                     disabled:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-200"
         />
         <button
           onClick={send}
-          disabled={sending}
+          disabled={sending || !user}
           className="rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-60
-                     px-4 py-2 text-sm font-semibold whitespace-nowrap"
+                     disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold whitespace-nowrap"
         >
           전송 ➤
         </button>

@@ -103,7 +103,7 @@ export default function App() {
             ))}
           </div>
 
-          <ActiveTab />
+          <ActiveTab user={user} onRequireLogin={() => setView("login")} />
         </>
       )}
     </div>

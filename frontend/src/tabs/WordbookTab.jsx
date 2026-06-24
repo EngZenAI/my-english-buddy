@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import MemberNotice from "../components/MemberNotice";
 
 const COLS = 8;
 
-export default function WordbookTab() {
+export default function WordbookTab({ user, onRequireLogin }) {
   const [words, setWords] = useState([]);
   const [labels, setLabels] = useState([]);
   const [filter, setFilter] = useState(""); // "" = 전체
@@ -27,9 +28,10 @@ export default function WordbookTab() {
     api.listLabels().then(({ labels }) => setLabels(labels)).catch(() => {});
 
   useEffect(() => {
+    if (!user) return; // 비회원: 데이터 조회 안 함 (미리보기만)
     reloadLabels();
     load("");
-  }, []);
+  }, [user]);
 
   const selectFilter = (label) => {
     setFilter(label);
@@ -52,7 +54,6 @@ export default function WordbookTab() {
   };
 
   const commitEdits = async () => {
-    // 변경된 이름만 일괄 적용
     for (const orig of Object.keys(editValues)) {
       const val = (editValues[orig] || "").trim();
       if (!val || val === orig) continue;
@@ -99,6 +100,8 @@ export default function WordbookTab() {
 
   return (
     <div>
+      {!user && <MemberNotice feature="단어장" onRequireLogin={onRequireLogin} />}
+
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-base font-semibold">
           저장된 단어 목록{" "}
@@ -106,8 +109,9 @@ export default function WordbookTab() {
         </h3>
         <button
           onClick={() => load()}
+          disabled={!user}
           className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50
-                     px-3 py-1.5 text-sm font-medium"
+                     px-3 py-1.5 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
         >
           🔄 새로고침
         </button>
@@ -129,7 +133,6 @@ export default function WordbookTab() {
 
         {labels.map((name) => {
           if (!editMode) {
-            // 보기 모드: 필터 칩
             return (
               <button
                 key={name}
@@ -143,7 +146,6 @@ export default function WordbookTab() {
               </button>
             );
           }
-          // 편집 모드
           if (name === "미지정") {
             return (
               <span
@@ -186,33 +188,34 @@ export default function WordbookTab() {
           );
         })}
 
-        {/* 편집/확인 버튼 */}
-        {!editMode ? (
-          <button
-            onClick={enterEdit}
-            className="rounded-full text-[13px] font-medium px-3 h-8 border border-dashed
-                       border-slate-300 text-slate-500 hover:bg-slate-50"
-          >
-            ✏️ 태그 편집
-          </button>
-        ) : (
-          <>
+        {/* 편집/확인 버튼 (회원만) */}
+        {user &&
+          (!editMode ? (
             <button
-              onClick={commitEdits}
-              className="rounded-full text-[13px] font-semibold px-4 h-8 bg-brand-600
-                         text-white hover:bg-brand-700"
-            >
-              확인
-            </button>
-            <button
-              onClick={cancelEdit}
-              className="rounded-full text-[13px] font-medium px-3 h-8 border
+              onClick={enterEdit}
+              className="rounded-full text-[13px] font-medium px-3 h-8 border border-dashed
                          border-slate-300 text-slate-500 hover:bg-slate-50"
             >
-              취소
+              ✏️ 태그 편집
             </button>
-          </>
-        )}
+          ) : (
+            <>
+              <button
+                onClick={commitEdits}
+                className="rounded-full text-[13px] font-semibold px-4 h-8 bg-brand-600
+                           text-white hover:bg-brand-700"
+              >
+                확인
+              </button>
+              <button
+                onClick={cancelEdit}
+                className="rounded-full text-[13px] font-medium px-3 h-8 border
+                           border-slate-300 text-slate-500 hover:bg-slate-50"
+              >
+                취소
+              </button>
+            </>
+          ))}
       </div>
 
       {editMode && (
@@ -246,7 +249,9 @@ export default function WordbookTab() {
             {!loading && words.length === 0 && (
               <tr>
                 <td colSpan={COLS} className="px-3 py-6 text-center text-slate-400">
-                  {filter
+                  {!user
+                    ? "로그인하면 저장한 단어를 태그별로 모아볼 수 있어요."
+                    : filter
                     ? `'${filter}' 태그의 단어가 없어요.`
                     : "저장된 단어가 없어요. 단어 검색 탭에서 저장해보세요!"}
                 </td>

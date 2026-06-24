@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { api } from "../api";
+import MemberNotice from "../components/MemberNotice";
 
-export default function QuizTab() {
+export default function QuizTab({ user, onRequireLogin }) {
   const [words, setWords] = useState([]);
   const [quizText, setQuizText] = useState("");
   const [answer, setAnswer] = useState("");
@@ -35,11 +36,13 @@ export default function QuizTab() {
     <div>
       <h3 className="text-base font-semibold mb-3">복습할 단어로 퀴즈를 풀어보세요!</h3>
 
+      {!user && <MemberNotice feature="퀴즈" onRequireLogin={onRequireLogin} />}
+
       <button
         onClick={generate}
-        disabled={genLoading}
+        disabled={genLoading || !user}
         className="rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-60
-                   px-4 py-2 text-sm font-semibold"
+                   disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold"
       >
         {genLoading ? "생성 중…" : "🎯 퀴즈 생성"}
       </button>
@@ -61,17 +64,18 @@ export default function QuizTab() {
           rows={6}
           value={answer}
           onChange={(e) => setAnswer(e.target.value)}
+          disabled={!user}
           placeholder={"1번: \n2번: \n3번: \n4번: \n5번: "}
           className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm resize-none
-                     focus:outline-none focus:ring-2 focus:ring-brand-200"
+                     disabled:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-200"
         />
       </div>
 
       <button
         onClick={grade}
-        disabled={gradeLoading}
+        disabled={gradeLoading || !user}
         className="mt-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50
-                   disabled:opacity-60 px-4 py-2 text-sm font-semibold"
+                   disabled:opacity-60 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold"
       >
         {gradeLoading ? "채점 중…" : "✅ 채점하기"}
       </button>
