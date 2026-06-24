@@ -1,3 +1,4 @@
+import logging
 import os
 from dotenv import load_dotenv
 from pathlib import Path
@@ -8,6 +9,7 @@ from langgraph.graph import StateGraph, END
 from typing import TypedDict
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", encoding='utf-8-sig')
+logger = logging.getLogger(__name__)
 
 # ── 1. LLM 세팅 ───────────────────────────────────────────
 qwen_llm   = ChatOllama(model="qwen2.5:7b")
@@ -26,13 +28,13 @@ if all([watsonx_api_key, watsonx_project_id, watsonx_url]):
             url=watsonx_url,
             apikey=watsonx_api_key,
             project_id=watsonx_project_id,
-            params={"max_tokens": 1000}
+            params={"max_tokens": 500}
         )
-        print("✅ WatsonX 연결됨")
+        logger.info("[OK] WatsonX 연결됨")
     except Exception as e:
-        print(f"⚠️ WatsonX 연결 실패: {e}")
+        logger.warning("[WARN] WatsonX 연결 실패: %s", e)
 else:
-    print("⚠️ WatsonX 환경변수 없음 → Ollama(qwen)로 대체")
+    logger.warning("[WARN] WatsonX 환경변수 없음 -> Ollama(qwen)로 대체")
 
 llms = {"qwen": qwen_llm, "exaone": exaone_llm}
 if watson_llm:
@@ -40,7 +42,7 @@ if watson_llm:
 
 ACTIVE_MODEL = "watsonx" if watson_llm else "qwen"
 llm = llms[ACTIVE_MODEL]
-print(f"✅ 기본 모델: {ACTIVE_MODEL}")
+logger.info("[OK] 기본 모델: %s", ACTIVE_MODEL)
 
 # ── 2. 파서 ───────────────────────────────────────────────
 parser = StrOutputParser()
@@ -166,6 +168,32 @@ def start_roleplay(words: list) -> list:
     word_list = ", ".join([w["word"] for w in words])
     response  = roleplay_start_chain.invoke({"word_list": word_list})
     return [("", response)]
+
+def explain_slang(word: str, kor_word: str = "") -> str:
+    """슬랭/구어체 표현의 실제 의미와 원어민 활용법을 LLM으로 설명"""
+    prompt = ChatPromptTemplate.from_template("""
+You are an English language expert. A Korean learner searched "{word}"
+and got the dictionary translation "{kor_word}", but suspects a more
+colloquial or cultural meaning exists.
+
+Explain how native speakers actually use "{word}" beyond its literal meaning
+(slang, social context, pop culture, irony, etc.).
+If no such usage exists, say so in one sentence.
+
+Respond in Korean using this format:
+
+🤖 속뜻과 맥락
+[2~3문장]
+
+📝 예문
+1. 영어 예문 (한국어 해석)
+2. 영어 예문 (한국어 해석)
+
+🔗 비슷한 표현
+[2~3개]
+""")
+    chain = prompt | llm | parser
+    return chain.invoke({"word": word, "kor_word": kor_word})
 
 def continue_roleplay(history: list, user_msg: str) -> list:
     if not user_msg.strip():
