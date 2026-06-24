@@ -9,7 +9,9 @@ from pydantic import BaseModel
 
 from backend.auth.users import get_current_user_from_cookie
 from backend.database import (
+    add_label,
     get_all_words,
+    get_labels,
     get_words_to_review,
     is_word_saved,
     save_word,
@@ -34,10 +36,15 @@ router = APIRouter(prefix="/api", tags=["api"])
 class SaveWordIn(BaseModel):
     word: str
     korean: str = ""
+    korean_detail: str = ""
     english_def: str = ""
     example: str = ""
-    context: str = ""
+    tag: str = ""  # 선택한 라벨(카테고리)
     slang_def: str = ""
+
+
+class LabelIn(BaseModel):
+    name: str
 
 
 class QuizGradeIn(BaseModel):
@@ -64,18 +71,16 @@ async def me(request: Request):
 
 
 # ── 검색 ───────────────────────────────────────────────────
+# 검색 결과만 빠르게 반환한다. 단어장 포함 여부(DB 조회)는 분리해
+# 프론트가 /api/words/saved 로 따로 확인한다. (결과 먼저, 저장여부는 나중)
 @router.get("/search/english")
 def search_english(word: str = ""):
-    result = search_from_english(word)
-    result["saved"] = is_word_saved(result["english_word"]) if result["english_word"] else False
-    return result
+    return search_from_english(word)
 
 
 @router.get("/search/korean")
 def search_korean(word: str = ""):
-    result = search_from_korean(word)
-    result["saved"] = is_word_saved(result["english_word"]) if result["english_word"] else False
-    return result
+    return search_from_korean(word)
 
 
 # ── TTS ────────────────────────────────────────────────────
@@ -85,10 +90,22 @@ def tts(word: str = "", lang: str = "en"):
     return {"audio": audio_b64}  # base64 mp3 또는 null
 
 
+# ── 라벨(카테고리) ─────────────────────────────────────────
+@router.get("/labels")
+def list_labels():
+    return {"labels": get_labels()}
+
+
+@router.post("/labels")
+def create_label(payload: LabelIn):
+    labels, ok = add_label(payload.name)
+    return {"labels": labels, "ok": ok, "max": 20}
+
+
 # ── 단어장 ─────────────────────────────────────────────────
 @router.get("/words")
-def list_words():
-    return {"words": get_all_words()}
+def list_words(tag: str = ""):
+    return {"words": get_all_words(tag or None)}
 
 
 @router.get("/words/saved")
@@ -102,8 +119,9 @@ def create_word(payload: SaveWordIn):
     if not word:
         return {"ok": False, "message": "단어가 비어 있습니다."}
     final_def = payload.slang_def.strip() or payload.english_def
+    tag = payload.tag.strip() or "미지정"  # 라벨 미선택 시 기본값
     message = save_word(
-        word.lower(), payload.korean, final_def, payload.example, "", payload.context
+        word.lower(), payload.korean, payload.korean_detail, final_def, payload.example, tag
     )
     return {"ok": True, "message": message, "saved": True}
 

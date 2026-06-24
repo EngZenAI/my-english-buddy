@@ -35,68 +35,133 @@ const ReadOnlyField = ({ label, value, rows = 3 }) => (
   </div>
 );
 
+const DEBOUNCE_MS = 150;
+
 export default function SearchTab() {
   const [eng, setEng] = useState("");
   const [kor, setKor] = useState("");
   const [engDef, setEngDef] = useState("");
   const [korDetail, setKorDetail] = useState("");
-  const [example, setExample] = useState("");
+  const [example, setExample] = useState("");          // 사전 제공 예문 (읽기 전용)
+  const [customExample, setCustomExample] = useState(""); // 내 맞춤 예문 (편집/저장 대상)
   const [phonetic, setPhonetic] = useState("");
-  const [context, setContext] = useState("");
   const [saved, setSaved] = useState(false);
+
+  // 라벨(카테고리)
+  const [labels, setLabels] = useState([]);
+  const [label, setLabel] = useState("미지정"); // 현재 선택된 라벨 (기본: 미지정)
+  const [newLabel, setNewLabel] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [labelError, setLabelError] = useState("");
 
   const [slangVisible, setSlangVisible] = useState(false);
   const [slangText, setSlangText] = useState("");
   const [slangLoading, setSlangLoading] = useState(false);
 
-  // 검색을 트리거한 입력 방향을 추적해 디바운스 무한 루프 방지
   const lastSearched = useRef({ en: "", ko: "" });
-  const source = useRef(null); // "en" | "ko" — 마지막으로 사용자가 타이핑한 쪽
+  const source = useRef(null);
+  const reqSeq = useRef(0);
+  const cache = useRef({});
 
-  const applyResult = (r) => {
-    setEng(r.english_word);
-    setKor(r.korean_word);
+  // 라벨 목록 로드
+  useEffect(() => {
+    api.listLabels().then(({ labels }) => setLabels(labels)).catch(() => {});
+  }, []);
+
+  // 결과 영역(뜻/예문/발음)만 갱신. 맞춤 예문은 사전 예문으로 초기화.
+  const applyCommon = (r) => {
     setEngDef(r.english_def);
     setKorDetail(r.korean_detail);
     setExample(r.example);
+    setCustomExample(r.example); // 맞춤 예문 시작값 = 사전 예문 (이후 사용자가 편집)
     setPhonetic(r.phonetic || "");
-    setSaved(!!r.saved);
     setSlangVisible(!!r.english_word);
     setSlangText("");
-    lastSearched.current = { en: r.english_word, ko: r.korean_word };
+  };
+
+  const refreshSaved = async (englishWord, myseq) => {
+    if (!englishWord) {
+      if (myseq === reqSeq.current) setSaved(false);
+      return;
+    }
+    try {
+      const { saved } = await api.wordSaved(englishWord);
+      if (myseq !== reqSeq.current) return;
+      setSaved(saved);
+    } catch {
+      /* 무시 */
+    }
   };
 
   const runEnglish = async (word) => {
-    if (!word.trim()) return;
+    const w = word.trim();
+    if (!w) return;
+    lastSearched.current.en = w;
+    const myseq = ++reqSeq.current;
+
+    const hit = cache.current["en:" + w];
+    if (hit) {
+      applyCommon(hit);
+      lastSearched.current.ko = hit.korean_word;
+      setKor(hit.korean_word);
+      setSaved(false);
+      refreshSaved(w, myseq);
+      return;
+    }
     try {
-      applyResult(await api.searchEnglish(word));
+      const r = await api.searchEnglish(w);
+      cache.current["en:" + w] = r;
+      if (myseq !== reqSeq.current) return;
+      applyCommon(r);
+      lastSearched.current.ko = r.korean_word;
+      setKor(r.korean_word);
+      setSaved(false);
+      refreshSaved(w, myseq);
     } catch {
       /* 무시 */
     }
   };
 
   const runKorean = async (word) => {
-    if (!word.trim()) return;
+    const w = word.trim();
+    if (!w) return;
+    lastSearched.current.ko = w;
+    const myseq = ++reqSeq.current;
+
+    const hit = cache.current["ko:" + w];
+    if (hit) {
+      applyCommon(hit);
+      lastSearched.current.en = hit.english_word;
+      setEng(hit.english_word);
+      setSaved(false);
+      refreshSaved(hit.english_word, myseq);
+      return;
+    }
     try {
-      applyResult(await api.searchKorean(word));
+      const r = await api.searchKorean(w);
+      cache.current["ko:" + w] = r;
+      if (myseq !== reqSeq.current) return;
+      applyCommon(r);
+      lastSearched.current.en = r.english_word;
+      setEng(r.english_word);
+      setSaved(false);
+      refreshSaved(r.english_word, myseq);
     } catch {
       /* 무시 */
     }
   };
 
-  // ── 디바운스: 영어 입력 ──
   useEffect(() => {
     if (source.current !== "en") return;
-    if (!eng.trim() || eng === lastSearched.current.en) return;
-    const t = setTimeout(() => runEnglish(eng), 400);
+    if (!eng.trim() || eng.trim() === lastSearched.current.en) return;
+    const t = setTimeout(() => runEnglish(eng), DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [eng]);
 
-  // ── 디바운스: 한국어 입력 ──
   useEffect(() => {
     if (source.current !== "ko") return;
-    if (!kor.trim() || kor === lastSearched.current.ko) return;
-    const t = setTimeout(() => runKorean(kor), 400);
+    if (!kor.trim() || kor.trim() === lastSearched.current.ko) return;
+    const t = setTimeout(() => runKorean(kor), DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [kor]);
 
@@ -105,12 +170,36 @@ export default function SearchTab() {
     const res = await api.saveWord({
       word: eng,
       korean: kor,
+      korean_detail: korDetail,
       english_def: engDef,
-      example,
-      context,
+      example: customExample, // 내 맞춤 예문을 저장
+      tag: label,              // 선택한 라벨
       slang_def: slangText,
     });
     if (res.saved) setSaved(true);
+  };
+
+  const handleAddLabel = async () => {
+    const name = newLabel.trim();
+    if (!name) return;
+    if (labels.length >= 20 && !labels.includes(name)) {
+      setLabelError("라벨은 최대 20개까지 추가할 수 있어요.");
+      return;
+    }
+    try {
+      const { labels: next, ok } = await api.addLabel(name);
+      setLabels(next);
+      if (ok) {
+        setLabel(name); // 추가한 라벨 바로 선택
+        setNewLabel("");
+        setAdding(false);
+        setLabelError("");
+      } else {
+        setLabelError("라벨은 최대 20개까지 추가할 수 있어요.");
+      }
+    } catch {
+      /* 무시 */
+    }
   };
 
   const handleSlang = async () => {
@@ -192,7 +281,6 @@ export default function SearchTab() {
           <AudioButton word={kor} lang="ko" />
         </div>
 
-        {/* 슬랭 힌트 */}
         {slangVisible && (
           <button
             onClick={handleSlang}
@@ -217,19 +305,89 @@ export default function SearchTab() {
 
       <ReadOnlyField label="📖 영어 뜻" value={engDef} rows={4} />
       <ReadOnlyField label="🇰🇷 한국어 뜻" value={korDetail} rows={3} />
-      <ReadOnlyField label="✏️ 예문" value={example} rows={3} />
+      <ReadOnlyField label="✏️ 예문 (사전 제공)" value={example} rows={3} />
 
+      {/* 편집 가능한 내 맞춤 예문 */}
       <div className="mb-3">
         <label className="block text-sm text-slate-500 mb-1">
-          📍 어디서 봤어요? (선택사항)
+          ✏️ 예문 (편집 가능) — 내 상황에 맞게 고쳐서 저장돼요
         </label>
-        <input
-          value={context}
-          onChange={(e) => setContext(e.target.value)}
-          placeholder="예: 넷플릭스 보다가 / 영어 뉴스에서 / 친구 문자에서..."
+        <textarea
+          rows={3}
+          value={customExample}
+          onChange={(e) => setCustomExample(e.target.value)}
+          placeholder="내 상황에 맞는 예문을 직접 적어보세요"
           className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm
+                     resize-none whitespace-pre-wrap
                      focus:outline-none focus:ring-2 focus:ring-brand-200"
         />
+      </div>
+
+      {/* 라벨(카테고리) 선택 */}
+      <div className="mb-3">
+        <label className="block text-sm text-slate-500 mb-1">
+          🏷️ 라벨 (카테고리) — 단어장에서 라벨별로 모아볼 수 있어요
+        </label>
+        <div className="flex flex-wrap items-center gap-2">
+          {labels.map((name) => {
+            const active = label === name;
+            return (
+              <button
+                key={name}
+                type="button"
+                onClick={() => setLabel(active ? "" : name)}
+                className={`rounded-full text-[13px] font-medium px-3 h-8 border transition-colors
+                  ${active
+                    ? "bg-brand-600 text-white border-brand-600"
+                    : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"}`}
+              >
+                {name}
+              </button>
+            );
+          })}
+
+          {adding ? (
+            <span className="inline-flex items-center gap-1">
+              <input
+                autoFocus
+                value={newLabel}
+                onChange={(e) => setNewLabel(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleAddLabel();
+                  if (e.key === "Escape") {
+                    setAdding(false);
+                    setNewLabel("");
+                  }
+                }}
+                placeholder="새 라벨"
+                className="w-24 rounded-full border border-slate-300 px-3 h-8 text-[13px]
+                           focus:outline-none focus:ring-2 focus:ring-brand-200"
+              />
+              <button
+                type="button"
+                onClick={handleAddLabel}
+                className="rounded-full text-[13px] font-medium px-3 h-8 bg-brand-50
+                           text-brand-600 border border-brand-200 hover:bg-brand-100"
+              >
+                추가
+              </button>
+            </span>
+          ) : labels.length < 20 ? (
+            <button
+              type="button"
+              onClick={() => setAdding(true)}
+              className="rounded-full text-[13px] font-medium px-3 h-8 border border-dashed
+                         border-slate-300 text-slate-500 hover:bg-slate-50"
+            >
+              + 라벨 추가
+            </button>
+          ) : (
+            <span className="text-[11px] text-slate-400">라벨 최대 20개</span>
+          )}
+        </div>
+        {labelError && (
+          <p className="text-[11px] text-rose-500 mt-1">{labelError}</p>
+        )}
       </div>
     </div>
   );

@@ -53,8 +53,16 @@ export const api = {
   tts: (word, lang = "en") =>
     jsonFetch(`/api/tts?word=${encodeURIComponent(word)}&lang=${lang}`),
 
+  // ── 라벨(카테고리) ──
+  listLabels: () => jsonFetch("/api/labels"),
+  addLabel: (name) =>
+    jsonFetch("/api/labels", { method: "POST", body: JSON.stringify({ name }) }),
+
   // ── 단어장 ──
-  listWords: () => jsonFetch("/api/words"),
+  listWords: (tag) =>
+    jsonFetch(`/api/words${tag ? `?tag=${encodeURIComponent(tag)}` : ""}`),
+  wordSaved: (word) =>
+    jsonFetch(`/api/words/saved?word=${encodeURIComponent(word)}`),
   saveWord: (payload) =>
     jsonFetch("/api/words", { method: "POST", body: JSON.stringify(payload) }),
 

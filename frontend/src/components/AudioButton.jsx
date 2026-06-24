@@ -2,17 +2,17 @@ import { useRef, useState } from "react";
 import { api } from "../api";
 
 // 단어 발음을 서버 gTTS로 받아 재생하는 버튼 (기존 Gradio 🔊 버튼 대체)
+// 빈 상태와 활성 상태가 동일한 컨테이너/버튼 박스를 써서 아이콘 위치가 흔들리지 않게 한다.
 export default function AudioButton({ word, lang = "en", phonetic = "" }) {
   const audioRef = useRef(null);
   const cacheRef = useRef({}); // word → base64
   const [loading, setLoading] = useState(false);
   const [playing, setPlaying] = useState(false);
 
-  if (!word || !word.trim()) {
-    return <span className="text-gray-300 text-base select-none">🔊</span>;
-  }
+  const hasWord = !!(word && word.trim());
 
   const play = async () => {
+    if (!hasWord) return;
     // 재생 중이면 정지
     if (playing && audioRef.current) {
       audioRef.current.pause();
@@ -47,13 +47,18 @@ export default function AudioButton({ word, lang = "en", phonetic = "" }) {
       <button
         type="button"
         onClick={play}
-        title="클릭하여 발음 듣기"
-        className="w-7 h-7 rounded-full inline-flex items-center justify-center text-gray-500
-                   hover:bg-brand-50 transition-colors text-base"
+        disabled={!hasWord}
+        title={hasWord ? "클릭하여 발음 듣기" : ""}
+        className={`w-7 h-7 rounded-full inline-flex items-center justify-center text-base
+                    transition-colors ${
+                      hasWord
+                        ? "text-gray-500 hover:bg-brand-50 cursor-pointer"
+                        : "text-gray-300 cursor-default select-none"
+                    }`}
       >
         {loading ? "…" : playing ? "⏹" : "🔊"}
       </button>
-      {phonetic && (
+      {hasWord && phonetic && (
         <span className="text-[11px] text-gray-400 font-serif align-middle">
           {phonetic}
         </span>
