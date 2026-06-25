@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  keepPreviousData,
   useMutation,
   useQuery,
   useQueryClient,
@@ -27,6 +26,7 @@ const WordRowsSkeleton = () =>
 export default function WordbookTab({ user, onRequireLogin }) {
   const queryClient = useQueryClient();
   const fileInputRef = useRef(null);
+  const lastIndexRef = useRef(null); // Shift+클릭 범위 선택용 (현재 페이지 기준 인덱스)
   const userId = user?.id || "";
   const [filter, setFilter] = useState(""); // "" = 전체
   const [page, setPage] = useState(0); // 0-based 페이지
@@ -61,18 +61,21 @@ export default function WordbookTab({ user, onRequireLogin }) {
   });
   const labels = labelsQuery.data?.labels || [];
 
+  // 단어는 '전체'를 한 번만 불러와 캐시하고(태그 전환 시 재조회 X),
+  // 태그 필터는 클라이언트에서 적용한다. → 태그 전환 즉시, '갱신 중'은 최초/변경 시에만.
   const wordsQuery = useQuery({
-    queryKey: queryKeys.words(filter),
-    queryFn: () => api.listWords(filter),
+    queryKey: queryKeys.words(""),
+    queryFn: () => api.listWords(""),
     enabled: !!user,
-    staleTime: 30_000,
-    gcTime: 10 * 60_000,
-    placeholderData: keepPreviousData,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
   });
-  const words = wordsQuery.data?.words || [];
+  const allWords = wordsQuery.data?.words || [];
+  const words = filter ? allWords.filter((w) => w.tag === filter) : allWords;
 
   useEffect(() => {
     setSelected(new Set());
+    lastIndexRef.current = null;
   }, [filter, wordsQuery.data]);
 
   // 필터가 바뀌면 1페이지로
@@ -110,8 +113,11 @@ export default function WordbookTab({ user, onRequireLogin }) {
   };
 
   const refresh = () => {
+    // 단어 목록은 앱이 드래그·편집·삭제·가져오기 때 캐시를 정확히 유지하므로
+    // 여기서 DB를 강제 재조회하지 않는다. (쓰기 직후 즉시 재조회 시 read-after-write
+    // 가시성 지연으로 방금 바꾼 순서가 잠깐 옛것으로 튀는 문제를 피하기 위함.)
+    // DB에서 완전히 새로 끌어오려면 브라우저 새로고침(F5)을 사용.
     queryClient.invalidateQueries({ queryKey: queryKeys.labels });
-    queryClient.invalidateQueries({ queryKey: queryKeys.words(filter) });
     queryClient.invalidateQueries({ queryKey: ["label-word-count"] });
   };
 
@@ -265,7 +271,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
         english_def: w.english_def || "",
         example: w.example || "",
         tag: w.tag || "미지정",
-        next_review: String(w.next_review).slice(0, 10),
+        next_review: "", // "" = 복습일 변경 안 함 (상대기간 코드 1d/1w/1m/3m 선택 시 변경)
       };
     });
     setDrafts(init);
@@ -308,6 +314,24 @@ export default function WordbookTab({ user, onRequireLogin }) {
       return next;
     });
 
+  // Shift+클릭: 직전 클릭 행 ~ 현재 행 범위를 한 번에 선택 (현재 페이지 기준)
+  const handleSelectClick = (e, pageIdx, id) => {
+    if (e.shiftKey && lastIndexRef.current != null) {
+      const a = Math.min(lastIndexRef.current, pageIdx);
+      const b = Math.max(lastIndexRef.current, pageIdx);
+      setSelected((s) => {
+        const next = new Set(s);
+        for (let k = a; k <= b; k++) {
+          if (pageWords[k]) next.add(pageWords[k].id);
+        }
+        return next;
+      });
+    } else {
+      toggleSelect(id);
+    }
+    lastIndexRef.current = pageIdx;
+  };
+
   // 현재 페이지 항목만 전체 선택/해제 (선택은 페이지 넘어가도 유지)
   const toggleSelectAll = () =>
     setSelected((s) => {
@@ -322,15 +346,26 @@ export default function WordbookTab({ user, onRequireLogin }) {
     if (selected.size === 0) return;
     const ok = window.confirm(`선택한 ${selected.size}개 단어를 삭제할까요?`);
     if (!ok) return;
+    const ids = [...selected];
+    const idSet = new Set(ids);
+    // 낙관적: 캐시에서 즉시 제거 → 체감 속도 즉각 (원격 DB 왕복을 기다리지 않음)
+    const prev = queryClient.getQueryData(queryKeys.words(""));
+    queryClient.setQueryData(queryKeys.words(""), (old) =>
+      old ? { words: old.words.filter((w) => !idSet.has(w.id)) } : old
+    );
+    setSelected(new Set());
+    lastIndexRef.current = null;
     try {
-      const res = await api.bulkDeleteWords([...selected]);
+      const res = await api.bulkDeleteWords(ids);
       if (res.ok === false) {
         alert(res.message || "삭제에 실패했어요.");
+        queryClient.setQueryData(queryKeys.words(""), prev); // 롤백
         return;
       }
-      await refreshWords();
+      queryClient.invalidateQueries({ queryKey: ["label-word-count"] });
     } catch {
       alert("삭제 중 오류가 발생했어요.");
+      queryClient.setQueryData(queryKeys.words(""), prev); // 롤백
     }
   };
 
@@ -340,16 +375,25 @@ export default function WordbookTab({ user, onRequireLogin }) {
       setDragIndex(null);
       return;
     }
-    const next = [...words];
+    // 순서 변경은 '전체' 보기에서만 가능하므로 words === allWords
+    const next = [...allWords];
     const [moved] = next.splice(dragIndex, 1);
     next.splice(i, 0, moved);
     setDragIndex(null);
-    queryClient.setQueryData(queryKeys.words(filter), { words: next });
+    const prev = queryClient.getQueryData(queryKeys.words(""));
+    queryClient.setQueryData(queryKeys.words(""), { words: next }); // 낙관적 반영
     try {
-      await api.reorderWords(next.map((w) => w.id));
-      queryClient.invalidateQueries({ queryKey: queryKeys.words(filter) });
+      const res = await api.reorderWords(next.map((w) => w.id));
+      // 0건 반영도 실패로 간주 (조용한 원복 방지 → 바로 알 수 있게)
+      if (!res || res.ok === false || res.updated === 0) {
+        throw new Error("reorder not persisted");
+      }
+      // 성공: 캐시가 이미 서버와 동일하므로 재조회하지 않음 (깜빡임/되돌림 방지)
     } catch {
-      queryClient.invalidateQueries({ queryKey: queryKeys.words(filter) });
+      queryClient.setQueryData(queryKeys.words(""), prev); // 롤백
+      alert(
+        "순서 저장에 실패했어요. 백엔드(/api/words/reorder)가 최신 코드로 켜져 있는지 확인해주세요."
+      );
     }
   };
 
@@ -366,6 +410,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
   const allChecked =
     pageWords.length > 0 && pageWords.every((w) => selected.has(w.id));
   const dupCount = previewRows.filter((r) => r.dup).length;
+  const newCount = previewRows.length - dupCount;
 
   return (
     <div>
@@ -412,7 +457,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
                            hover:text-rose-600 hover:border-rose-200 px-3 py-1.5 text-sm font-medium
                            disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                선택 삭제{selected.size ? ` (${selected.size})` : ""}
+                삭제{selected.size ? ` (${selected.size})` : ""}
               </button>
               <button
                 onClick={refresh}
@@ -560,7 +605,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
       )}
       {!rowEdit && canReorder && words.length > 1 && (
         <p className="text-[11px] text-slate-400 -mt-2 mb-3">
-          맨 앞 손잡이를 드래그해 순서를 바꿀 수 있어요(자동 저장). 체크박스로 여러 개를 골라 선택 삭제할 수 있어요.
+          맨 앞 손잡이를 드래그해 순서를 바꿀 수 있어요(자동 저장). 체크박스를 고르고(Shift+클릭으로 범위 선택) '삭제'를 누르면 한 번에 지워져요.
         </p>
       )}
 
@@ -624,7 +669,8 @@ export default function WordbookTab({ user, onRequireLogin }) {
                       <input
                         type="checkbox"
                         checked={checked}
-                        onChange={() => toggleSelect(w.id)}
+                        readOnly
+                        onClick={(e) => handleSelectClick(e, idx, w.id)}
                       />
                     </td>
                     <td
@@ -723,15 +769,25 @@ export default function WordbookTab({ user, onRequireLogin }) {
 
                     <td className="px-3 py-2 whitespace-nowrap text-slate-500">
                       {rowEdit ? (
-                        <input
-                          type="date"
-                          value={d.next_review ?? ""}
-                          onChange={(e) =>
-                            setDraftField(w.id, "next_review", e.target.value)
-                          }
-                          className="rounded-md border border-slate-300 px-2 py-1 text-sm
-                                     outline-none focus:border-brand-400"
-                        />
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-[11px] text-slate-400">
+                            현재 {String(w.next_review).slice(0, 10)}
+                          </span>
+                          <select
+                            value={d.next_review ?? ""}
+                            onChange={(e) =>
+                              setDraftField(w.id, "next_review", e.target.value)
+                            }
+                            className="rounded-md border border-slate-300 px-2 py-1 text-sm
+                                       outline-none focus:border-brand-400 bg-white"
+                          >
+                            <option value="">변경 안 함</option>
+                            <option value="1d">하루 뒤</option>
+                            <option value="1w">일주일 뒤</option>
+                            <option value="1m">한달 뒤</option>
+                            <option value="3m">3개월 뒤</option>
+                          </select>
+                        </div>
                       ) : (
                         String(w.next_review).slice(0, 10)
                       )}
@@ -778,38 +834,55 @@ export default function WordbookTab({ user, onRequireLogin }) {
           onClick={closePreview}
         >
           <div
-            className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[85vh] flex flex-col"
+            className="bg-white rounded-2xl shadow-2xl ring-1 ring-black/5 w-full max-w-3xl
+                       max-h-[85vh] flex flex-col overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
-              <h3 className="text-base font-semibold">
-                가져오기 미리보기{" "}
-                <span className="text-slate-400 font-normal">
-                  ({previewRows.length}개)
+            {/* 헤더 */}
+            <div className="px-6 pt-5 pb-4 border-b border-slate-200">
+              <div className="flex items-start justify-between">
+                <div>
+                  <h3 className="text-lg font-bold">가져오기 미리보기</h3>
+                  <p className="text-[13px] text-slate-500 mt-0.5">
+                    검토·수정한 뒤 적용하세요. 적용 전까지 단어장에 저장되지 않아요.
+                  </p>
+                </div>
+                <button
+                  onClick={closePreview}
+                  className="text-slate-400 hover:text-slate-600 text-2xl leading-none -mt-1"
+                  title="닫기"
+                >
+                  ×
+                </button>
+              </div>
+              {/* 요약 칩 */}
+              <div className="flex items-center gap-2 mt-3 text-[13px]">
+                <span className="inline-flex items-center rounded-full bg-slate-100 text-slate-600 px-2.5 py-1 font-medium">
+                  총 {previewRows.length}
                 </span>
-              </h3>
-              <button
-                onClick={closePreview}
-                className="text-slate-400 hover:text-slate-600 text-2xl leading-none"
-                title="닫기"
-              >
-                x
-              </button>
+                <span className="inline-flex items-center rounded-full bg-emerald-50 text-emerald-700 px-2.5 py-1 font-medium">
+                  신규 {newCount}
+                </span>
+                <span className="inline-flex items-center rounded-full bg-amber-50 text-amber-700 px-2.5 py-1 font-medium">
+                  이미 있음 {dupCount}
+                </span>
+              </div>
             </div>
 
-            <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2 flex-wrap text-sm">
-              <span className="text-slate-500">전체 태그 지정:</span>
+            {/* 툴바 */}
+            <div className="px-6 py-3 bg-slate-50 border-b border-slate-100 flex items-center gap-2 flex-wrap text-sm">
+              <span className="text-slate-500">전체 태그:</span>
               <select
                 onChange={(e) => {
                   if (e.target.value) applyAllTag(e.target.value);
                   e.target.value = "";
                 }}
                 defaultValue=""
-                className="rounded-md border border-slate-300 px-2 py-1 text-sm bg-white
+                className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm bg-white
                            outline-none focus:border-brand-400"
               >
                 <option value="" disabled>
-                  태그 선택...
+                  태그 일괄 지정...
                 </option>
                 {labels.map((n) => (
                   <option key={n} value={n}>
@@ -820,32 +893,36 @@ export default function WordbookTab({ user, onRequireLogin }) {
               {dupCount > 0 && (
                 <button
                   onClick={removeDupRows}
-                  className="rounded-md border border-slate-300 bg-white hover:bg-slate-50 px-2 py-1"
+                  className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50 px-2.5 py-1.5 font-medium"
                 >
-                  이미 있는 {dupCount}개 제외
+                  이미 있는 {dupCount}개 빼기
                 </button>
               )}
-              <span className="text-slate-400 ml-auto">
-                영어단어/한국어는 파일값이에요. 필요하면 고치세요.
-              </span>
             </div>
 
-            <div className="overflow-auto px-5 py-2 grow">
-              <table className="w-full text-sm">
+            <div className="overflow-auto px-6 py-2 grow">
+              {previewRows.length === 0 ? (
+                <div className="py-12 text-center text-slate-400 text-sm">
+                  적용할 단어가 없어요. 모두 제외되었습니다.
+                </div>
+              ) : (
+              <table className="w-full text-sm border-separate border-spacing-0">
                 <thead>
-                  <tr className="text-left text-slate-500 sticky top-0 bg-white">
-                    <th className="py-2 pr-2 font-semibold">영어단어</th>
-                    <th className="py-2 pr-2 font-semibold">한국어</th>
-                    <th className="py-2 pr-2 font-semibold">예문(선택)</th>
-                    <th className="py-2 pr-2 font-semibold whitespace-nowrap">태그</th>
-                    <th className="py-2 w-16" />
+                  <tr className="text-left text-slate-500 sticky top-0 bg-white z-10">
+                    <th className="py-2 pr-2 font-semibold border-b border-slate-200">영어단어</th>
+                    <th className="py-2 pr-2 font-semibold border-b border-slate-200">한국어</th>
+                    <th className="py-2 pr-2 font-semibold border-b border-slate-200">예문(선택)</th>
+                    <th className="py-2 pr-2 font-semibold whitespace-nowrap border-b border-slate-200">태그</th>
+                    <th className="py-2 w-16 border-b border-slate-200" />
                   </tr>
                 </thead>
                 <tbody>
-                  {previewRows.map((r) => (
+                  {previewRows.map((r, ri) => (
                     <tr
                       key={r.key}
-                      className={`border-t border-slate-100 ${r.dup ? "bg-amber-50" : ""}`}
+                      className={
+                        r.dup ? "bg-amber-50" : ri % 2 ? "bg-slate-50/60" : ""
+                      }
                     >
                       <td className="py-1.5 pr-2">
                         <input
@@ -915,9 +992,10 @@ export default function WordbookTab({ user, onRequireLogin }) {
                   ))}
                 </tbody>
               </table>
+              )}
             </div>
 
-            <div className="px-5 py-4 border-t border-slate-200 flex items-center justify-end gap-2">
+            <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
               <span className="text-[12px] text-slate-400 mr-auto">
                 '이미 있음' 단어는 적용 시 자동으로 건너뜁니다.
               </span>
