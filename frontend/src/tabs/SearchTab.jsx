@@ -113,6 +113,7 @@ export default function SearchTab({ user, onRequireLogin }) {
       queryClient.setQueryData(queryKeys.wordSaved(userId, payload.word), { saved: true });
       queryClient.invalidateQueries({ queryKey: ["words"] });
       queryClient.invalidateQueries({ queryKey: queryKeys.labels });
+      queryClient.invalidateQueries({ queryKey: ["label-word-count"] });
     },
   });
 

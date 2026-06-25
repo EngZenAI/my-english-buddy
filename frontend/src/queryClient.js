@@ -6,7 +6,7 @@ export const queryKeys = {
   words: (tag = "") => ["words", tag || ""],
   search: (type, word) => ["search", type, word.trim().toLowerCase()],
   wordSaved: (userId, word) => ["word-saved", userId, word.trim().toLowerCase()],
-  labelWordCount: (label) => ["label-word-count", label],
+  labelWordCount: (userId, label) => ["label-word-count", userId, label],
 };
 
 export const queryClient = new QueryClient({

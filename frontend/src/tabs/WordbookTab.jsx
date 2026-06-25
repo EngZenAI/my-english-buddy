@@ -26,6 +26,7 @@ const WordRowsSkeleton = () =>
 export default function WordbookTab({ user, onRequireLogin }) {
   const queryClient = useQueryClient();
   const fileInputRef = useRef(null);
+  const userId = user?.id || "";
   const [filter, setFilter] = useState(""); // "" = 전체
 
   // 태그 편집 모드
@@ -82,6 +83,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
       }
       queryClient.setQueryData(queryKeys.labels, { labels: res.labels });
       queryClient.invalidateQueries({ queryKey: ["words"] });
+      queryClient.invalidateQueries({ queryKey: ["label-word-count"] });
       setEditValues((prev) => {
         const copy = { ...prev };
         delete copy[name];
@@ -100,10 +102,12 @@ export default function WordbookTab({ user, onRequireLogin }) {
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.labels });
     queryClient.invalidateQueries({ queryKey: queryKeys.words(filter) });
+    queryClient.invalidateQueries({ queryKey: ["label-word-count"] });
   };
 
   const refreshWords = async () => {
     await queryClient.invalidateQueries({ queryKey: ["words"] });
+    await queryClient.invalidateQueries({ queryKey: ["label-word-count"] });
   };
 
   const onImportFile = async (e) => {
@@ -163,7 +167,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
     try {
       count = (
         await queryClient.fetchQuery({
-          queryKey: queryKeys.labelWordCount(name),
+          queryKey: queryKeys.labelWordCount(userId, name),
           queryFn: () => api.labelWordCount(name),
           staleTime: 15_000,
         })

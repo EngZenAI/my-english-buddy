@@ -124,6 +124,7 @@ export default function App() {
     queryClient.removeQueries({ queryKey: queryKeys.labels });
     queryClient.removeQueries({ queryKey: ["words"] });
     queryClient.removeQueries({ queryKey: ["word-saved"] });
+    queryClient.removeQueries({ queryKey: ["label-word-count"] });
     goToView("home");
   };
 
