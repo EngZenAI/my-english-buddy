@@ -27,8 +27,8 @@ export default function RoleplayTab({ user, onRequireLogin }) {
 
   const sendMutation = useMutation({
     mutationFn: (text) => api.roleplayContinue(history, text),
-    onSuccess: ({ history: newHistory }) => {
-      setMsg("");
+    onSuccess: ({ history: newHistory }, text) => {
+      setMsg((current) => (current === text ? "" : current));
       setHistory(newHistory);
       scrollToBottom();
     },

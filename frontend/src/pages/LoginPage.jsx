@@ -61,12 +61,12 @@ export default function LoginPage({ onNavigate, onAuthenticated, onOAuthStart })
         ? await onAuthenticated()
         : { ok: true };
       if (result?.ok === false) {
-        setLoading(false);
         setStatus(result.message || "로그인 상태를 확인하지 못했습니다. 다시 시도해주세요.");
       }
     } catch {
-      setLoading(false);
       setStatus("로그인 상태를 확인하지 못했습니다. 다시 시도해주세요.");
+    } finally {
+      setLoading(false);
     }
   };
 
