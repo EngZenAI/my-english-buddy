@@ -35,7 +35,14 @@ export default function LoginPage({ onNavigate, onAuthenticated, onOAuthStart })
 
     setLoading(true);
     setStatus("");
-    const ok = await api.login(trimmedEmail, password);
+    let ok = false;
+    try {
+      ok = await api.login(trimmedEmail, password);
+    } catch {
+      setLoading(false);
+      setStatus("로그인 요청에 실패했습니다. 잠시 후 다시 시도해주세요.");
+      return;
+    }
 
     if (!ok) {
       setLoading(false);
