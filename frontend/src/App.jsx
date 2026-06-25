@@ -94,12 +94,27 @@ export default function App() {
   };
 
   const completeLogin = async () => {
-    const { user: nextUser } = await queryClient.fetchQuery({
-      queryKey: queryKeys.me,
-      queryFn: api.me,
-      staleTime: 0,
-    });
-    if (nextUser) goToReturnTarget();
+    try {
+      const { user: nextUser } = await queryClient.fetchQuery({
+        queryKey: queryKeys.me,
+        queryFn: api.me,
+        staleTime: 0,
+      });
+      if (!nextUser) {
+        return {
+          ok: false,
+          message: "로그인은 완료됐지만 사용자 정보를 확인하지 못했습니다. 다시 시도해주세요.",
+        };
+      }
+      goToReturnTarget();
+      return { ok: true };
+    } catch {
+      queryClient.setQueryData(queryKeys.me, { user: null });
+      return {
+        ok: false,
+        message: "로그인 상태 확인에 실패했습니다. 잠시 후 다시 시도해주세요.",
+      };
+    }
   };
 
   const logout = async () => {

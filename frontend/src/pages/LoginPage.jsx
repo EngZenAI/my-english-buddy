@@ -36,9 +36,9 @@ export default function LoginPage({ onNavigate, onAuthenticated, onOAuthStart })
     setLoading(true);
     setStatus("");
     const ok = await api.login(trimmedEmail, password);
-    setLoading(false);
 
     if (!ok) {
+      setLoading(false);
       setStatus("이메일 또는 비밀번호를 확인해주세요.");
       return;
     }
@@ -49,7 +49,18 @@ export default function LoginPage({ onNavigate, onAuthenticated, onOAuthStart })
       localStorage.removeItem(REMEMBERED_LOGIN_ID_KEY);
     }
 
-    onAuthenticated && (await onAuthenticated());
+    try {
+      const result = onAuthenticated
+        ? await onAuthenticated()
+        : { ok: true };
+      if (result?.ok === false) {
+        setLoading(false);
+        setStatus(result.message || "로그인 상태를 확인하지 못했습니다. 다시 시도해주세요.");
+      }
+    } catch {
+      setLoading(false);
+      setStatus("로그인 상태를 확인하지 못했습니다. 다시 시도해주세요.");
+    }
   };
 
   return (
