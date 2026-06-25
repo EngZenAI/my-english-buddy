@@ -97,10 +97,11 @@ export default function SearchTab({ user, onRequireLogin }) {
   });
 
   const savedWord = (searchQuery.data?.english_word || "").trim();
+  const userId = user?.id || "";
   const savedQuery = useQuery({
-    queryKey: queryKeys.wordSaved(savedWord),
+    queryKey: queryKeys.wordSaved(userId, savedWord),
     queryFn: () => api.wordSaved(savedWord),
-    enabled: !!user && !!savedWord,
+    enabled: !!userId && !!savedWord,
     staleTime: 30_000,
   });
 
@@ -109,7 +110,7 @@ export default function SearchTab({ user, onRequireLogin }) {
     onSuccess: (res, payload) => {
       if (!res.saved) return;
       setSaved(true);
-      queryClient.setQueryData(queryKeys.wordSaved(payload.word), { saved: true });
+      queryClient.setQueryData(queryKeys.wordSaved(userId, payload.word), { saved: true });
       queryClient.invalidateQueries({ queryKey: ["words"] });
       queryClient.invalidateQueries({ queryKey: queryKeys.labels });
     },

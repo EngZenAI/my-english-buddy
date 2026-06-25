@@ -123,6 +123,7 @@ export default function App() {
     queryClient.setQueryData(queryKeys.me, { user: null });
     queryClient.removeQueries({ queryKey: queryKeys.labels });
     queryClient.removeQueries({ queryKey: ["words"] });
+    queryClient.removeQueries({ queryKey: ["word-saved"] });
     goToView("home");
   };
 

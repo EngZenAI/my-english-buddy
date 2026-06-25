@@ -5,7 +5,7 @@ export const queryKeys = {
   labels: ["labels"],
   words: (tag = "") => ["words", tag || ""],
   search: (type, word) => ["search", type, word.trim().toLowerCase()],
-  wordSaved: (word) => ["word-saved", word.trim().toLowerCase()],
+  wordSaved: (userId, word) => ["word-saved", userId, word.trim().toLowerCase()],
   labelWordCount: (label) => ["label-word-count", label],
 };
 
