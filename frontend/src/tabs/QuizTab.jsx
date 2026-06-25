@@ -12,11 +12,9 @@ export default function QuizTab({ user, onRequireLogin }) {
 
   const generateMutation = useMutation({
     mutationFn: api.quizGenerate,
-    onMutate: () => {
-      setFeedback("");
-      setQuizText("");
-    },
     onSuccess: ({ words, quiz_text }) => {
+      setFeedback("");
+      setAnswer("");
       setWords(words);
       setQuizText(quiz_text);
     },
@@ -30,10 +28,12 @@ export default function QuizTab({ user, onRequireLogin }) {
   });
 
   const generate = async () => {
+    if (genLoading || gradeLoading) return;
     generateMutation.mutate();
   };
 
   const grade = async () => {
+    if (genLoading || gradeLoading || !quizText.trim()) return;
     gradeMutation.mutate();
   };
 
@@ -48,7 +48,7 @@ export default function QuizTab({ user, onRequireLogin }) {
 
       <button
         onClick={generate}
-        disabled={genLoading || !user}
+        disabled={genLoading || gradeLoading || !user}
         className="rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-60
                    disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold"
       >
@@ -97,7 +97,7 @@ export default function QuizTab({ user, onRequireLogin }) {
           rows={6}
           value={answer}
           onChange={(e) => setAnswer(e.target.value)}
-          disabled={!user}
+          disabled={!user || genLoading || gradeLoading}
           placeholder={"1번: \n2번: \n3번: \n4번: \n5번: "}
           className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm resize-none
                      disabled:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-200"
@@ -106,7 +106,7 @@ export default function QuizTab({ user, onRequireLogin }) {
 
       <button
         onClick={grade}
-        disabled={gradeLoading || !user || !quizText.trim()}
+        disabled={genLoading || gradeLoading || !user || !quizText.trim()}
         className="mt-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50
                    disabled:opacity-60 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold"
       >
