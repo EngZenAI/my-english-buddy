@@ -156,12 +156,27 @@ export default function SearchTab({ user, onRequireLogin }) {
     setSlangText("");
   };
 
+  const resetResultState = () => {
+    setEngDef("");
+    setKorDetail("");
+    setExample("");
+    setCustomExample("");
+    setPhonetic("");
+    setSaved(false);
+    setSlangVisible(false);
+    setSlangText("");
+  };
+
   useEffect(() => {
     const r = searchQuery.data;
     if (!r || !searchRequest) return;
     const key = `${searchRequest.type}:${searchRequest.word}`;
     if (appliedSearchKey.current === key) return;
     appliedSearchKey.current = key;
+    if (!r.english_word && !r.korean_word && !r.english_def && !r.korean_detail) {
+      resetResultState();
+      return;
+    }
     applyCommon(r);
     if (searchRequest.type === "en") {
       lastSearched.current.ko = r.korean_word;
@@ -172,6 +187,11 @@ export default function SearchTab({ user, onRequireLogin }) {
     }
     setSaved(false);
   }, [searchQuery.data, searchRequest]);
+
+  useEffect(() => {
+    if (!searchQuery.isError || !searchRequest) return;
+    resetResultState();
+  }, [searchQuery.isError, searchRequest]);
 
   useEffect(() => {
     if (!user) {
@@ -186,6 +206,8 @@ export default function SearchTab({ user, onRequireLogin }) {
     if (!w) return;
     lastSearched.current.en = w;
     reqSeq.current += 1;
+    appliedSearchKey.current = "";
+    resetResultState();
     setSearchRequest({ type: "en", word: w });
   };
 
@@ -194,6 +216,8 @@ export default function SearchTab({ user, onRequireLogin }) {
     if (!w) return;
     lastSearched.current.ko = w;
     reqSeq.current += 1;
+    appliedSearchKey.current = "";
+    resetResultState();
     setSearchRequest({ type: "ko", word: w });
   };
 
