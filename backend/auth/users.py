@@ -3,8 +3,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import Request, Response
-from fastapi.responses import RedirectResponse
+from fastapi import Request
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
 from fastapi_users.authentication import AuthenticationBackend, CookieTransport
 from fastapi_users.authentication.strategy.db import DatabaseStrategy
@@ -15,6 +14,7 @@ from sqlalchemy import select
 
 from backend.auth.dependencies import AccessTokenDatabaseDep, UserDatabaseDep
 from backend.auth.models import AccessToken, User
+from backend.auth.transports import OAuthCookieTransport
 from backend.config import settings
 from backend.database import SessionFactory
 
@@ -26,16 +26,9 @@ google_oauth_client = GoogleOAuth2(
 )
 
 
-class OAuthCookieTransport(CookieTransport):
-    async def get_login_response(self, token: str) -> Response:
-        response = RedirectResponse(
-            url=settings.oauth_success_redirect_url,
-            status_code=303,
-        )
-        return self._set_login_cookie(response, token)
-
-
 class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
+    verification_token_secret = settings.auth_secret
+
     async def on_after_register(
         self, user: User, request: Optional[Request] = None
     ):

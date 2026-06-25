@@ -2,22 +2,48 @@ import { useState } from "react";
 import { api } from "../api";
 import GoogleButton from "../components/GoogleButton";
 
-export default function SignupPage({ onNavigate }) {
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function Spinner() {
+  return (
+    <span
+      aria-hidden="true"
+      className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin"
+    />
+  );
+}
+
+export default function SignupPage({ onNavigate, onOAuthStart }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [status, setStatus] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const submit = async () => {
-    if (!email.trim() || !password.trim() || !confirm.trim()) {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !password.trim() || !confirm.trim()) {
       setStatus("이메일과 비밀번호를 모두 입력해주세요.");
+      return;
+    }
+    if (!EMAIL_PATTERN.test(trimmedEmail)) {
+      setStatus("이메일 형식을 확인해주세요.");
+      return;
+    }
+    if (password.length < 8) {
+      setStatus("비밀번호는 8자 이상으로 입력해주세요.");
       return;
     }
     if (password !== confirm) {
       setStatus("비밀번호가 일치하지 않습니다.");
       return;
     }
-    const res = await api.register(email, password);
+
+    setLoading(true);
+    setStatus("");
+    const res = await api.register(trimmedEmail, password);
+    setLoading(false);
+
     if (res.ok) {
       setStatus("회원가입이 완료되었습니다. 로그인해주세요.");
       setTimeout(() => onNavigate("login"), 800);
@@ -40,6 +66,7 @@ export default function SignupPage({ onNavigate }) {
         <input
           value={email}
           onChange={(e) => setEmail(e.target.value)}
+          disabled={loading}
           placeholder="you@example.com"
           className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-3
                      focus:outline-none focus:ring-2 focus:ring-brand-200"
@@ -49,6 +76,7 @@ export default function SignupPage({ onNavigate }) {
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          disabled={loading}
           className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-3
                      focus:outline-none focus:ring-2 focus:ring-brand-200"
         />
@@ -57,19 +85,23 @@ export default function SignupPage({ onNavigate }) {
           type="password"
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
+          disabled={loading}
+          onKeyDown={(e) => e.key === "Enter" && !loading && submit()}
           className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-4
                      focus:outline-none focus:ring-2 focus:ring-brand-200"
         />
 
         <button
           onClick={submit}
+          disabled={loading}
           className="w-full h-10 rounded-lg bg-brand-600 text-white font-semibold
-                     hover:bg-brand-700 mb-3"
+                     hover:bg-brand-700 disabled:opacity-70 disabled:cursor-not-allowed mb-3
+                     inline-flex items-center justify-center gap-2"
         >
-          계정 만들기
+          {loading && <Spinner />}
+          {loading ? "처리 중" : "계정 만들기"}
         </button>
-        <GoogleButton label="Google로 회원가입" />
+        <GoogleButton label="Google로 회원가입" onStart={onOAuthStart} disabled={loading} />
 
         {status && <p className="text-sm text-slate-500 mt-3">{status}</p>}
 

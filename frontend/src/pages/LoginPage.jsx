@@ -2,24 +2,54 @@ import { useState } from "react";
 import { api } from "../api";
 import GoogleButton from "../components/GoogleButton";
 
-export default function LoginPage({ onNavigate, onLoggedIn }) {
-  const [email, setEmail] = useState("");
+const REMEMBERED_LOGIN_ID_KEY = "englishBuddy.loginId";
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function Spinner() {
+  return (
+    <span
+      aria-hidden="true"
+      className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin"
+    />
+  );
+}
+
+export default function LoginPage({ onNavigate, onAuthenticated, onOAuthStart }) {
+  const rememberedEmail = localStorage.getItem(REMEMBERED_LOGIN_ID_KEY) || "";
+  const [email, setEmail] = useState(rememberedEmail);
   const [password, setPassword] = useState("");
+  const [rememberLoginId, setRememberLoginId] = useState(Boolean(rememberedEmail));
   const [status, setStatus] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const submit = async () => {
-    if (!email.trim() || !password.trim()) {
-      setStatus("이메일과 비밀번호를 입력해주세요.");
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !password.trim()) {
+      setStatus("로그인 ID와 비밀번호를 입력해주세요.");
       return;
     }
-    const ok = await api.login(email, password);
-    if (ok) {
-      setStatus("로그인되었습니다.");
-      onLoggedIn && (await onLoggedIn());
-      onNavigate("home");
-    } else {
-      setStatus("이메일 또는 비밀번호를 확인해주세요.");
+    if (!EMAIL_PATTERN.test(trimmedEmail)) {
+      setStatus("이메일 형식의 로그인 ID를 입력해주세요.");
+      return;
     }
+
+    setLoading(true);
+    setStatus("");
+    const ok = await api.login(trimmedEmail, password);
+    setLoading(false);
+
+    if (!ok) {
+      setStatus("이메일 또는 비밀번호를 확인해주세요.");
+      return;
+    }
+
+    if (rememberLoginId) {
+      localStorage.setItem(REMEMBERED_LOGIN_ID_KEY, trimmedEmail);
+    } else {
+      localStorage.removeItem(REMEMBERED_LOGIN_ID_KEY);
+    }
+
+    onAuthenticated && (await onAuthenticated());
   };
 
   return (
@@ -34,6 +64,7 @@ export default function LoginPage({ onNavigate, onLoggedIn }) {
         <input
           value={email}
           onChange={(e) => setEmail(e.target.value)}
+          disabled={loading}
           placeholder="you@example.com"
           className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-3
                      focus:outline-none focus:ring-2 focus:ring-brand-200"
@@ -43,19 +74,48 @@ export default function LoginPage({ onNavigate, onLoggedIn }) {
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
+          disabled={loading}
+          onKeyDown={(e) => e.key === "Enter" && !loading && submit()}
           className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-4
                      focus:outline-none focus:ring-2 focus:ring-brand-200"
         />
+        <label className="flex items-center gap-2 text-sm text-slate-600 mb-4">
+          <input
+            type="checkbox"
+            checked={rememberLoginId}
+            onChange={(e) => setRememberLoginId(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300"
+          />
+          로그인 ID 기억하기
+        </label>
 
         <button
           onClick={submit}
+          disabled={loading}
           className="w-full h-10 rounded-lg bg-brand-600 text-white font-semibold
-                     hover:bg-brand-700 mb-3"
+                     hover:bg-brand-700 disabled:opacity-70 disabled:cursor-not-allowed mb-3
+                     inline-flex items-center justify-center gap-2"
         >
-          로그인
+          {loading && <Spinner />}
+          {loading ? "로그인 중" : "로그인"}
         </button>
-        <GoogleButton label="Google로 로그인" />
+        <GoogleButton label="Google로 로그인" onStart={onOAuthStart} disabled={loading} />
+
+        <div className="flex items-center justify-center gap-3 mt-4 text-sm">
+          <button
+            onClick={() => onNavigate("find-id")}
+            className="text-slate-500 hover:text-slate-700"
+          >
+            아이디 찾기
+          </button>
+          <span className="text-slate-300">|</span>
+          <button
+            onClick={() => onNavigate("forgot-password")}
+            className="text-slate-500 hover:text-slate-700"
+          >
+            비밀번호 찾기
+          </button>
+        </div>
 
         {status && <p className="text-sm text-slate-500 mt-3">{status}</p>}
 
