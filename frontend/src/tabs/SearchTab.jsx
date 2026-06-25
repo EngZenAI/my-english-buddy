@@ -132,12 +132,17 @@ export default function SearchTab({ user, onRequireLogin }) {
   });
 
   const slangMutation = useMutation({
-    mutationFn: () => api.slang(eng, kor),
+    mutationFn: ({ engWord, korWord }) => api.slang(engWord, korWord),
     onMutate: () => {
       setSlangText("AI가 의미를 분석 중입니다...");
     },
-    onSuccess: ({ explanation }) => {
+    onSuccess: ({ explanation }, { engWord, korWord }) => {
+      if (eng.trim() !== engWord || kor.trim() !== korWord) return;
       setSlangText(explanation);
+    },
+    onError: (_error, { engWord, korWord }) => {
+      if (eng.trim() !== engWord || kor.trim() !== korWord) return;
+      setSlangText("AI 의미 분석에 실패했습니다. 잠시 후 다시 시도해주세요.");
     },
   });
 
@@ -234,11 +239,13 @@ export default function SearchTab({ user, onRequireLogin }) {
   };
 
   const handleSlang = async () => {
-    if (!eng.trim()) {
+    const engWord = eng.trim();
+    const korWord = kor.trim();
+    if (!engWord) {
       setSlangText("단어를 먼저 검색해주세요.");
       return;
     }
-    slangMutation.mutate();
+    slangMutation.mutate({ engWord, korWord });
   };
 
   const hasSearch = !!searchRequest;
