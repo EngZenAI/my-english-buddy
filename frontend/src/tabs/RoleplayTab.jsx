@@ -1,13 +1,13 @@
 import { useRef, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { api } from "../api";
+import { EmptyState, LoadingSpinner, SkeletonBlock } from "../components/AsyncState";
 import MemberNotice from "../components/MemberNotice";
 
 // history: [[user, bot], ...] — 백엔드 형식 그대로 유지
 export default function RoleplayTab({ user, onRequireLogin }) {
   const [history, setHistory] = useState([]);
   const [msg, setMsg] = useState("");
-  const [starting, setStarting] = useState(false);
-  const [sending, setSending] = useState(false);
   const scrollRef = useRef(null);
 
   const scrollToBottom = () => {
@@ -17,30 +17,35 @@ export default function RoleplayTab({ user, onRequireLogin }) {
     });
   };
 
-  const start = async () => {
-    setStarting(true);
-    try {
-      const { history } = await api.roleplayStart();
+  const startMutation = useMutation({
+    mutationFn: api.roleplayStart,
+    onSuccess: ({ history }) => {
       setHistory(history);
       scrollToBottom();
-    } finally {
-      setStarting(false);
-    }
+    },
+  });
+
+  const sendMutation = useMutation({
+    mutationFn: (text) => api.roleplayContinue(history, text),
+    onSuccess: ({ history: newHistory }) => {
+      setHistory(newHistory);
+      scrollToBottom();
+    },
+  });
+
+  const start = async () => {
+    startMutation.mutate();
   };
 
   const send = async () => {
-    if (!msg.trim() || sending) return;
+    if (!msg.trim() || sendMutation.isPending) return;
     const text = msg;
     setMsg("");
-    setSending(true);
-    try {
-      const { history: newHistory } = await api.roleplayContinue(history, text);
-      setHistory(newHistory);
-      scrollToBottom();
-    } finally {
-      setSending(false);
-    }
+    sendMutation.mutate(text);
   };
+
+  const starting = startMutation.isPending;
+  const sending = sendMutation.isPending;
 
   return (
     <div>
@@ -57,21 +62,39 @@ export default function RoleplayTab({ user, onRequireLogin }) {
         className="rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-60
                    disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold mb-3"
       >
-        {starting ? "시작 중…" : "🎭 롤플레잉 시작"}
+        {starting ? (
+          <LoadingSpinner
+            label="시작 중"
+            className="text-white"
+            spinnerClassName="border-white/40 border-t-white"
+          />
+        ) : "🎭 롤플레잉 시작"}
       </button>
 
       <div
         ref={scrollRef}
         className="h-[400px] overflow-y-auto border border-slate-200 rounded-lg bg-white p-3 space-y-3"
       >
-        {history.length === 0 && (
-          <p className="text-slate-400 text-sm text-center mt-32">
-            {user
-              ? '"롤플레잉 시작"을 눌러 대화를 시작하세요.'
-              : "로그인하면 AI 튜터와 영어로 대화할 수 있어요."}
-          </p>
+        {starting && (
+          <div className="space-y-3">
+            <SkeletonBlock className="h-12 w-3/4 rounded-2xl" />
+            <SkeletonBlock className="ml-auto h-10 w-1/2 rounded-2xl" />
+            <SkeletonBlock className="h-16 w-5/6 rounded-2xl" />
+          </div>
         )}
-        {history.map(([userMsg, bot], i) => (
+        {!starting && history.length === 0 && (
+          <div className="mt-28">
+            <EmptyState
+              title={user ? "대화가 아직 시작되지 않았습니다" : "로그인이 필요합니다"}
+              description={
+                user
+                  ? "롤플레잉 시작을 누르면 AI 튜터가 첫 상황을 제시합니다."
+                  : "로그인하면 AI 튜터와 영어로 대화할 수 있어요."
+              }
+            />
+          </div>
+        )}
+        {!starting && history.map(([userMsg, bot], i) => (
           <div key={i} className="space-y-2">
             {userMsg && (
               <div className="flex justify-end">
@@ -91,6 +114,13 @@ export default function RoleplayTab({ user, onRequireLogin }) {
             )}
           </div>
         ))}
+        {sending && (
+          <div className="flex justify-start">
+            <div className="bg-slate-100 text-slate-500 rounded-2xl rounded-bl-sm px-3 py-2 text-sm">
+              <LoadingSpinner label="답변 작성 중" />
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-2 mt-3">
@@ -98,7 +128,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
           value={msg}
           onChange={(e) => setMsg(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
-          disabled={!user}
+          disabled={!user || starting}
           placeholder="영어로 대답해봐요! (엔터로 전송)"
           className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm
                      disabled:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-200"

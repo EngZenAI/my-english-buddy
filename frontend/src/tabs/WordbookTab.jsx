@@ -1,41 +1,79 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { api } from "../api";
+import { queryKeys } from "../queryClient";
+import { EmptyState, LoadingSpinner, SkeletonBlock } from "../components/AsyncState";
 import MemberNotice from "../components/MemberNotice";
 
 const COLS = 8;
 
+const WordRowsSkeleton = () =>
+  Array.from({ length: 5 }).map((_, row) => (
+    <tr key={row} className="border-t border-slate-100">
+      {Array.from({ length: COLS }).map((__, col) => (
+        <td key={col} className="px-3 py-3">
+          <SkeletonBlock className={col > 1 ? "h-10 min-w-24" : "h-4 w-20"} />
+        </td>
+      ))}
+    </tr>
+  ));
+
 export default function WordbookTab({ user, onRequireLogin }) {
-  const [words, setWords] = useState([]);
-  const [labels, setLabels] = useState([]);
+  const queryClient = useQueryClient();
   const [filter, setFilter] = useState(""); // "" = 전체
-  const [loading, setLoading] = useState(false);
 
   // 태그 편집 모드
   const [editMode, setEditMode] = useState(false);
   const [editValues, setEditValues] = useState({}); // 원래이름 -> 편집중 값
 
-  const load = async (label = filter) => {
-    setLoading(true);
-    try {
-      const { words } = await api.listWords(label);
-      setWords(words);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const labelsQuery = useQuery({
+    queryKey: queryKeys.labels,
+    queryFn: api.listLabels,
+    enabled: !!user,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
+  });
+  const labels = labelsQuery.data?.labels || [];
 
-  const reloadLabels = () =>
-    api.listLabels().then(({ labels }) => setLabels(labels)).catch(() => {});
+  const wordsQuery = useQuery({
+    queryKey: queryKeys.words(filter),
+    queryFn: () => api.listWords(filter),
+    enabled: !!user,
+    staleTime: 30_000,
+    gcTime: 10 * 60_000,
+    placeholderData: keepPreviousData,
+  });
+  const words = wordsQuery.data?.words || [];
 
-  useEffect(() => {
-    if (!user) return; // 비회원: 데이터 조회 안 함 (미리보기만)
-    reloadLabels();
-    load("");
-  }, [user]);
+  const renameLabelMutation = useMutation({
+    mutationFn: ({ orig, val }) => api.renameLabel(orig, val),
+  });
+
+  const deleteLabelMutation = useMutation({
+    mutationFn: api.deleteLabel,
+    onSuccess: (res, name) => {
+      if (!res.ok) {
+        alert(res.message || "삭제에 실패했어요.");
+        return;
+      }
+      queryClient.setQueryData(queryKeys.labels, { labels: res.labels });
+      queryClient.invalidateQueries({ queryKey: ["words"] });
+      setEditValues((prev) => {
+        const copy = { ...prev };
+        delete copy[name];
+        return copy;
+      });
+      if (filter === name) setFilter("");
+    },
+  });
 
   const selectFilter = (label) => {
     setFilter(label);
-    load(label);
   };
 
   // ── 태그 편집 ──
@@ -57,23 +95,29 @@ export default function WordbookTab({ user, onRequireLogin }) {
     for (const orig of Object.keys(editValues)) {
       const val = (editValues[orig] || "").trim();
       if (!val || val === orig) continue;
-      const res = await api.renameLabel(orig, val);
+      const res = await renameLabelMutation.mutateAsync({ orig, val });
       if (!res.ok) {
         alert(res.message || "이름 변경에 실패했어요.");
         return; // 편집 모드 유지
       }
     }
-    await reloadLabels();
+    await queryClient.invalidateQueries({ queryKey: queryKeys.labels });
+    await queryClient.invalidateQueries({ queryKey: ["words"] });
     setEditMode(false);
     setEditValues({});
     setFilter("");
-    load("");
   };
 
   const deleteInEdit = async (name) => {
     let count = 0;
     try {
-      count = (await api.labelWordCount(name)).count;
+      count = (
+        await queryClient.fetchQuery({
+          queryKey: queryKeys.labelWordCount(name),
+          queryFn: () => api.labelWordCount(name),
+          staleTime: 15_000,
+        })
+      ).count;
     } catch {
       /* 무시 */
     }
@@ -81,22 +125,16 @@ export default function WordbookTab({ user, onRequireLogin }) {
       `'${name}' 태그를 삭제하면 이 태그의 단어 ${count}개도 함께 삭제됩니다.\n계속하시겠습니까?`
     );
     if (!ok) return;
-    const res = await api.deleteLabel(name);
-    if (!res.ok) {
-      alert(res.message || "삭제에 실패했어요.");
-      return;
-    }
-    setLabels(res.labels);
-    setEditValues((prev) => {
-      const copy = { ...prev };
-      delete copy[name];
-      return copy;
-    });
-    if (filter === name) {
-      setFilter("");
-      load("");
-    }
+    deleteLabelMutation.mutate(name);
   };
+
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.labels });
+    queryClient.invalidateQueries({ queryKey: queryKeys.words(filter) });
+  };
+
+  const loading = wordsQuery.isPending || labelsQuery.isPending;
+  const refetching = wordsQuery.isFetching && !wordsQuery.isPending;
 
   return (
     <div>
@@ -106,9 +144,10 @@ export default function WordbookTab({ user, onRequireLogin }) {
         <h3 className="text-base font-semibold">
           저장된 단어 목록{" "}
           <span className="text-slate-400 font-normal">({words.length}개)</span>
+          {refetching && <span className="ml-2"><LoadingSpinner label="갱신 중" /></span>}
         </h3>
         <button
-          onClick={() => load()}
+          onClick={refresh}
           disabled={!user}
           className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50
                      px-3 py-1.5 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
@@ -224,6 +263,14 @@ export default function WordbookTab({ user, onRequireLogin }) {
         </p>
       )}
 
+      {!user && (
+        <EmptyState
+          title="로그인이 필요합니다"
+          description="로그인하면 저장한 단어를 태그별로 모아볼 수 있어요."
+        />
+      )}
+
+      {user && (
       <div className="overflow-x-auto border border-slate-200 rounded-lg bg-white">
         <table className="w-full text-sm">
           <thead>
@@ -240,18 +287,12 @@ export default function WordbookTab({ user, onRequireLogin }) {
           </thead>
           <tbody>
             {loading && (
-              <tr>
-                <td colSpan={COLS} className="px-3 py-6 text-center text-slate-400">
-                  불러오는 중…
-                </td>
-              </tr>
+              <WordRowsSkeleton />
             )}
             {!loading && words.length === 0 && (
               <tr>
                 <td colSpan={COLS} className="px-3 py-6 text-center text-slate-400">
-                  {!user
-                    ? "로그인하면 저장한 단어를 태그별로 모아볼 수 있어요."
-                    : filter
+                  {filter
                     ? `'${filter}' 태그의 단어가 없어요.`
                     : "저장된 단어가 없어요. 단어 검색 탭에서 저장해보세요!"}
                 </td>
@@ -287,6 +328,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }

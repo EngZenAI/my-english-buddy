@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
+import { queryKeys } from "./queryClient";
 import SearchTab from "./tabs/SearchTab";
 import WordbookTab from "./tabs/WordbookTab";
 import QuizTab from "./tabs/QuizTab";
@@ -57,22 +59,18 @@ function LoadingPanel({ message }) {
 }
 
 export default function App() {
+  const queryClient = useQueryClient();
   const [view, setView] = useState(getInitialView);
   const [tab, setTab] = useState("search");
-  const [user, setUser] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
   const [authCompleteFailed, setAuthCompleteFailed] = useState(false);
 
-  const refreshUser = async () => {
-    try {
-      const { user } = await api.me();
-      setUser(user);
-      return user;
-    } catch {
-      setUser(null);
-      return null;
-    }
-  };
+  const { data: meData, isPending: authLoading } = useQuery({
+    queryKey: queryKeys.me,
+    queryFn: api.me,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
+  });
+  const user = meData?.user || null;
 
   const goToView = (nextView) => {
     setView(nextView);
@@ -96,35 +94,52 @@ export default function App() {
   };
 
   const completeLogin = async () => {
-    const nextUser = await refreshUser();
+    const { user: nextUser } = await queryClient.fetchQuery({
+      queryKey: queryKeys.me,
+      queryFn: api.me,
+      staleTime: 0,
+    });
     if (nextUser) goToReturnTarget();
   };
 
   const logout = async () => {
     await api.logout();
     sessionStorage.removeItem(AUTH_RETURN_KEY);
-    setUser(null);
+    queryClient.setQueryData(queryKeys.me, { user: null });
+    queryClient.removeQueries({ queryKey: queryKeys.labels });
+    queryClient.removeQueries({ queryKey: ["words"] });
     goToView("home");
   };
 
   useEffect(() => {
-    const finishInitialAuth = async () => {
-      const nextUser = await refreshUser();
-      setAuthLoading(false);
-
-      if (getInitialView() === "auth-complete") {
-        if (nextUser) {
-          goToReturnTarget();
-        } else {
-          setAuthCompleteFailed(true);
-        }
-      }
-    };
-
-    finishInitialAuth();
-  }, []);
+    if (authLoading || getInitialView() !== "auth-complete") return;
+    if (user) {
+      goToReturnTarget();
+    } else {
+      setAuthCompleteFailed(true);
+    }
+  }, [authLoading, user]);
 
   const ActiveTab = TABS.find((t) => t.id === tab)?.Comp || SearchTab;
+
+  const tabQueryPrefetch = useMemo(
+    () => ({
+      wordbook: () => {
+        if (!user) return;
+        queryClient.prefetchQuery({
+          queryKey: queryKeys.labels,
+          queryFn: api.listLabels,
+          staleTime: 5 * 60_000,
+        });
+        queryClient.prefetchQuery({
+          queryKey: queryKeys.words(""),
+          queryFn: () => api.listWords(""),
+          staleTime: 30_000,
+        });
+      }
+    }),
+    [queryClient, user]
+  );
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-5">
@@ -218,7 +233,12 @@ export default function App() {
             {TABS.map((t) => (
               <button
                 key={t.id}
-                onClick={() => setTab(t.id)}
+                onMouseEnter={tabQueryPrefetch[t.id]}
+                onFocus={tabQueryPrefetch[t.id]}
+                onClick={() => {
+                  tabQueryPrefetch[t.id]?.();
+                  setTab(t.id);
+                }}
                 className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors
                   ${tab === t.id
                     ? "border-brand-600 text-brand-600"
