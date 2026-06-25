@@ -1,134 +1,222 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "../api";
 import { EmptyState, LoadingSpinner, SkeletonBlock } from "../components/AsyncState";
 import MemberNotice from "../components/MemberNotice";
 
 export default function QuizTab({ user, onRequireLogin }) {
-  const [words, setWords] = useState([]);
-  const [quizText, setQuizText] = useState("");
-  const [answer, setAnswer] = useState("");
-  const [feedback, setFeedback] = useState("");
+  const [questions, setQuestions] = useState([]);
+  const [answerToken, setAnswerToken] = useState("");
+  const [answers, setAnswers] = useState({});
+  const [gradeResult, setGradeResult] = useState(null);
+  const [message, setMessage] = useState("");
 
   const generateMutation = useMutation({
     mutationFn: api.quizGenerate,
-    onSuccess: ({ words, quiz_text }) => {
-      setFeedback("");
-      setAnswer("");
-      setWords(words);
-      setQuizText(quiz_text);
+    onSuccess: (data) => {
+      setGradeResult(null);
+      setAnswers({});
+      setQuestions(data.questions || []);
+      setAnswerToken(data.answer_token || "");
+      setMessage(data.message || "");
     },
   });
+
+  const gradePayload = useMemo(
+    () =>
+      Object.entries(answers).map(([questionId, choiceId]) => ({
+        question_id: questionId,
+        choice_id: choiceId,
+      })),
+    [answers],
+  );
 
   const gradeMutation = useMutation({
-    mutationFn: () => api.quizGrade(words, quizText, answer),
-    onSuccess: ({ feedback }) => {
-      setFeedback(feedback);
+    mutationFn: () => api.quizGrade(answerToken, gradePayload),
+    onSuccess: (data) => {
+      setGradeResult(data);
+      setMessage(data.feedback || "");
     },
   });
 
-  const generate = async () => {
+  const genLoading = generateMutation.isPending;
+  const gradeLoading = gradeMutation.isPending;
+  const answeredCount = Object.keys(answers).length;
+  const hasQuiz = questions.length > 0;
+  const resultByQuestion = useMemo(() => {
+    const pairs = (gradeResult?.results || []).map((result) => [
+      result.question_id,
+      result,
+    ]);
+    return Object.fromEntries(pairs);
+  }, [gradeResult]);
+
+  const generate = () => {
     if (genLoading || gradeLoading) return;
     generateMutation.mutate();
   };
 
-  const grade = async () => {
-    if (genLoading || gradeLoading || !quizText.trim()) return;
+  const grade = () => {
+    if (genLoading || gradeLoading || !answerToken || !hasQuiz) return;
     gradeMutation.mutate();
   };
 
-  const genLoading = generateMutation.isPending;
-  const gradeLoading = gradeMutation.isPending;
+  const chooseAnswer = (questionId, choiceId) => {
+    if (gradeResult) return;
+    setAnswers((prev) => ({ ...prev, [questionId]: choiceId }));
+  };
 
   return (
     <div>
-      <h3 className="text-base font-semibold mb-3">복습할 단어로 퀴즈를 풀어보세요!</h3>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="text-base font-semibold">AI 어휘 과제</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            복습일이 된 단어를 바탕으로 영어 학원 선생님처럼 문제를 냅니다.
+          </p>
+        </div>
+        <button
+          onClick={generate}
+          disabled={genLoading || gradeLoading || !user}
+          className="rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-60
+                     disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold"
+        >
+          {genLoading ? (
+            <LoadingSpinner
+              label="출제 중"
+              className="text-white"
+              spinnerClassName="border-white/40 border-t-white"
+            />
+          ) : "퀴즈 생성"}
+        </button>
+      </div>
 
       {!user && <MemberNotice feature="퀴즈" onRequireLogin={onRequireLogin} />}
 
-      <button
-        onClick={generate}
-        disabled={genLoading || gradeLoading || !user}
-        className="rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-60
-                   disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold"
-      >
-        {genLoading ? (
-          <LoadingSpinner
-            label="퀴즈 생성 중"
-            className="text-white"
-            spinnerClassName="border-white/40 border-t-white"
-          />
-        ) : "🎯 퀴즈 생성"}
-      </button>
+      {(generateMutation.error || gradeMutation.error) && (
+        <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          {(generateMutation.error || gradeMutation.error).message}
+        </div>
+      )}
 
-      <div className="mt-3">
-        <label className="block text-sm text-slate-500 mb-1">퀴즈</label>
+      {message && (
+        <div className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+          {message}
+        </div>
+      )}
+
+      <div className="mt-4">
         {genLoading ? (
-          <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
-            <SkeletonBlock className="h-4 w-3/4" />
-            <SkeletonBlock className="h-4 w-full" />
-            <SkeletonBlock className="h-4 w-5/6" />
-            <SkeletonBlock className="h-4 w-2/3" />
-            <SkeletonBlock className="h-4 w-4/5" />
+          <div className="space-y-3">
+            {[0, 1, 2].map((item) => (
+              <div key={item} className="rounded-lg border border-slate-200 bg-white p-4">
+                <SkeletonBlock className="h-4 w-3/4" />
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  <SkeletonBlock className="h-10" />
+                  <SkeletonBlock className="h-10" />
+                  <SkeletonBlock className="h-10" />
+                  <SkeletonBlock className="h-10" />
+                </div>
+              </div>
+            ))}
           </div>
-        ) : quizText ? (
-          <textarea
-            readOnly
-            rows={12}
-            value={quizText}
-            className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm
-                       resize-none whitespace-pre-wrap"
-          />
+        ) : hasQuiz ? (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between text-sm text-slate-500">
+              <span>총 {questions.length}문제</span>
+              <span>{answeredCount}/{questions.length} 선택</span>
+            </div>
+
+            {questions.map((question, index) => {
+              const result = resultByQuestion[question.id];
+              return (
+                <div
+                  key={question.id}
+                  className="rounded-lg border border-slate-200 bg-white p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-sm font-semibold text-slate-800">
+                      {index + 1}. {question.prompt}
+                    </p>
+                    {result && (
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${
+                          result.correct
+                            ? "bg-emerald-50 text-emerald-700"
+                            : "bg-rose-50 text-rose-700"
+                        }`}
+                      >
+                        {result.correct ? "정답" : "오답"}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {question.choices.map((choice) => {
+                      const selected = answers[question.id] === choice.id;
+                      const correctChoice = result?.correct_choice_id === choice.id;
+                      const wrongSelected = result && selected && !correctChoice;
+                      return (
+                        <button
+                          key={choice.id}
+                          type="button"
+                          onClick={() => chooseAnswer(question.id, choice.id)}
+                          disabled={Boolean(gradeResult)}
+                          className={`min-h-11 rounded-lg border px-3 py-2 text-left text-sm transition
+                            ${selected ? "border-brand-500 bg-brand-50 text-brand-800" : "border-slate-200 bg-white hover:bg-slate-50"}
+                            ${correctChoice ? "border-emerald-500 bg-emerald-50 text-emerald-800" : ""}
+                            ${wrongSelected ? "border-rose-500 bg-rose-50 text-rose-800" : ""}
+                            disabled:cursor-default`}
+                        >
+                          <span className="font-semibold">{choice.id}.</span>{" "}
+                          <span>{choice.text}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {result && (
+                    <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                      <p>
+                        정답: {result.correct_choice_id}. {result.correct_text}
+                      </p>
+                      {result.explanation && (
+                        <p className="mt-1">{result.explanation}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            <button
+              onClick={grade}
+              disabled={genLoading || gradeLoading || !user || !answerToken || Boolean(gradeResult)}
+              className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50
+                         disabled:opacity-60 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold"
+            >
+              {gradeLoading ? <LoadingSpinner label="채점 중" /> : "채점하기"}
+            </button>
+
+            {gradeResult && (
+              <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+                <p className="text-sm font-semibold text-slate-800">
+                  점수 {gradeResult.score}/{gradeResult.total}
+                </p>
+                <p className="mt-1 text-sm text-slate-500">
+                  정답 단어는 30일 뒤, 오답 단어는 1일 뒤로 다음 복습일이 조정됩니다.
+                </p>
+              </div>
+            )}
+          </div>
         ) : (
           <EmptyState
-            title={user ? "아직 생성된 퀴즈가 없습니다" : "로그인이 필요합니다"}
+            title={user ? "생성된 퀴즈가 없습니다" : "로그인이 필요합니다"}
             description={
               user
-                ? "퀴즈 생성을 누르면 복습할 단어로 문제가 만들어집니다."
-                : "로그인하면 저장한 단어로 퀴즈를 만들 수 있어요."
+                ? "퀴즈 생성을 누르면 복습일이 된 단어로 문제가 만들어집니다."
+                : "로그인하면 저장한 단어로 AI 어휘 과제를 받을 수 있어요."
             }
-          />
-        )}
-      </div>
-
-      <div className="mt-3">
-        <label className="block text-sm text-slate-500 mb-1">📝 답변 입력</label>
-        <textarea
-          rows={6}
-          value={answer}
-          onChange={(e) => setAnswer(e.target.value)}
-          disabled={!user || genLoading || gradeLoading}
-          placeholder={"1번: \n2번: \n3번: \n4번: \n5번: "}
-          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm resize-none
-                     disabled:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-200"
-        />
-      </div>
-
-      <button
-        onClick={grade}
-        disabled={genLoading || gradeLoading || !user || !quizText.trim()}
-        className="mt-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50
-                   disabled:opacity-60 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold"
-      >
-        {gradeLoading ? <LoadingSpinner label="채점 중" /> : "✅ 채점하기"}
-      </button>
-
-      <div className="mt-3">
-        <label className="block text-sm text-slate-500 mb-1">📊 채점 결과</label>
-        {gradeLoading ? (
-          <SkeletonBlock className="h-32" />
-        ) : feedback ? (
-          <textarea
-            readOnly
-            rows={8}
-            value={feedback}
-            className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm
-                       resize-none whitespace-pre-wrap"
-          />
-        ) : (
-          <EmptyState
-            title="채점 결과가 없습니다"
-            description="답변을 입력하고 채점하면 피드백이 표시됩니다."
           />
         )}
       </div>

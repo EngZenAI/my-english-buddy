@@ -519,7 +519,11 @@ def get_words_to_review(user_id: str):
             return [dict(row) for row in cur.fetchall()]
 
 def update_review(user_id: str, word_id: int, correct: bool):
-    days = 7 if correct else 1
+    """퀴즈 결과에 따라 다음 복습일을 조정한다.
+
+    정답은 기본 한 달 뒤, 오답은 가까운 복습을 위해 하루 뒤로 보낸다.
+    """
+    days = 30 if correct else 1
     next_review = datetime.now() + timedelta(days=days)
     with get_conn() as conn:
         with conn.cursor() as cur:

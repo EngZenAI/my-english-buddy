@@ -179,10 +179,10 @@ export const api = {
 
   // ── 퀴즈 ──
   quizGenerate: () => jsonFetch("/api/quiz/generate", { method: "POST" }),
-  quizGrade: (words, quizText, userAnswer) =>
+  quizGrade: (answerToken, answers) =>
     jsonFetch("/api/quiz/grade", {
       method: "POST",
-      body: JSON.stringify({ words, quiz_text: quizText, user_answer: userAnswer }),
+      body: JSON.stringify({ answer_token: answerToken, answers }),
     }),
 
   // ── 롤플레잉 ──

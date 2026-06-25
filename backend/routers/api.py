@@ -36,10 +36,10 @@ from backend.database import (
 from backend.llm import (
     continue_roleplay,
     explain_slang,
-    generate_quiz,
-    grade_quiz,
     start_roleplay,
 )
+from backend.quiz.schemas import QuizGradeIn
+from backend.quiz.service import generate_assignment, grade_assignment
 from backend.services import (
     search_from_english,
     search_from_korean,
@@ -112,12 +112,6 @@ class LabelIn(BaseModel):
 class RenameLabelIn(BaseModel):
     old_name: str
     new_name: str
-
-
-class QuizGradeIn(BaseModel):
-    words: list
-    quiz_text: str
-    user_answer: str
 
 
 class RoleplayContinueIn(BaseModel):
@@ -385,15 +379,21 @@ def slang(payload: SlangIn, _user: dict = Depends(require_user)):
 # ── 퀴즈 — 회원 전용 ───────────────────────────────────────
 @router.post("/quiz/generate")
 def quiz_generate(_user: dict = Depends(require_user)):
-    words = get_words_to_review(_user["id"])
-    quiz_text = generate_quiz(words)
-    return {"words": words, "quiz_text": quiz_text}
+    # TODO: 복습 스케줄 기반 출제로 되돌릴 때 get_words_to_review(_user["id"])를 사용한다.
+    words = get_all_words(_user["id"])
+    return generate_assignment(_user["id"], words)
 
 
 @router.post("/quiz/grade")
 def quiz_grade(payload: QuizGradeIn, _user: dict = Depends(require_user)):
-    feedback = grade_quiz(payload.words, payload.quiz_text, payload.user_answer)
-    return {"feedback": feedback}
+    try:
+        return grade_assignment(
+            _user["id"],
+            payload.answer_token,
+            [answer.model_dump() for answer in payload.answers],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 # ── 롤플레잉 — 회원 전용 ───────────────────────────────────
