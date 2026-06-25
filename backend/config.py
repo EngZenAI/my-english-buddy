@@ -19,7 +19,16 @@ class Settings(BaseSettings):
     auth_cookie_max_age: int = 60 * 60 * 24 * 7
     auth_cookie_secure: bool = False
     auth_secret: str  # .env 에서 값 필수 설정
-    oauth_success_redirect_url: str = "/app"
+    app_public_url: str = "http://localhost:5173"
+    oauth_success_redirect_url: str = "/auth/complete"
+    password_reset_code_lifetime_seconds: int = 10 * 60
+    password_reset_debug_code: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_use_tls: bool = True
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""
 

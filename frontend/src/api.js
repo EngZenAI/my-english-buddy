@@ -14,6 +14,15 @@ async function jsonFetch(url, options = {}) {
   return res.json();
 }
 
+const DEFAULT_DEV_BACKEND_ORIGIN =
+  typeof window === "undefined"
+    ? "http://localhost:8000"
+    : `${window.location.protocol}//${window.location.hostname}:8000`;
+
+const BACKEND_ORIGIN =
+  import.meta.env.VITE_BACKEND_ORIGIN ||
+  (import.meta.env.DEV ? DEFAULT_DEV_BACKEND_ORIGIN : "");
+
 export const api = {
   // ── 인증 상태 ──
   me: () => jsonFetch("/api/me"),
@@ -31,11 +40,55 @@ export const api = {
     return res.ok;
   },
 
+  logout: async () => {
+    const res = await fetch("/auth/logout", {
+      method: "POST",
+      credentials: "same-origin",
+    });
+    return res.ok;
+  },
+
   register: async (email, password) => {
     const res = await fetch("/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: email.trim(), password }),
+      credentials: "same-origin",
+    });
+    if (res.ok) return { ok: true };
+    const data = await res.json().catch(() => ({}));
+    return { ok: false, detail: data.detail };
+  },
+
+  requestPasswordReset: async (email) => {
+    const res = await fetch("/auth/password-reset/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim() }),
+      credentials: "same-origin",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) return { ok: true, ...data };
+    return { ok: false, detail: data.detail };
+  },
+
+  confirmPasswordReset: async (email, code, password) => {
+    const res = await fetch("/auth/password-reset/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim(), code: code.trim(), password }),
+      credentials: "same-origin",
+    });
+    if (res.ok) return { ok: true };
+    const data = await res.json().catch(() => ({}));
+    return { ok: false, detail: data.detail };
+  },
+
+  verifyPasswordResetCode: async (email, code) => {
+    const res = await fetch("/auth/password-reset/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim(), code: code.trim() }),
       credentials: "same-origin",
     });
     if (res.ok) return { ok: true };
@@ -99,5 +152,4 @@ export const api = {
     }),
 };
 
-export const LOGOUT_URL = "/auth/logout";
-export const GOOGLE_LOGIN_URL = "/auth/google/login";
+export const GOOGLE_LOGIN_URL = `${BACKEND_ORIGIN}/auth/google/login`;

@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
-import { api, LOGOUT_URL } from "./api";
+import { api } from "./api";
 import SearchTab from "./tabs/SearchTab";
 import WordbookTab from "./tabs/WordbookTab";
 import QuizTab from "./tabs/QuizTab";
 import RoleplayTab from "./tabs/RoleplayTab";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
+import FindIdPage from "./pages/FindIdPage";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 
 const TABS = [
   { id: "search", label: "🔍 단어 검색", Comp: SearchTab },
@@ -14,22 +16,112 @@ const TABS = [
   { id: "roleplay", label: "💬 롤플레잉", Comp: RoleplayTab },
 ];
 
+const AUTH_RETURN_KEY = "englishBuddy.authReturn";
+
+function getInitialView() {
+  if (window.location.pathname === "/auth/complete") return "auth-complete";
+  return "home";
+}
+
+function replaceUrl(path = "/") {
+  if (window.location.pathname !== path || window.location.search) {
+    window.history.replaceState(null, "", path);
+  }
+}
+
+function saveReturnTarget(target) {
+  sessionStorage.setItem(AUTH_RETURN_KEY, JSON.stringify(target));
+}
+
+function popReturnTarget() {
+  const raw = sessionStorage.getItem(AUTH_RETURN_KEY);
+  sessionStorage.removeItem(AUTH_RETURN_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function LoadingPanel({ message }) {
+  return (
+    <div className="py-16 flex flex-col items-center justify-center gap-3 text-slate-500">
+      <span
+        aria-hidden="true"
+        className="h-8 w-8 rounded-full border-4 border-brand-100 border-t-brand-600 animate-spin"
+      />
+      <p className="text-sm">{message}</p>
+    </div>
+  );
+}
+
 export default function App() {
-  const [view, setView] = useState("home"); // home | login | signup
+  const [view, setView] = useState(getInitialView);
   const [tab, setTab] = useState("search");
   const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authCompleteFailed, setAuthCompleteFailed] = useState(false);
 
   const refreshUser = async () => {
     try {
       const { user } = await api.me();
       setUser(user);
+      return user;
     } catch {
       setUser(null);
+      return null;
     }
   };
 
+  const goToView = (nextView) => {
+    setView(nextView);
+    replaceUrl("/");
+  };
+
+  const goToReturnTarget = () => {
+    const target = popReturnTarget() || { view: "home", tab: "search" };
+    if (target.tab) setTab(target.tab);
+    setView(target.view || "home");
+    replaceUrl("/");
+  };
+
+  const startLogin = (target = { view: "home", tab }) => {
+    saveReturnTarget(target);
+    goToView("login");
+  };
+
+  const startOAuth = () => {
+    saveReturnTarget({ view: "home", tab });
+  };
+
+  const completeLogin = async () => {
+    const nextUser = await refreshUser();
+    if (nextUser) goToReturnTarget();
+  };
+
+  const logout = async () => {
+    await api.logout();
+    sessionStorage.removeItem(AUTH_RETURN_KEY);
+    setUser(null);
+    goToView("home");
+  };
+
   useEffect(() => {
-    refreshUser();
+    const finishInitialAuth = async () => {
+      const nextUser = await refreshUser();
+      setAuthLoading(false);
+
+      if (getInitialView() === "auth-complete") {
+        if (nextUser) {
+          goToReturnTarget();
+        } else {
+          setAuthCompleteFailed(true);
+        }
+      }
+    };
+
+    finishInitialAuth();
   }, []);
 
   const ActiveTab = TABS.find((t) => t.id === tab)?.Comp || SearchTab;
@@ -39,7 +131,7 @@ export default function App() {
       {/* Navbar */}
       <div className="flex items-center justify-end gap-2 pb-3 flex-wrap">
         <button
-          onClick={() => setView("home")}
+          onClick={() => goToView("home")}
           className="h-9 px-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50
                      text-sm font-semibold"
         >
@@ -50,25 +142,25 @@ export default function App() {
             <span className="text-sm text-slate-500 max-w-[240px] truncate">
               로그인됨: {user.email}
             </span>
-            <a
-              href={LOGOUT_URL}
+            <button
+              onClick={logout}
               className="h-9 px-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50
-                         text-sm font-semibold inline-flex items-center no-underline text-slate-900"
+                         text-sm font-semibold"
             >
               로그아웃
-            </a>
+            </button>
           </>
         ) : (
           <>
             <button
-              onClick={() => setView("login")}
+              onClick={() => startLogin({ view: "home", tab })}
               className="h-9 px-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50
                          text-sm font-semibold"
             >
               로그인
             </button>
             <button
-              onClick={() => setView("signup")}
+              onClick={() => goToView("signup")}
               className="h-9 px-3 rounded-lg bg-brand-600 text-white hover:bg-brand-700
                          text-sm font-semibold"
             >
@@ -78,12 +170,46 @@ export default function App() {
         )}
       </div>
 
-      {view === "login" && (
-        <LoginPage onNavigate={setView} onLoggedIn={refreshUser} />
+      {authLoading && (
+        <LoadingPanel message="인증 상태를 확인하고 있습니다." />
       )}
-      {view === "signup" && <SignupPage onNavigate={setView} />}
 
-      {view === "home" && (
+      {!authLoading && view === "auth-complete" && (
+        authCompleteFailed ? (
+          <div className="py-10">
+            <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-7 max-w-md mx-auto">
+              <h1 className="text-2xl font-bold mb-1.5">로그인 확인 실패</h1>
+              <p className="text-sm text-slate-500 mb-4">
+                Google 로그인 완료 상태를 확인하지 못했습니다.
+              </p>
+              <button
+                onClick={() => startLogin({ view: "home", tab })}
+                className="w-full h-10 rounded-lg bg-brand-600 text-white font-semibold
+                           hover:bg-brand-700"
+              >
+                다시 로그인
+              </button>
+            </div>
+          </div>
+        ) : (
+          <LoadingPanel message="로그인 완료 후 이동하고 있습니다." />
+        )
+      )}
+
+      {view === "login" && (
+        <LoginPage
+          onNavigate={goToView}
+          onAuthenticated={completeLogin}
+          onOAuthStart={startOAuth}
+        />
+      )}
+      {view === "signup" && (
+        <SignupPage onNavigate={goToView} onOAuthStart={startOAuth} />
+      )}
+      {view === "find-id" && <FindIdPage onNavigate={goToView} />}
+      {view === "forgot-password" && <ForgotPasswordPage onNavigate={goToView} />}
+
+      {!authLoading && view === "home" && (
         <>
           <h1 className="text-2xl font-bold mb-4">📚 나만의 영어 학습 앱</h1>
 
@@ -103,7 +229,10 @@ export default function App() {
             ))}
           </div>
 
-          <ActiveTab user={user} onRequireLogin={() => setView("login")} />
+          <ActiveTab
+            user={user}
+            onRequireLogin={() => startLogin({ view: "home", tab })}
+          />
         </>
       )}
     </div>
