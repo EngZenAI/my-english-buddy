@@ -119,7 +119,8 @@ export default function WordbookTab({ user, onRequireLogin }) {
         })
       ).count;
     } catch {
-      /* 무시 */
+      alert("태그에 포함된 단어 수를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.");
+      return;
     }
     const ok = window.confirm(
       `'${name}' 태그를 삭제하면 이 태그의 단어 ${count}개도 함께 삭제됩니다.\n계속하시겠습니까?`
