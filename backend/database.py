@@ -128,6 +128,7 @@ def init_db():
                 -- 기존 테이블에 korean_detail 컬럼이 없으면 추가
                 ALTER TABLE words ADD COLUMN IF NOT EXISTS user_id UUID;
                 ALTER TABLE words ADD COLUMN IF NOT EXISTS korean_detail TEXT;
+                ALTER TABLE words ADD COLUMN IF NOT EXISTS sort_order INTEGER;
                 ALTER TABLE words ALTER COLUMN next_review SET DEFAULT NOW() + INTERVAL '7 days';
                 ALTER TABLE words DROP COLUMN IF EXISTS phonetic;
                 ALTER TABLE words DROP CONSTRAINT IF EXISTS words_word_key;
@@ -156,6 +157,22 @@ def init_db():
                 DELETE FROM labels WHERE user_id IS NULL;  -- 기존 전역 라벨 정리(사용자별로 재시드)
                 CREATE UNIQUE INDEX IF NOT EXISTS ux_labels_user_name
                     ON labels (user_id, name);
+            """)
+            # sort_order 백필: 기존 행은 사용자별 최근 저장순(현재 화면 순서)을 0,1,2…로 부여
+            cur.execute("""
+                WITH ranked AS (
+                    SELECT id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY user_id
+                               ORDER BY created_at DESC, id DESC
+                           ) - 1 AS rn
+                    FROM words
+                    WHERE sort_order IS NULL
+                )
+                UPDATE words w
+                SET sort_order = r.rn
+                FROM ranked r
+                WHERE w.id = r.id;
             """)
         # 기본 라벨은 사용자가 처음 접근할 때(get_labels) 사용자별로 시드한다.
         conn.commit()
@@ -193,17 +210,69 @@ def save_word(user_id, word, korean, korean_detail, english_def, example, tag):
                 )
                 conn.commit()
                 return "✏️ 단어 정보를 업데이트했어요!"
+            # 새 단어는 목록 맨 위에 오도록 가장 작은 sort_order 부여
+            cur.execute(
+                "SELECT COALESCE(MIN(sort_order), 0) - 1 FROM words WHERE user_id = %s",
+                (user_id,),
+            )
+            next_order = cur.fetchone()[0]
             cur.execute("""
                 INSERT INTO words
-                    (user_id, word, korean, korean_detail, english_def, example, tag, next_review)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW() + INTERVAL '7 days')
-            """, (user_id, word, korean, korean_detail, english_def, example, tag))
+                    (user_id, word, korean, korean_detail, english_def, example, tag, sort_order, next_review)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW() + INTERVAL '7 days')
+            """, (user_id, word, korean, korean_detail, english_def, example, tag, next_order))
         conn.commit()
     return "✅ 단어장에 저장됐어요!"
 
+def bulk_import_words(user_id: str, items, default_tag: str = "미지정") -> dict:
+    """CSV/XLSX에서 읽은 (영어, 한국어) 목록을 일괄 저장.
+    영어단어·한국어만 채우고 예문/상세는 빈값, 태그는 default_tag,
+    복습일은 NOW()+7일. 이미 있는 단어는 건드리지 않고 건너뛴다(사용자 편집 보호)."""
+    added = skipped = 0
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # 새로 넣을 것만 추림 (DB 기존 단어 + 같은 파일 내 중복 모두 스킵)
+            to_insert: list[tuple[str, str]] = []
+            seen: set[str] = set()
+            for word, korean in items:
+                w = (word or "").strip()
+                if not w or w.lower() in seen:
+                    if w:
+                        skipped += 1
+                    continue
+                cur.execute(
+                    "SELECT id FROM words WHERE user_id = %s AND lower(word) = lower(%s)",
+                    (user_id, w),
+                )
+                if cur.fetchone():
+                    skipped += 1
+                    continue
+                seen.add(w.lower())
+                to_insert.append((w, (korean or "").strip()))
+
+            # 가져온 단어들은 기존 단어 위쪽에, 파일 순서를 유지하며 배치
+            cur.execute(
+                "SELECT COALESCE(MIN(sort_order), 0) FROM words WHERE user_id = %s",
+                (user_id,),
+            )
+            base = cur.fetchone()[0]
+            n = len(to_insert)
+            for i, (w, k) in enumerate(to_insert):
+                cur.execute(
+                    """INSERT INTO words
+                           (user_id, word, korean, korean_detail, english_def,
+                            example, tag, sort_order, next_review)
+                       VALUES (%s, %s, %s, '', '', '', %s, %s, NOW() + INTERVAL '7 days')""",
+                    (user_id, w.lower(), k, default_tag, base - n + i),
+                )
+                added += 1
+        conn.commit()
+    return {"added": added, "skipped": skipped, "total": added + skipped}
+
+
 def get_all_words(user_id: str, tag: str | None = None):
     cols = """id, word, korean, korean_detail, english_def, example,
-              tag, created_at, next_review"""
+              tag, created_at, next_review, sort_order"""
     with get_conn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             if tag:
@@ -211,7 +280,7 @@ def get_all_words(user_id: str, tag: str | None = None):
                     f"""SELECT {cols}
                         FROM words
                         WHERE user_id = %s AND tag = %s
-                        ORDER BY created_at DESC""",
+                        ORDER BY sort_order ASC NULLS LAST, created_at DESC""",
                     (user_id, tag),
                 )
             else:
@@ -219,10 +288,129 @@ def get_all_words(user_id: str, tag: str | None = None):
                     f"""SELECT {cols}
                         FROM words
                         WHERE user_id = %s
-                        ORDER BY created_at DESC""",
+                        ORDER BY sort_order ASC NULLS LAST, created_at DESC""",
                     (user_id,),
                 )
             return [dict(row) for row in cur.fetchall()]
+
+def update_word(user_id: str, word_id: int, korean_detail, english_def,
+                example, tag, next_review) -> bool:
+    """단어 행 개별 편집. 영어단어(word)·한국어(korean)는 변경하지 않는다.
+    편집 가능: 한국어 상세 / 영어뜻 / 예문 / 태그 / 다음 복습일.
+    next_review 는 'YYYY-MM-DD' 문자열(또는 빈값=변경 안 함)."""
+    sets = [
+        "korean_detail = %s",
+        "english_def = %s",
+        "example = %s",
+        "tag = %s",
+    ]
+    params = [korean_detail, english_def, example, (tag or "미지정")]
+    if next_review:
+        sets.append("next_review = %s")
+        params.append(next_review)
+    params.extend([word_id, user_id])
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE words SET {', '.join(sets)} "
+                "WHERE id = %s AND user_id = %s",
+                params,
+            )
+            changed = cur.rowcount
+        conn.commit()
+    return changed > 0
+
+
+def delete_word(user_id: str, word_id: int) -> bool:
+    """단어 행 개별 삭제 (본인 소유만)."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM words WHERE id = %s AND user_id = %s",
+                (word_id, user_id),
+            )
+            changed = cur.rowcount
+        conn.commit()
+    return changed > 0
+
+
+def bulk_update_words(user_id: str, items) -> int:
+    """여러 단어를 한 번에 편집. 각 item: {id, korean_detail, english_def,
+    example, tag, next_review}. word·korean은 변경하지 않음."""
+    updated = 0
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            for it in items:
+                try:
+                    wid = int(it["id"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                sets = [
+                    "korean_detail = %s",
+                    "english_def = %s",
+                    "example = %s",
+                    "tag = %s",
+                ]
+                params = [
+                    it.get("korean_detail", "") or "",
+                    it.get("english_def", "") or "",
+                    it.get("example", "") or "",
+                    (it.get("tag") or "미지정"),
+                ]
+                nr = (it.get("next_review") or "").strip()
+                if nr:
+                    sets.append("next_review = %s")
+                    params.append(nr)
+                params.extend([wid, user_id])
+                cur.execute(
+                    f"UPDATE words SET {', '.join(sets)} WHERE id = %s AND user_id = %s",
+                    params,
+                )
+                updated += cur.rowcount
+        conn.commit()
+    return updated
+
+
+def bulk_delete_words(user_id: str, ids) -> int:
+    """체크된 여러 단어를 한 번에 삭제 (본인 소유만)."""
+    clean = []
+    for i in ids or []:
+        try:
+            clean.append(int(i))
+        except (TypeError, ValueError):
+            continue
+    if not clean:
+        return 0
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM words WHERE user_id = %s AND id = ANY(%s)",
+                (user_id, clean),
+            )
+            deleted = cur.rowcount
+        conn.commit()
+    return deleted
+
+
+def reorder_words(user_id: str, ordered_ids) -> int:
+    """드래그로 바뀐 순서를 저장. ordered_ids는 위→아래 단어 id 목록.
+    각 단어의 sort_order를 목록 인덱스(0,1,2…)로 갱신한다."""
+    updated = 0
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            for idx, wid in enumerate(ordered_ids or []):
+                try:
+                    wid = int(wid)
+                except (TypeError, ValueError):
+                    continue
+                cur.execute(
+                    "UPDATE words SET sort_order = %s WHERE id = %s AND user_id = %s",
+                    (idx, wid, user_id),
+                )
+                updated += cur.rowcount
+        conn.commit()
+    return updated
+
 
 def get_words_to_review(user_id: str):
     with get_conn() as conn:

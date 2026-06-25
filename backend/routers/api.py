@@ -7,20 +7,29 @@
 회원 전용: 단어장/태그/퀴즈/롤플레잉/슬랭 (require_user 의존성으로 보호).
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+import csv
+import io
+
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from backend.auth.users import get_current_user_from_cookie
 from backend.database import (
     add_label,
+    bulk_delete_words,
+    bulk_import_words,
+    bulk_update_words,
     count_words_by_tag,
     delete_label,
+    delete_word,
     get_all_words,
     get_labels,
     get_words_to_review,
     is_word_saved,
     rename_label,
+    reorder_words,
     save_word,
+    update_word,
 )
 from backend.llm import (
     continue_roleplay,
@@ -55,6 +64,31 @@ class SaveWordIn(BaseModel):
     example: str = ""
     tag: str = ""  # 선택한 태그(카테고리)
     slang_def: str = ""
+
+
+class UpdateWordIn(BaseModel):
+    korean_detail: str = ""
+    english_def: str = ""
+    example: str = ""
+    tag: str = ""
+    next_review: str = ""  # 'YYYY-MM-DD' (빈값이면 변경 안 함)
+
+
+class BulkUpdateItem(BaseModel):
+    id: int
+    korean_detail: str = ""
+    english_def: str = ""
+    example: str = ""
+    tag: str = ""
+    next_review: str = ""
+
+
+class BulkUpdateIn(BaseModel):
+    items: list[BulkUpdateItem]
+
+
+class IdsIn(BaseModel):
+    ids: list[int]
 
 
 class LabelIn(BaseModel):
@@ -159,6 +193,153 @@ def create_word(payload: SaveWordIn, _user: dict = Depends(require_user)):
         _user["id"], word.lower(), payload.korean, payload.korean_detail, final_def, payload.example, tag
     )
     return {"ok": True, "message": message, "saved": True}
+
+
+@router.patch("/words/{word_id}")
+def edit_word(word_id: int, payload: UpdateWordIn, _user: dict = Depends(require_user)):
+    ok = update_word(
+        _user["id"],
+        word_id,
+        payload.korean_detail,
+        payload.english_def,
+        payload.example,
+        payload.tag.strip(),
+        payload.next_review.strip(),
+    )
+    if not ok:
+        return {"ok": False, "message": "수정할 단어를 찾을 수 없어요."}
+    return {"ok": True, "message": "✏️ 수정했어요!"}
+
+
+@router.delete("/words/{word_id}")
+def remove_word(word_id: int, _user: dict = Depends(require_user)):
+    ok = delete_word(_user["id"], word_id)
+    if not ok:
+        return {"ok": False, "message": "삭제할 단어를 찾을 수 없어요."}
+    return {"ok": True, "message": "🗑️ 삭제했어요!"}
+
+
+@router.post("/words/bulk-update")
+def bulk_update(payload: BulkUpdateIn, _user: dict = Depends(require_user)):
+    items = [it.model_dump() for it in payload.items]
+    updated = bulk_update_words(_user["id"], items)
+    return {"ok": True, "updated": updated, "message": f"💾 {updated}개 저장했어요!"}
+
+
+@router.post("/words/bulk-delete")
+def bulk_delete(payload: IdsIn, _user: dict = Depends(require_user)):
+    deleted = bulk_delete_words(_user["id"], payload.ids)
+    return {"ok": True, "deleted": deleted, "message": f"🗑️ {deleted}개 삭제했어요!"}
+
+
+@router.post("/words/reorder")
+def reorder(payload: IdsIn, _user: dict = Depends(require_user)):
+    updated = reorder_words(_user["id"], payload.ids)
+    return {"ok": True, "updated": updated}
+
+
+# ── CSV/XLSX 일괄 가져오기 — 회원 전용 ──────────────────────
+def _decode_bytes(content: bytes) -> str:
+    """구글 내보내기는 UTF-8, Excel 재저장본은 CP949일 수 있어 차례로 시도."""
+    for enc in ("utf-8-sig", "cp949", "utf-8"):
+        try:
+            return content.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return content.decode("utf-8", errors="replace")
+
+
+_LANG_EN = {"영어", "english", "en", "eng"}
+_LANG_KO = {"한국어", "korean", "ko", "kor"}
+_ALL_LANG = _LANG_EN | _LANG_KO
+
+
+def _looks_like_header(a: str, b: str) -> bool:
+    s = (a + " " + b).lower()
+    keys = ("영어", "한국어", "english", "word", "korean", "뜻", "translation", "단어")
+    return any(k in s for k in keys)
+
+
+def _row_to_pair(cells) -> tuple[str, str] | None:
+    """한 행을 (영어단어, 한국어뜻)으로 변환.
+    구글 번역 내보내기는 4열 [소스언어, 타깃언어, 소스텍스트, 타깃텍스트]이고
+    행마다 영→한/한→영 방향이 다르므로 언어 라벨을 보고 영어 쪽을 단어로 잡는다.
+    그 외에는 단순 2열 [영어, 한국어]로 처리."""
+    cells = [("" if c is None else str(c)).strip() for c in cells]
+    if (
+        len(cells) >= 4
+        and cells[0].lower() in _ALL_LANG
+        and cells[1].lower() in _ALL_LANG
+    ):
+        src_lang, tgt_lang, src_txt, tgt_txt = (
+            cells[0].lower(), cells[1].lower(), cells[2], cells[3],
+        )
+        if src_lang in _LANG_EN:
+            return src_txt, tgt_txt
+        if tgt_lang in _LANG_EN:
+            return tgt_txt, src_txt
+        return src_txt, tgt_txt
+    if len(cells) >= 2:
+        return cells[0], cells[1]
+    return None
+
+
+def _rows_from_records(records) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    for i, r in enumerate(records):
+        pair = _row_to_pair(r)
+        if not pair:
+            continue
+        word, korean = pair
+        if not word:
+            continue
+        # 단순 2열 파일의 헤더 줄만 건너뜀 (구글 4열은 매 행이 데이터)
+        if i == 0 and len(list(r)) < 3 and _looks_like_header(word, korean):
+            continue
+        rows.append((word, korean))
+    return rows
+
+
+def _parse_rows_csv(content: bytes) -> list[tuple[str, str]]:
+    text = _decode_bytes(content)
+    return _rows_from_records(csv.reader(io.StringIO(text)))
+
+
+def _parse_rows_xlsx(content: bytes) -> list[tuple[str, str]]:
+    from openpyxl import load_workbook
+
+    wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    ws = wb.active
+    return _rows_from_records(ws.iter_rows(values_only=True))
+
+
+@router.post("/words/import")
+async def import_words(
+    file: UploadFile = File(...),
+    tag: str = "",
+    _user: dict = Depends(require_user),
+):
+    content = await file.read()
+    name = (file.filename or "").lower()
+    try:
+        if name.endswith((".xlsx", ".xlsm", ".xls")):
+            rows = _parse_rows_xlsx(content)
+        else:
+            rows = _parse_rows_csv(content)
+    except Exception:
+        return {"ok": False, "message": "파일을 읽지 못했어요. CSV 또는 XLSX인지, 첫 두 열이 영어/한국어인지 확인해주세요."}
+
+    if not rows:
+        return {"ok": False, "message": "가져올 단어가 없어요. 첫 두 열이 '영어 | 한국어' 형식인지 확인해주세요."}
+
+    default_tag = tag.strip() or "미지정"
+    result = bulk_import_words(_user["id"], rows, default_tag)
+    return {
+        "ok": True,
+        "message": f"📥 {result['added']}개 추가"
+        + (f", {result['skipped']}개는 이미 있어 건너뜀" if result["skipped"] else ""),
+        **result,
+    }
 
 
 # ── 슬랭 / 구어체 설명 — 회원 전용 (LLM 비용) ──────────────

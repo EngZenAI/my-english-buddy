@@ -127,6 +127,44 @@ export const api = {
     jsonFetch(`/api/words/saved?word=${encodeURIComponent(word)}`),
   saveWord: (payload) =>
     jsonFetch("/api/words", { method: "POST", body: JSON.stringify(payload) }),
+  updateWord: (id, payload) =>
+    jsonFetch(`/api/words/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  deleteWord: (id) =>
+    jsonFetch(`/api/words/${id}`, { method: "DELETE" }),
+  bulkUpdateWords: (items) =>
+    jsonFetch("/api/words/bulk-update", {
+      method: "POST",
+      body: JSON.stringify({ items }),
+    }),
+  bulkDeleteWords: (ids) =>
+    jsonFetch("/api/words/bulk-delete", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
+  reorderWords: (ids) =>
+    jsonFetch("/api/words/reorder", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
+  importWords: async (file, tag = "") => {
+    const form = new FormData();
+    form.append("file", file);
+    const url = `/api/words/import${tag ? `?tag=${encodeURIComponent(tag)}` : ""}`;
+    // multipart라 Content-Type은 브라우저가 boundary와 함께 자동 설정 (수동 지정 금지)
+    const res = await fetch(url, {
+      method: "POST",
+      body: form,
+      credentials: "same-origin",
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`${res.status} ${text}`);
+    }
+    return res.json();
+  },
 
   // ── 슬랭 ──
   slang: (word, korean) =>

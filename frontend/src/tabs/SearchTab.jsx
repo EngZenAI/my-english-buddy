@@ -57,7 +57,7 @@ export default function SearchTab({ user, onRequireLogin }) {
   const [customExample, setCustomExample] = useState(""); // 내 맞춤 예문 (편집/저장 대상)
   const [phonetic, setPhonetic] = useState("");
   const [saved, setSaved] = useState(false);
-  const [saveGate, setSaveGate] = useState(false); // 비회원 저장 시도 안내
+  const [gate, setGate] = useState(""); // 비회원 기능 안내 (표시할 기능명, "" = 숨김)
 
   // 태그(카테고리)
   const [label, setLabel] = useState("미지정"); // 현재 선택된 태그 (기본: 미지정)
@@ -265,7 +265,7 @@ export default function SearchTab({ user, onRequireLogin }) {
   const handleSave = async () => {
     if (!hasConfirmedSearchResult) return;
     if (!user) {
-      setSaveGate(true); // 비회원 → 회원 기능 안내
+      setGate("단어장 저장"); // 비회원 → 회원 기능 안내
       return;
     }
     saveWordMutation.mutate({
@@ -292,6 +292,10 @@ export default function SearchTab({ user, onRequireLogin }) {
   const handleSlang = async () => {
     const engWord = eng.trim();
     const korWord = kor.trim();
+    if (!user) {
+      setGate("AI 슬랭 설명"); // 비회원 → 회원 기능 안내
+      return;
+    }
     if (!engWord) {
       setSlangText("단어를 먼저 검색해주세요.");
       return;
@@ -406,9 +410,9 @@ export default function SearchTab({ user, onRequireLogin }) {
         )}
       </div>
 
-      {saveGate && !user && (
+      {gate && !user && (
         <div className="mt-3">
-          <MemberNotice feature="단어장 저장" onRequireLogin={onRequireLogin} />
+          <MemberNotice feature={gate} onRequireLogin={onRequireLogin} />
         </div>
       )}
 
