@@ -28,8 +28,12 @@ export default function RoleplayTab({ user, onRequireLogin }) {
   const sendMutation = useMutation({
     mutationFn: (text) => api.roleplayContinue(history, text),
     onSuccess: ({ history: newHistory }) => {
+      setMsg("");
       setHistory(newHistory);
       scrollToBottom();
+    },
+    onError: (_error, text) => {
+      setMsg((current) => current || text);
     },
   });
 
@@ -40,7 +44,6 @@ export default function RoleplayTab({ user, onRequireLogin }) {
   const send = async () => {
     if (!msg.trim() || sendMutation.isPending) return;
     const text = msg;
-    setMsg("");
     sendMutation.mutate(text);
   };
 
