@@ -22,9 +22,11 @@ from backend.database import (
     count_words_by_tag,
     delete_label,
     delete_word,
+    existing_words_lower,
     get_all_words,
     get_labels,
     get_words_to_review,
+    insert_words,
     is_word_saved,
     rename_label,
     reorder_words,
@@ -89,6 +91,18 @@ class BulkUpdateIn(BaseModel):
 
 class IdsIn(BaseModel):
     ids: list[int]
+
+
+class ImportItem(BaseModel):
+    word: str
+    korean: str = ""
+    korean_detail: str = ""
+    example: str = ""
+    tag: str = ""
+
+
+class ImportCommitIn(BaseModel):
+    items: list[ImportItem]
 
 
 class LabelIn(BaseModel):
@@ -313,27 +327,44 @@ def _parse_rows_xlsx(content: bytes) -> list[tuple[str, str]]:
     return _rows_from_records(ws.iter_rows(values_only=True))
 
 
-@router.post("/words/import")
-async def import_words(
+def _parse_upload(file: UploadFile, content: bytes) -> list[tuple[str, str]]:
+    name = (file.filename or "").lower()
+    if name.endswith((".xlsx", ".xlsm", ".xls")):
+        return _parse_rows_xlsx(content)
+    return _parse_rows_csv(content)
+
+
+@router.post("/words/import/preview")
+async def import_preview(
     file: UploadFile = File(...),
-    tag: str = "",
     _user: dict = Depends(require_user),
 ):
+    """파일을 파싱만 해서 미리보기 행을 돌려준다(저장하지 않음).
+    각 행에 이미 보유 중인 단어인지(dup) 표시한다."""
     content = await file.read()
-    name = (file.filename or "").lower()
     try:
-        if name.endswith((".xlsx", ".xlsm", ".xls")):
-            rows = _parse_rows_xlsx(content)
-        else:
-            rows = _parse_rows_csv(content)
+        rows = _parse_upload(file, content)
     except Exception:
         return {"ok": False, "message": "파일을 읽지 못했어요. CSV 또는 XLSX인지, 첫 두 열이 영어/한국어인지 확인해주세요."}
 
     if not rows:
         return {"ok": False, "message": "가져올 단어가 없어요. 첫 두 열이 '영어 | 한국어' 형식인지 확인해주세요."}
 
-    default_tag = tag.strip() or "미지정"
-    result = bulk_import_words(_user["id"], rows, default_tag)
+    existing = existing_words_lower(_user["id"])
+    out = [
+        {"word": w, "korean": k, "dup": w.lower() in existing}
+        for w, k in rows
+    ]
+    return {"ok": True, "rows": out, "count": len(out)}
+
+
+@router.post("/words/import/commit")
+def import_commit(payload: ImportCommitIn, _user: dict = Depends(require_user)):
+    """미리보기에서 검토·편집한 행들을 실제로 저장한다."""
+    items = [it.model_dump() for it in payload.items]
+    if not items:
+        return {"ok": False, "message": "적용할 단어가 없어요."}
+    result = insert_words(_user["id"], items)
     return {
         "ok": True,
         "message": f"📥 {result['added']}개 추가"

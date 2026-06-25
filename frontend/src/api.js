@@ -149,12 +149,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ ids }),
     }),
-  importWords: async (file, tag = "") => {
+  importPreview: async (file) => {
     const form = new FormData();
     form.append("file", file);
-    const url = `/api/words/import${tag ? `?tag=${encodeURIComponent(tag)}` : ""}`;
     // multipart라 Content-Type은 브라우저가 boundary와 함께 자동 설정 (수동 지정 금지)
-    const res = await fetch(url, {
+    const res = await fetch("/api/words/import/preview", {
       method: "POST",
       body: form,
       credentials: "same-origin",
@@ -165,6 +164,11 @@ export const api = {
     }
     return res.json();
   },
+  importCommit: (items) =>
+    jsonFetch("/api/words/import/commit", {
+      method: "POST",
+      body: JSON.stringify({ items }),
+    }),
 
   // ── 슬랭 ──
   slang: (word, korean) =>
