@@ -235,12 +235,39 @@ export default function SearchTab({ user, onRequireLogin }) {
     return () => clearTimeout(t);
   }, [kor]);
 
+  const result = searchQuery.data;
+  const resultKey = searchRequest
+    ? `${searchRequest.type}:${searchRequest.word}`
+    : "";
+  const resultFieldsReady = Boolean(
+    result?.english_word?.trim() &&
+      result?.korean_word?.trim() &&
+      engDef.trim() &&
+      korDetail.trim()
+  );
+  const resultMatchesInputs = Boolean(
+    searchRequest &&
+      result &&
+      appliedSearchKey.current === resultKey &&
+      (searchRequest.type === "en"
+        ? eng.trim() === searchRequest.word &&
+          kor.trim() === result.korean_word.trim()
+        : kor.trim() === searchRequest.word &&
+          eng.trim() === result.english_word.trim())
+  );
+  const hasConfirmedSearchResult = Boolean(
+    resultFieldsReady &&
+      resultMatchesInputs &&
+      !searchQuery.isFetching &&
+      !searchQuery.isError
+  );
+
   const handleSave = async () => {
+    if (!hasConfirmedSearchResult) return;
     if (!user) {
       setSaveGate(true); // 비회원 → 회원 기능 안내
       return;
     }
-    if (!eng.trim()) return;
     saveWordMutation.mutate({
       word: eng,
       korean: kor,
@@ -275,6 +302,7 @@ export default function SearchTab({ user, onRequireLogin }) {
   const hasSearch = !!searchRequest;
   const searchLoading = searchQuery.isFetching && !searchQuery.data;
   const saveLoading = saveWordMutation.isPending || savedQuery.isFetching;
+  const saveDisabled = saveWordMutation.isPending || !hasConfirmedSearchResult;
 
   return (
     <div>
@@ -290,7 +318,7 @@ export default function SearchTab({ user, onRequireLogin }) {
           <SaveButton
             saved={saved}
             onClick={handleSave}
-            disabled={saveWordMutation.isPending}
+            disabled={saveDisabled}
             loading={saveLoading && !!user}
           />
         </div>
@@ -323,7 +351,7 @@ export default function SearchTab({ user, onRequireLogin }) {
           <SaveButton
             saved={saved}
             onClick={handleSave}
-            disabled={saveWordMutation.isPending}
+            disabled={saveDisabled}
             loading={saveLoading && !!user}
           />
         </div>
