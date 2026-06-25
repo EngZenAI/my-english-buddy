@@ -118,10 +118,10 @@ export default function SearchTab({ user, onRequireLogin }) {
 
   const addLabelMutation = useMutation({
     mutationFn: api.addLabel,
-    onSuccess: ({ labels: next, ok }) => {
+    onSuccess: ({ labels: next, ok }, name) => {
       queryClient.setQueryData(queryKeys.labels, { labels: next });
       if (ok) {
-        setLabel(newLabel.trim());
+        setLabel(name);
         setNewLabel("");
         setAdding(false);
         setLabelError("");
