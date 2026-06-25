@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
+import { queryKeys } from "../queryClient";
 import AudioButton from "../components/AudioButton";
+import { LoadingSpinner, SkeletonBlock } from "../components/AsyncState";
 import MemberNotice from "../components/MemberNotice";
 
 const LabelChip = ({ children }) => (
@@ -10,22 +13,27 @@ const LabelChip = ({ children }) => (
   </span>
 );
 
-const SaveButton = ({ saved, onClick }) => (
+const SaveButton = ({ saved, onClick, disabled, loading }) => (
   <button
     type="button"
     onClick={onClick}
+    disabled={disabled}
     className={`rounded-full text-[13px] font-medium px-3.5 h-8 border-[1.5px] transition-colors
       ${saved
         ? "text-slate-500 border-slate-200 bg-slate-50"
-        : "text-brand-600 border-brand-200 bg-white hover:bg-brand-50"}`}
+        : "text-brand-600 border-brand-200 bg-white hover:bg-brand-50"}
+      disabled:opacity-60 disabled:cursor-not-allowed`}
   >
-    {saved ? "✅ 저장됨" : "📥 단어장에 저장"}
+    {loading ? "저장 중…" : saved ? "✅ 저장됨" : "📥 단어장에 저장"}
   </button>
 );
 
-const ReadOnlyField = ({ label, value, rows = 3 }) => (
+const ReadOnlyField = ({ label, value, rows = 3, loading }) => (
   <div className="mb-3">
     <label className="block text-sm text-slate-500 mb-1">{label}</label>
+    {loading ? (
+      <SkeletonBlock className={rows >= 4 ? "h-28" : "h-24"} />
+    ) : (
     <textarea
       readOnly
       rows={rows}
@@ -33,12 +41,14 @@ const ReadOnlyField = ({ label, value, rows = 3 }) => (
       className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm
                  text-slate-800 resize-none whitespace-pre-wrap"
     />
+    )}
   </div>
 );
 
 const DEBOUNCE_MS = 150;
 
 export default function SearchTab({ user, onRequireLogin }) {
+  const queryClient = useQueryClient();
   const [eng, setEng] = useState("");
   const [kor, setKor] = useState("");
   const [engDef, setEngDef] = useState("");
@@ -50,7 +60,6 @@ export default function SearchTab({ user, onRequireLogin }) {
   const [saveGate, setSaveGate] = useState(false); // 비회원 저장 시도 안내
 
   // 태그(카테고리)
-  const [labels, setLabels] = useState([]);
   const [label, setLabel] = useState("미지정"); // 현재 선택된 태그 (기본: 미지정)
   const [newLabel, setNewLabel] = useState("");
   const [adding, setAdding] = useState(false);
@@ -58,18 +67,84 @@ export default function SearchTab({ user, onRequireLogin }) {
 
   const [slangVisible, setSlangVisible] = useState(false);
   const [slangText, setSlangText] = useState("");
-  const [slangLoading, setSlangLoading] = useState(false);
 
   const lastSearched = useRef({ en: "", ko: "" });
   const source = useRef(null);
   const reqSeq = useRef(0);
-  const cache = useRef({});
+  const appliedSearchKey = useRef("");
+  const [searchRequest, setSearchRequest] = useState(null);
 
-  // 태그 목록 로드 (회원만)
-  useEffect(() => {
-    if (!user) return;
-    api.listLabels().then(({ labels }) => setLabels(labels)).catch(() => {});
-  }, [user]);
+  const labelsQuery = useQuery({
+    queryKey: queryKeys.labels,
+    queryFn: api.listLabels,
+    enabled: !!user,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
+  });
+  const labels = labelsQuery.data?.labels || [];
+
+  const searchQuery = useQuery({
+    queryKey: searchRequest
+      ? queryKeys.search(searchRequest.type, searchRequest.word)
+      : ["search", "idle"],
+    queryFn: () =>
+      searchRequest.type === "en"
+        ? api.searchEnglish(searchRequest.word)
+        : api.searchKorean(searchRequest.word),
+    enabled: !!searchRequest?.word,
+    staleTime: 24 * 60 * 60_000,
+    gcTime: 24 * 60 * 60_000,
+  });
+
+  const savedWord = (searchQuery.data?.english_word || "").trim();
+  const userId = user?.id || "";
+  const savedQuery = useQuery({
+    queryKey: queryKeys.wordSaved(userId, savedWord),
+    queryFn: () => api.wordSaved(savedWord),
+    enabled: !!userId && !!savedWord,
+    staleTime: 30_000,
+  });
+
+  const saveWordMutation = useMutation({
+    mutationFn: (payload) => api.saveWord(payload),
+    onSuccess: (res, payload) => {
+      if (!res.saved) return;
+      setSaved(true);
+      queryClient.setQueryData(queryKeys.wordSaved(userId, payload.word), { saved: true });
+      queryClient.invalidateQueries({ queryKey: ["words"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.labels });
+    },
+  });
+
+  const addLabelMutation = useMutation({
+    mutationFn: api.addLabel,
+    onSuccess: ({ labels: next, ok }, name) => {
+      queryClient.setQueryData(queryKeys.labels, { labels: next });
+      if (ok) {
+        setLabel(name);
+        setNewLabel("");
+        setAdding(false);
+        setLabelError("");
+      } else {
+        setLabelError("태그는 최대 20개까지 추가할 수 있어요.");
+      }
+    },
+  });
+
+  const slangMutation = useMutation({
+    mutationFn: ({ engWord, korWord }) => api.slang(engWord, korWord),
+    onMutate: () => {
+      setSlangText("AI가 의미를 분석 중입니다...");
+    },
+    onSuccess: ({ explanation }, { engWord, korWord }) => {
+      if (eng.trim() !== engWord || kor.trim() !== korWord) return;
+      setSlangText(explanation);
+    },
+    onError: (_error, { engWord, korWord }) => {
+      if (eng.trim() !== engWord || kor.trim() !== korWord) return;
+      setSlangText("AI 의미 분석에 실패했습니다. 잠시 후 다시 시도해주세요.");
+    },
+  });
 
   const applyCommon = (r) => {
     setEngDef(r.english_def);
@@ -81,77 +156,69 @@ export default function SearchTab({ user, onRequireLogin }) {
     setSlangText("");
   };
 
-  const refreshSaved = async (englishWord, myseq) => {
-    if (!user) return; // 비회원: 저장 배지 비활성
-    if (!englishWord) {
-      if (myseq === reqSeq.current) setSaved(false);
-      return;
-    }
-    try {
-      const { saved } = await api.wordSaved(englishWord);
-      if (myseq !== reqSeq.current) return;
-      setSaved(saved);
-    } catch {
-      /* 무시 */
-    }
+  const resetResultState = () => {
+    setEngDef("");
+    setKorDetail("");
+    setExample("");
+    setCustomExample("");
+    setPhonetic("");
+    setSaved(false);
+    setSlangVisible(false);
+    setSlangText("");
   };
 
-  const runEnglish = async (word) => {
+  useEffect(() => {
+    const r = searchQuery.data;
+    if (!r || !searchRequest) return;
+    const key = `${searchRequest.type}:${searchRequest.word}`;
+    if (appliedSearchKey.current === key) return;
+    appliedSearchKey.current = key;
+    if (!r.english_word && !r.korean_word && !r.english_def && !r.korean_detail) {
+      resetResultState();
+      return;
+    }
+    applyCommon(r);
+    if (searchRequest.type === "en") {
+      lastSearched.current.ko = r.korean_word;
+      setKor(r.korean_word);
+    } else {
+      lastSearched.current.en = r.english_word;
+      setEng(r.english_word);
+    }
+    setSaved(false);
+  }, [searchQuery.data, searchRequest]);
+
+  useEffect(() => {
+    if (!searchQuery.isError || !searchRequest) return;
+    resetResultState();
+  }, [searchQuery.isError, searchRequest]);
+
+  useEffect(() => {
+    if (!user) {
+      setSaved(false);
+      return;
+    }
+    if (savedQuery.data) setSaved(savedQuery.data.saved);
+  }, [savedQuery.data, user]);
+
+  const runEnglish = (word) => {
     const w = word.trim();
     if (!w) return;
     lastSearched.current.en = w;
-    const myseq = ++reqSeq.current;
-
-    const hit = cache.current["en:" + w];
-    if (hit) {
-      applyCommon(hit);
-      lastSearched.current.ko = hit.korean_word;
-      setKor(hit.korean_word);
-      setSaved(false);
-      refreshSaved(w, myseq);
-      return;
-    }
-    try {
-      const r = await api.searchEnglish(w);
-      cache.current["en:" + w] = r;
-      if (myseq !== reqSeq.current) return;
-      applyCommon(r);
-      lastSearched.current.ko = r.korean_word;
-      setKor(r.korean_word);
-      setSaved(false);
-      refreshSaved(w, myseq);
-    } catch {
-      /* 무시 */
-    }
+    reqSeq.current += 1;
+    appliedSearchKey.current = "";
+    resetResultState();
+    setSearchRequest({ type: "en", word: w });
   };
 
-  const runKorean = async (word) => {
+  const runKorean = (word) => {
     const w = word.trim();
     if (!w) return;
     lastSearched.current.ko = w;
-    const myseq = ++reqSeq.current;
-
-    const hit = cache.current["ko:" + w];
-    if (hit) {
-      applyCommon(hit);
-      lastSearched.current.en = hit.english_word;
-      setEng(hit.english_word);
-      setSaved(false);
-      refreshSaved(hit.english_word, myseq);
-      return;
-    }
-    try {
-      const r = await api.searchKorean(w);
-      cache.current["ko:" + w] = r;
-      if (myseq !== reqSeq.current) return;
-      applyCommon(r);
-      lastSearched.current.en = r.english_word;
-      setEng(r.english_word);
-      setSaved(false);
-      refreshSaved(r.english_word, myseq);
-    } catch {
-      /* 무시 */
-    }
+    reqSeq.current += 1;
+    appliedSearchKey.current = "";
+    resetResultState();
+    setSearchRequest({ type: "ko", word: w });
   };
 
   useEffect(() => {
@@ -168,13 +235,40 @@ export default function SearchTab({ user, onRequireLogin }) {
     return () => clearTimeout(t);
   }, [kor]);
 
+  const result = searchQuery.data;
+  const resultKey = searchRequest
+    ? `${searchRequest.type}:${searchRequest.word}`
+    : "";
+  const resultFieldsReady = Boolean(
+    result?.english_word?.trim() &&
+      result?.korean_word?.trim() &&
+      engDef.trim() &&
+      korDetail.trim()
+  );
+  const resultMatchesInputs = Boolean(
+    searchRequest &&
+      result &&
+      appliedSearchKey.current === resultKey &&
+      (searchRequest.type === "en"
+        ? eng.trim() === searchRequest.word &&
+          kor.trim() === result.korean_word.trim()
+        : kor.trim() === searchRequest.word &&
+          eng.trim() === result.english_word.trim())
+  );
+  const hasConfirmedSearchResult = Boolean(
+    resultFieldsReady &&
+      resultMatchesInputs &&
+      !searchQuery.isFetching &&
+      !searchQuery.isError
+  );
+
   const handleSave = async () => {
+    if (!hasConfirmedSearchResult) return;
     if (!user) {
       setSaveGate(true); // 비회원 → 회원 기능 안내
       return;
     }
-    if (!eng.trim()) return;
-    const res = await api.saveWord({
+    saveWordMutation.mutate({
       word: eng,
       korean: kor,
       korean_detail: korDetail,
@@ -183,7 +277,6 @@ export default function SearchTab({ user, onRequireLogin }) {
       tag: label,
       slang_def: slangText,
     });
-    if (res.saved) setSaved(true);
   };
 
   const handleAddLabel = async () => {
@@ -193,36 +286,23 @@ export default function SearchTab({ user, onRequireLogin }) {
       setLabelError("태그는 최대 20개까지 추가할 수 있어요.");
       return;
     }
-    try {
-      const { labels: next, ok } = await api.addLabel(name);
-      setLabels(next);
-      if (ok) {
-        setLabel(name);
-        setNewLabel("");
-        setAdding(false);
-        setLabelError("");
-      } else {
-        setLabelError("태그는 최대 20개까지 추가할 수 있어요.");
-      }
-    } catch {
-      /* 무시 */
-    }
+    addLabelMutation.mutate(name);
   };
 
   const handleSlang = async () => {
-    if (!eng.trim()) {
+    const engWord = eng.trim();
+    const korWord = kor.trim();
+    if (!engWord) {
       setSlangText("단어를 먼저 검색해주세요.");
       return;
     }
-    setSlangLoading(true);
-    setSlangText("AI가 의미를 분석 중입니다...");
-    try {
-      const { explanation } = await api.slang(eng, kor);
-      setSlangText(explanation);
-    } finally {
-      setSlangLoading(false);
-    }
+    slangMutation.mutate({ engWord, korWord });
   };
+
+  const hasSearch = !!searchRequest;
+  const searchLoading = searchQuery.isFetching && !searchQuery.data;
+  const saveLoading = saveWordMutation.isPending || savedQuery.isFetching;
+  const saveDisabled = saveWordMutation.isPending || !hasConfirmedSearchResult;
 
   return (
     <div>
@@ -235,7 +315,12 @@ export default function SearchTab({ user, onRequireLogin }) {
         {/* 영어 헤더 */}
         <div className="flex items-center justify-between min-h-[40px]">
           <LabelChip>🇺🇸 영어</LabelChip>
-          <SaveButton saved={saved} onClick={handleSave} />
+          <SaveButton
+            saved={saved}
+            onClick={handleSave}
+            disabled={saveDisabled}
+            loading={saveLoading && !!user}
+          />
         </div>
         <div className="flex items-center gap-2">
           <input
@@ -263,7 +348,12 @@ export default function SearchTab({ user, onRequireLogin }) {
         {/* 한국어 헤더 */}
         <div className="flex items-center justify-between min-h-[40px] mt-2 pt-2 border-t border-slate-100">
           <LabelChip>🇰🇷 한국어</LabelChip>
-          <SaveButton saved={saved} onClick={handleSave} />
+          <SaveButton
+            saved={saved}
+            onClick={handleSave}
+            disabled={saveDisabled}
+            loading={saveLoading && !!user}
+          />
         </div>
         <div className="flex items-center gap-2">
           <input
@@ -285,16 +375,24 @@ export default function SearchTab({ user, onRequireLogin }) {
           </button>
         </div>
         <div className="h-[30px] flex items-center">
-          <AudioButton word={kor} lang="ko" />
+          {searchQuery.isFetching ? (
+            <LoadingSpinner label="검색 결과를 가져오는 중" />
+          ) : searchQuery.isError ? (
+            <span className="text-sm text-rose-500">검색 결과를 불러오지 못했습니다.</span>
+          ) : (
+            <AudioButton word={kor} lang="ko" />
+          )}
         </div>
 
         {slangVisible && (
           <button
             onClick={handleSlang}
-            disabled={slangLoading}
+            disabled={slangMutation.isPending}
             className="text-[11px] text-gray-400 underline hover:text-gray-600 mt-1"
           >
-            원하는 뜻이 아닌가요? AI에게 물어보기
+            {slangMutation.isPending
+              ? "AI가 의미를 분석 중입니다..."
+              : "원하는 뜻이 아닌가요? AI에게 물어보기"}
           </button>
         )}
         {slangText && (
@@ -316,8 +414,13 @@ export default function SearchTab({ user, onRequireLogin }) {
 
       <hr className="my-4 border-slate-200" />
 
-      <ReadOnlyField label="📖 영어 뜻" value={engDef} rows={4} />
-      <ReadOnlyField label="🇰🇷 한국어 뜻" value={korDetail} rows={3} />
+      {!hasSearch && (
+        <p className="mb-3 text-sm text-slate-400">
+          영어 또는 한국어 단어를 입력하면 뜻과 예문이 여기에 표시됩니다.
+        </p>
+      )}
+      <ReadOnlyField label="📖 영어 뜻" value={engDef} rows={4} loading={searchLoading} />
+      <ReadOnlyField label="🇰🇷 한국어 뜻" value={korDetail} rows={3} loading={searchLoading} />
 
       {/* 편집 가능한 내 맞춤 예문 */}
       <div className="mb-3">
@@ -342,6 +445,12 @@ export default function SearchTab({ user, onRequireLogin }) {
             🏷️ 태그 (카테고리) — 단어장에서 태그별로 모아볼 수 있어요
           </label>
           <div className="flex flex-wrap items-center gap-2">
+            {labelsQuery.isPending && (
+              <>
+                <SkeletonBlock className="h-8 w-16 rounded-full" />
+                <SkeletonBlock className="h-8 w-20 rounded-full" />
+              </>
+            )}
             {labels.map((name) => {
               const active = label === name;
               return (
