@@ -11,6 +11,7 @@ import { EmptyState, LoadingSpinner, SkeletonBlock } from "../components/AsyncSt
 import MemberNotice from "../components/MemberNotice";
 
 const COLS = 10;
+const PAGE_SIZE = 40;
 
 const WordRowsSkeleton = () =>
   Array.from({ length: 5 }).map((_, row) => (
@@ -28,6 +29,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
   const fileInputRef = useRef(null);
   const userId = user?.id || "";
   const [filter, setFilter] = useState(""); // "" = 전체
+  const [page, setPage] = useState(0); // 0-based 페이지
 
   // 태그 편집 모드
   const [editMode, setEditMode] = useState(false);
@@ -44,8 +46,11 @@ export default function WordbookTab({ user, onRequireLogin }) {
   // 드래그 정렬
   const [dragIndex, setDragIndex] = useState(null);
 
-  // CSV/XLSX 가져오기
+  // CSV/XLSX 가져오기 (미리보기 모달)
   const [importing, setImporting] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewRows, setPreviewRows] = useState([]); // {key, word, korean, korean_detail, example, tag, dup}
+  const [committing, setCommitting] = useState(false);
 
   const labelsQuery = useQuery({
     queryKey: queryKeys.labels,
@@ -69,6 +74,11 @@ export default function WordbookTab({ user, onRequireLogin }) {
   useEffect(() => {
     setSelected(new Set());
   }, [filter, wordsQuery.data]);
+
+  // 필터가 바뀌면 1페이지로
+  useEffect(() => {
+    setPage(0);
+  }, [filter]);
 
   const renameLabelMutation = useMutation({
     mutationFn: ({ orig, val }) => api.renameLabel(orig, val),
@@ -110,23 +120,86 @@ export default function WordbookTab({ user, onRequireLogin }) {
     await queryClient.invalidateQueries({ queryKey: ["label-word-count"] });
   };
 
+  // ── CSV/XLSX 가져오기: 미리보기 → 편집 → 적용 ──
   const onImportFile = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = ""; // 같은 파일 재선택 가능하도록 초기화
     if (!file) return;
     setImporting(true);
     try {
-      // 특정 태그를 보는 중이면 그 태그로, '전체'면 미지정으로 들어감
-      const res = await api.importWords(file, filter || "");
-      alert(res.message || (res.ok ? "가져왔어요." : "가져오기에 실패했어요."));
-      if (res.ok) {
-        queryClient.invalidateQueries({ queryKey: queryKeys.labels });
-        await refreshWords();
+      const res = await api.importPreview(file);
+      if (!res.ok) {
+        alert(res.message || "가져오기에 실패했어요.");
+        return;
       }
+      const defTag = filter || "미지정"; // 특정 태그 보는 중이면 그 태그를 기본값으로
+      setPreviewRows(
+        res.rows.map((r, i) => ({
+          key: i,
+          word: r.word,
+          korean: r.korean,
+          korean_detail: "",
+          example: "",
+          tag: defTag,
+          dup: r.dup,
+        }))
+      );
+      setPreviewOpen(true);
     } catch {
       alert("가져오는 중 오류가 발생했어요. 파일 형식을 확인해주세요.");
     } finally {
       setImporting(false);
+    }
+  };
+
+  const setPreviewField = (key, field, val) =>
+    setPreviewRows((rows) =>
+      rows.map((r) => (r.key === key ? { ...r, [field]: val } : r))
+    );
+
+  const removePreviewRow = (key) =>
+    setPreviewRows((rows) => rows.filter((r) => r.key !== key));
+
+  const applyAllTag = (tag) =>
+    setPreviewRows((rows) => rows.map((r) => ({ ...r, tag })));
+
+  const removeDupRows = () =>
+    setPreviewRows((rows) => rows.filter((r) => !r.dup));
+
+  const closePreview = () => {
+    setPreviewOpen(false);
+    setPreviewRows([]);
+  };
+
+  const commitPreview = async () => {
+    const items = previewRows
+      .filter((r) => (r.word || "").trim())
+      .map((r) => ({
+        word: r.word.trim(),
+        korean: r.korean,
+        korean_detail: r.korean_detail,
+        example: r.example,
+        tag: r.tag,
+      }));
+    if (items.length === 0) {
+      alert("적용할 단어가 없어요.");
+      return;
+    }
+    setCommitting(true);
+    try {
+      const res = await api.importCommit(items);
+      if (res.ok === false) {
+        alert(res.message || "적용에 실패했어요.");
+        return;
+      }
+      closePreview();
+      alert(res.message || "적용했어요.");
+      queryClient.invalidateQueries({ queryKey: queryKeys.labels });
+      await refreshWords();
+    } catch {
+      alert("적용 중 오류가 발생했어요.");
+    } finally {
+      setCommitting(false);
     }
   };
 
@@ -235,10 +308,15 @@ export default function WordbookTab({ user, onRequireLogin }) {
       return next;
     });
 
+  // 현재 페이지 항목만 전체 선택/해제 (선택은 페이지 넘어가도 유지)
   const toggleSelectAll = () =>
-    setSelected((s) =>
-      s.size === words.length ? new Set() : new Set(words.map((w) => w.id))
-    );
+    setSelected((s) => {
+      const next = new Set(s);
+      const ids = pageWords.map((w) => w.id);
+      if (ids.every((id) => next.has(id))) ids.forEach((id) => next.delete(id));
+      else ids.forEach((id) => next.add(id));
+      return next;
+    });
 
   const deleteSelected = async () => {
     if (selected.size === 0) return;
@@ -278,7 +356,16 @@ export default function WordbookTab({ user, onRequireLogin }) {
   const loading = wordsQuery.isPending || labelsQuery.isPending;
   const refetching = wordsQuery.isFetching && !wordsQuery.isPending;
   const canReorder = filter === "" && !rowEdit; // 순서 변경은 '전체' 보기에서만
-  const allChecked = words.length > 0 && selected.size === words.length;
+
+  // ── 페이지네이션 (40개씩) ──
+  const totalPages = Math.max(1, Math.ceil(words.length / PAGE_SIZE));
+  const curPage = Math.min(page, totalPages - 1); // 삭제 등으로 페이지 수 줄면 클램프
+  const start = curPage * PAGE_SIZE;
+  const pageWords = words.slice(start, start + PAGE_SIZE);
+
+  const allChecked =
+    pageWords.length > 0 && pageWords.every((w) => selected.has(w.id));
+  const dupCount = previewRows.filter((r) => r.dup).length;
 
   return (
     <div>
@@ -495,7 +582,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
                     checked={allChecked}
                     onChange={toggleSelectAll}
                     disabled={words.length === 0}
-                    title="전체 선택"
+                    title="현재 페이지 전체 선택"
                   />
                 </th>
                 <th className="px-1 py-2 w-6" />
@@ -520,7 +607,8 @@ export default function WordbookTab({ user, onRequireLogin }) {
                   </td>
                 </tr>
               )}
-              {words.map((w, i) => {
+              {pageWords.map((w, idx) => {
+                const i = start + idx; // words 배열 내 전역 인덱스 (드래그용)
                 const d = drafts[w.id] || {};
                 const checked = selected.has(w.id);
                 return (
@@ -653,6 +741,204 @@ export default function WordbookTab({ user, onRequireLogin }) {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {user && words.length > PAGE_SIZE && (
+        <div className="flex items-center justify-center gap-3 mt-3 text-sm">
+          <button
+            onClick={() => setPage(Math.max(0, curPage - 1))}
+            disabled={curPage === 0}
+            className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50
+                       px-3 py-1.5 font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            이전
+          </button>
+          <span className="text-slate-500">
+            {curPage + 1} / {totalPages}
+            <span className="text-slate-400">
+              {" "}
+              ({start + 1}-{Math.min(start + PAGE_SIZE, words.length)})
+            </span>
+          </span>
+          <button
+            onClick={() => setPage(Math.min(totalPages - 1, curPage + 1))}
+            disabled={curPage >= totalPages - 1}
+            className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50
+                       px-3 py-1.5 font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            다음
+          </button>
+        </div>
+      )}
+
+      {previewOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={closePreview}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+              <h3 className="text-base font-semibold">
+                가져오기 미리보기{" "}
+                <span className="text-slate-400 font-normal">
+                  ({previewRows.length}개)
+                </span>
+              </h3>
+              <button
+                onClick={closePreview}
+                className="text-slate-400 hover:text-slate-600 text-2xl leading-none"
+                title="닫기"
+              >
+                x
+              </button>
+            </div>
+
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2 flex-wrap text-sm">
+              <span className="text-slate-500">전체 태그 지정:</span>
+              <select
+                onChange={(e) => {
+                  if (e.target.value) applyAllTag(e.target.value);
+                  e.target.value = "";
+                }}
+                defaultValue=""
+                className="rounded-md border border-slate-300 px-2 py-1 text-sm bg-white
+                           outline-none focus:border-brand-400"
+              >
+                <option value="" disabled>
+                  태그 선택...
+                </option>
+                {labels.map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+              {dupCount > 0 && (
+                <button
+                  onClick={removeDupRows}
+                  className="rounded-md border border-slate-300 bg-white hover:bg-slate-50 px-2 py-1"
+                >
+                  이미 있는 {dupCount}개 제외
+                </button>
+              )}
+              <span className="text-slate-400 ml-auto">
+                영어단어/한국어는 파일값이에요. 필요하면 고치세요.
+              </span>
+            </div>
+
+            <div className="overflow-auto px-5 py-2 grow">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-slate-500 sticky top-0 bg-white">
+                    <th className="py-2 pr-2 font-semibold">영어단어</th>
+                    <th className="py-2 pr-2 font-semibold">한국어</th>
+                    <th className="py-2 pr-2 font-semibold">예문(선택)</th>
+                    <th className="py-2 pr-2 font-semibold whitespace-nowrap">태그</th>
+                    <th className="py-2 w-16" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {previewRows.map((r) => (
+                    <tr
+                      key={r.key}
+                      className={`border-t border-slate-100 ${r.dup ? "bg-amber-50" : ""}`}
+                    >
+                      <td className="py-1.5 pr-2">
+                        <input
+                          value={r.word}
+                          onChange={(e) =>
+                            setPreviewField(r.key, "word", e.target.value)
+                          }
+                          className="w-full min-w-[7rem] rounded-md border border-slate-300 px-2 py-1
+                                     outline-none focus:border-brand-400"
+                        />
+                      </td>
+                      <td className="py-1.5 pr-2">
+                        <input
+                          value={r.korean}
+                          onChange={(e) =>
+                            setPreviewField(r.key, "korean", e.target.value)
+                          }
+                          className="w-full min-w-[6rem] rounded-md border border-slate-300 px-2 py-1
+                                     outline-none focus:border-brand-400"
+                        />
+                      </td>
+                      <td className="py-1.5 pr-2">
+                        <input
+                          value={r.example}
+                          onChange={(e) =>
+                            setPreviewField(r.key, "example", e.target.value)
+                          }
+                          placeholder="예문"
+                          className="w-full min-w-[8rem] rounded-md border border-slate-300 px-2 py-1
+                                     outline-none focus:border-brand-400"
+                        />
+                      </td>
+                      <td className="py-1.5 pr-2">
+                        <select
+                          value={r.tag}
+                          onChange={(e) =>
+                            setPreviewField(r.key, "tag", e.target.value)
+                          }
+                          className="rounded-md border border-slate-300 px-2 py-1 bg-white
+                                     outline-none focus:border-brand-400"
+                        >
+                          {labels.map((n) => (
+                            <option key={n} value={n}>
+                              {n}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="py-1.5 text-right whitespace-nowrap">
+                        {r.dup && (
+                          <span
+                            title="이미 단어장에 있어요. 적용하면 이 단어는 건너뜁니다."
+                            className="inline-block mr-1 text-[11px] text-amber-700"
+                          >
+                            이미 있음
+                          </span>
+                        )}
+                        <button
+                          onClick={() => removePreviewRow(r.key)}
+                          title="이 행 제외"
+                          className="text-slate-400 hover:text-rose-600"
+                        >
+                          x
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="px-5 py-4 border-t border-slate-200 flex items-center justify-end gap-2">
+              <span className="text-[12px] text-slate-400 mr-auto">
+                '이미 있음' 단어는 적용 시 자동으로 건너뜁니다.
+              </span>
+              <button
+                onClick={closePreview}
+                disabled={committing}
+                className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50
+                           px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+              >
+                취소
+              </button>
+              <button
+                onClick={commitPreview}
+                disabled={committing || previewRows.length === 0}
+                className="rounded-lg bg-brand-600 text-white hover:bg-brand-700
+                           px-4 py-1.5 text-sm font-semibold disabled:opacity-50"
+              >
+                {committing ? "적용 중..." : `적용 (${previewRows.length})`}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

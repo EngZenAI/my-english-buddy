@@ -270,6 +270,67 @@ def bulk_import_words(user_id: str, items, default_tag: str = "미지정") -> di
     return {"added": added, "skipped": skipped, "total": added + skipped}
 
 
+def existing_words_lower(user_id: str) -> set:
+    """사용자가 이미 가진 단어(소문자) 집합 — 가져오기 미리보기의 중복 표시용."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT lower(word) FROM words WHERE user_id = %s", (user_id,))
+            return {r[0] for r in cur.fetchall()}
+
+
+def insert_words(user_id: str, items) -> dict:
+    """미리보기에서 편집된 행들을 저장. 각 item: dict
+    {word, korean, korean_detail?, english_def?, example?, tag?}.
+    이미 있는 단어(및 같은 배치 내 중복)는 건너뛴다. 새 단어는 목록 위쪽에 배치."""
+    added = skipped = 0
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            to_insert = []
+            seen: set = set()
+            for it in items:
+                w = (it.get("word") or "").strip()
+                if not w or w.lower() in seen:
+                    if w:
+                        skipped += 1
+                    continue
+                cur.execute(
+                    "SELECT id FROM words WHERE user_id = %s AND lower(word) = lower(%s)",
+                    (user_id, w),
+                )
+                if cur.fetchone():
+                    skipped += 1
+                    continue
+                seen.add(w.lower())
+                to_insert.append({**it, "word": w})
+
+            cur.execute(
+                "SELECT COALESCE(MIN(sort_order), 0) FROM words WHERE user_id = %s",
+                (user_id,),
+            )
+            base = cur.fetchone()[0]
+            n = len(to_insert)
+            for i, it in enumerate(to_insert):
+                cur.execute(
+                    """INSERT INTO words
+                           (user_id, word, korean, korean_detail, english_def,
+                            example, tag, sort_order, next_review)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW() + INTERVAL '7 days')""",
+                    (
+                        user_id,
+                        it["word"].lower(),
+                        (it.get("korean") or "").strip(),
+                        it.get("korean_detail") or "",
+                        it.get("english_def") or "",
+                        it.get("example") or "",
+                        (it.get("tag") or "미지정"),
+                        base - n + i,
+                    ),
+                )
+                added += 1
+        conn.commit()
+    return {"added": added, "skipped": skipped, "total": added + skipped}
+
+
 def get_all_words(user_id: str, tag: str | None = None):
     cols = """id, word, korean, korean_detail, english_def, example,
               tag, created_at, next_review, sort_order"""
