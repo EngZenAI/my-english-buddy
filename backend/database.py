@@ -285,23 +285,26 @@ def insert_words(user_id: str, items) -> dict:
     added = skipped = 0
     with get_conn() as conn:
         with conn.cursor() as cur:
+            # 기존 단어(소문자)를 한 번에 조회해 중복은 파이썬에서 거른다 (행별 SELECT 제거)
+            cur.execute("SELECT lower(word) FROM words WHERE user_id = %s", (user_id,))
+            existing = {r[0] for r in cur.fetchall()}
+
             to_insert = []
             seen: set = set()
             for it in items:
                 w = (it.get("word") or "").strip()
-                if not w or w.lower() in seen:
-                    if w:
-                        skipped += 1
+                if not w:
                     continue
-                cur.execute(
-                    "SELECT id FROM words WHERE user_id = %s AND lower(word) = lower(%s)",
-                    (user_id, w),
-                )
-                if cur.fetchone():
+                lw = w.lower()
+                if lw in existing or lw in seen:
                     skipped += 1
                     continue
-                seen.add(w.lower())
+                seen.add(lw)
                 to_insert.append({**it, "word": w})
+
+            if not to_insert:
+                conn.commit()
+                return {"added": 0, "skipped": skipped, "total": skipped}
 
             cur.execute(
                 "SELECT COALESCE(MIN(sort_order), 0) FROM words WHERE user_id = %s",
@@ -309,24 +312,27 @@ def insert_words(user_id: str, items) -> dict:
             )
             base = cur.fetchone()[0]
             n = len(to_insert)
-            for i, it in enumerate(to_insert):
-                cur.execute(
-                    """INSERT INTO words
-                           (user_id, word, korean, korean_detail, english_def,
-                            example, tag, sort_order, next_review)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW() + INTERVAL '7 days')""",
-                    (
-                        user_id,
-                        it["word"].lower(),
-                        (it.get("korean") or "").strip(),
-                        it.get("korean_detail") or "",
-                        it.get("english_def") or "",
-                        it.get("example") or "",
-                        (it.get("tag") or "미지정"),
-                        base - n + i,
-                    ),
-                )
-                added += 1
+            words_arr = [it["word"].lower() for it in to_insert]
+            koreans = [(it.get("korean") or "").strip() for it in to_insert]
+            kds = [it.get("korean_detail") or "" for it in to_insert]
+            eds = [it.get("english_def") or "" for it in to_insert]
+            exs = [it.get("example") or "" for it in to_insert]
+            tags = [it.get("tag") or "미지정" for it in to_insert]
+            sos = [base - n + i for i in range(n)]
+            # 한 번의 INSERT ... SELECT unnest 로 전부 삽입 (DB 왕복 1회)
+            cur.execute(
+                """INSERT INTO words
+                       (user_id, word, korean, korean_detail, english_def,
+                        example, tag, sort_order, next_review)
+                   SELECT %s, v.word, v.korean, v.kd, v.ed, v.ex, v.tag, v.so,
+                          NOW() + INTERVAL '7 days'
+                   FROM unnest(
+                            %s::text[], %s::text[], %s::text[], %s::text[],
+                            %s::text[], %s::text[], %s::int[]
+                        ) AS v(word, korean, kd, ed, ex, tag, so)""",
+                (user_id, words_arr, koreans, kds, eds, exs, tags, sos),
+            )
+            added = cur.rowcount
         conn.commit()
     return {"added": added, "skipped": skipped, "total": added + skipped}
 
@@ -395,39 +401,60 @@ def delete_word(user_id: str, word_id: int) -> bool:
     return changed > 0
 
 
+# 복습일 상대기간 코드 → Postgres INTERVAL (월말·윤년은 INTERVAL이 자동 처리)
+REVIEW_INTERVALS = {
+    "1d": "1 day",
+    "1w": "7 days",
+    "1m": "1 month",
+    "3m": "3 months",
+}
+
+
 def bulk_update_words(user_id: str, items) -> int:
     """여러 단어를 한 번에 편집. 각 item: {id, korean_detail, english_def,
-    example, tag, next_review}. word·korean은 변경하지 않음."""
-    updated = 0
+    example, tag, next_review}. word·korean은 변경하지 않음.
+    next_review 는 상대기간 코드('1d'/'1w'/'1m'/'3m') → NOW()+INTERVAL,
+    빈값이면 복습일 변경 안 함. (예전 'YYYY-MM-DD' 문자열도 그대로 허용)"""
+    ids, kds, eds, exs, tags, nrs = [], [], [], [], [], []
+    for it in items:
+        try:
+            wid = int(it["id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        ids.append(wid)
+        kds.append(it.get("korean_detail", "") or "")
+        eds.append(it.get("english_def", "") or "")
+        exs.append(it.get("example", "") or "")
+        tags.append(it.get("tag") or "미지정")
+        nrs.append((it.get("next_review") or "").strip())
+    if not ids:
+        return 0
+    # 행마다 다른 값 + 복습일 코드를 한 번의 UPDATE(unnest)로 처리 → DB 왕복 1회.
+    # 복습일: 코드는 NOW()+INTERVAL(월말·윤년 자동), ''는 변경 안 함, 그 외는 날짜로 해석.
     with get_conn() as conn:
         with conn.cursor() as cur:
-            for it in items:
-                try:
-                    wid = int(it["id"])
-                except (KeyError, TypeError, ValueError):
-                    continue
-                sets = [
-                    "korean_detail = %s",
-                    "english_def = %s",
-                    "example = %s",
-                    "tag = %s",
-                ]
-                params = [
-                    it.get("korean_detail", "") or "",
-                    it.get("english_def", "") or "",
-                    it.get("example", "") or "",
-                    (it.get("tag") or "미지정"),
-                ]
-                nr = (it.get("next_review") or "").strip()
-                if nr:
-                    sets.append("next_review = %s")
-                    params.append(nr)
-                params.extend([wid, user_id])
-                cur.execute(
-                    f"UPDATE words SET {', '.join(sets)} WHERE id = %s AND user_id = %s",
-                    params,
-                )
-                updated += cur.rowcount
+            cur.execute(
+                """UPDATE words AS w
+                   SET korean_detail = v.kd,
+                       english_def = v.ed,
+                       example = v.ex,
+                       tag = v.tag,
+                       next_review = CASE v.nr
+                           WHEN '1d' THEN NOW() + INTERVAL '1 day'
+                           WHEN '1w' THEN NOW() + INTERVAL '7 days'
+                           WHEN '1m' THEN NOW() + INTERVAL '1 month'
+                           WHEN '3m' THEN NOW() + INTERVAL '3 months'
+                           WHEN '' THEN w.next_review
+                           ELSE v.nr::timestamp
+                       END
+                   FROM unnest(
+                            %s::int[], %s::text[], %s::text[],
+                            %s::text[], %s::text[], %s::text[]
+                        ) AS v(id, kd, ed, ex, tag, nr)
+                   WHERE w.id = v.id AND w.user_id = %s""",
+                (ids, kds, eds, exs, tags, nrs, user_id),
+            )
+            updated = cur.rowcount
         conn.commit()
     return updated
 
@@ -455,20 +482,28 @@ def bulk_delete_words(user_id: str, ids) -> int:
 
 def reorder_words(user_id: str, ordered_ids) -> int:
     """드래그로 바뀐 순서를 저장. ordered_ids는 위→아래 단어 id 목록.
-    각 단어의 sort_order를 목록 인덱스(0,1,2…)로 갱신한다."""
-    updated = 0
+    각 단어의 sort_order를 목록 인덱스(0,1,2…)로 갱신한다.
+    단어 수만큼 UPDATE를 보내면 원격 DB 왕복이 그만큼 늘어 느리므로,
+    unnest로 한 번의 UPDATE에 모아 1회 왕복으로 처리한다."""
+    ids, orders = [], []
+    for idx, wid in enumerate(ordered_ids or []):
+        try:
+            ids.append(int(wid))
+            orders.append(idx)
+        except (TypeError, ValueError):
+            continue
+    if not ids:
+        return 0
     with get_conn() as conn:
         with conn.cursor() as cur:
-            for idx, wid in enumerate(ordered_ids or []):
-                try:
-                    wid = int(wid)
-                except (TypeError, ValueError):
-                    continue
-                cur.execute(
-                    "UPDATE words SET sort_order = %s WHERE id = %s AND user_id = %s",
-                    (idx, wid, user_id),
-                )
-                updated += cur.rowcount
+            cur.execute(
+                """UPDATE words AS w
+                   SET sort_order = v.ord
+                   FROM unnest(%s::int[], %s::int[]) AS v(id, ord)
+                   WHERE w.id = v.id AND w.user_id = %s""",
+                (ids, orders, user_id),
+            )
+            updated = cur.rowcount
         conn.commit()
     return updated
 
