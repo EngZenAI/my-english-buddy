@@ -96,11 +96,11 @@ export const api = {
     return { ok: false, detail: data.detail };
   },
 
-  // ── 검색 ──
-  searchEnglish: (word) =>
-    jsonFetch(`/api/search/english?word=${encodeURIComponent(word)}`),
-  searchKorean: (word) =>
-    jsonFetch(`/api/search/korean?word=${encodeURIComponent(word)}`),
+  // ── 검색 (signal: react-query가 입력이 바뀌면 이전 요청을 취소) ──
+  searchEnglish: (word, signal) =>
+    jsonFetch(`/api/search/english?word=${encodeURIComponent(word)}`, { signal }),
+  searchKorean: (word, signal) =>
+    jsonFetch(`/api/search/korean?word=${encodeURIComponent(word)}`, { signal }),
 
   // ── TTS ──
   tts: (word, lang = "en") =>
@@ -123,8 +123,8 @@ export const api = {
   // ── 단어장 ──
   listWords: (tag) =>
     jsonFetch(`/api/words${tag ? `?tag=${encodeURIComponent(tag)}` : ""}`),
-  wordSaved: (word) =>
-    jsonFetch(`/api/words/saved?word=${encodeURIComponent(word)}`),
+  wordSaved: (word, signal) =>
+    jsonFetch(`/api/words/saved?word=${encodeURIComponent(word)}`, { signal }),
   saveWord: (payload) =>
     jsonFetch("/api/words", { method: "POST", body: JSON.stringify(payload) }),
   updateWord: (id, payload) =>
@@ -164,10 +164,10 @@ export const api = {
     }
     return res.json();
   },
-  importCommit: (items) =>
+  importCommit: (items, overwrite = false) =>
     jsonFetch("/api/words/import/commit", {
       method: "POST",
-      body: JSON.stringify({ items }),
+      body: JSON.stringify({ items, overwrite }),
     }),
 
   // ── 슬랭 ──

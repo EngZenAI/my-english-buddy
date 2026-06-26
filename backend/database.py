@@ -11,6 +11,7 @@ from typing import Annotated
 from fastapi import Depends
 from dotenv import load_dotenv
 import psycopg2
+import psycopg2.errors
 import psycopg2.extras
 import psycopg2.pool
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -325,11 +326,15 @@ def existing_words_lower(user_id: str) -> set:
             return {r[0] for r in cur.fetchall()}
 
 
-def insert_words(user_id: str, items) -> dict:
+def insert_words(user_id: str, items, overwrite: bool = False) -> dict:
     """미리보기에서 편집된 행들을 저장. 각 item: dict
     {word, korean, korean_detail?, english_def?, example?, tag?}.
-    이미 있는 단어(및 같은 배치 내 중복)는 건너뛴다. 새 단어는 목록 위쪽에 배치."""
-    added = skipped = 0
+    같은 배치 내 중복은 건너뛴다. 새 단어는 목록 위쪽에 배치.
+
+    overwrite=False(기본): 이미 있는 단어는 건너뛴다(사용자 편집 보호).
+    overwrite=True: 이미 있는 단어는 '값이 있는 칸만' 갱신한다
+      (한국어/한국어상세/예문/태그 중 빈칸은 기존값 보존, 영어뜻은 건드리지 않음)."""
+    added = updated = skipped = 0
     with get_conn() as conn:
         with conn.cursor() as cur:
             # 기존 단어(소문자)를 한 번에 조회해 중복은 파이썬에서 거른다 (행별 SELECT 제거)
@@ -337,53 +342,77 @@ def insert_words(user_id: str, items) -> dict:
             existing = {r[0] for r in cur.fetchall()}
 
             to_insert = []
+            to_update = []
             seen: set = set()
             for it in items:
                 w = (it.get("word") or "").strip()
                 if not w:
                     continue
                 lw = w.lower()
-                if lw in existing or lw in seen:
-                    skipped += 1
+                if lw in seen:
+                    skipped += 1  # 같은 파일 내 중복은 항상 건너뜀
                     continue
                 seen.add(lw)
+                if lw in existing:
+                    if overwrite:
+                        to_update.append({**it, "word": w})
+                    else:
+                        skipped += 1
+                    continue
                 to_insert.append({**it, "word": w})
 
-            if not to_insert:
-                conn.commit()
-                return {"added": 0, "skipped": skipped, "total": skipped}
+            # ── 새 단어 삽입 (INSERT … SELECT unnest, DB 왕복 1회) ──
+            if to_insert:
+                cur.execute(
+                    "SELECT COALESCE(MIN(sort_order), 0) FROM words WHERE user_id = %s",
+                    (user_id,),
+                )
+                base = cur.fetchone()[0]
+                n = len(to_insert)
+                words_arr = [it["word"].lower() for it in to_insert]
+                koreans = [(it.get("korean") or "").strip() for it in to_insert]
+                kds = [it.get("korean_detail") or "" for it in to_insert]
+                eds = [it.get("english_def") or "" for it in to_insert]
+                exs = [it.get("example") or "" for it in to_insert]
+                tags = [it.get("tag") or "미지정" for it in to_insert]
+                sos = [base - n + i for i in range(n)]
+                cur.execute(
+                    """INSERT INTO words
+                           (user_id, word, korean, korean_detail, english_def,
+                            example, tag, sort_order, next_review)
+                       SELECT %s, v.word, v.korean, v.kd, v.ed, v.ex, v.tag, v.so,
+                              NOW() + INTERVAL '7 days'
+                       FROM unnest(
+                                %s::text[], %s::text[], %s::text[], %s::text[],
+                                %s::text[], %s::text[], %s::int[]
+                            ) AS v(word, korean, kd, ed, ex, tag, so)""",
+                    (user_id, words_arr, koreans, kds, eds, exs, tags, sos),
+                )
+                added = cur.rowcount
 
-            cur.execute(
-                "SELECT COALESCE(MIN(sort_order), 0) FROM words WHERE user_id = %s",
-                (user_id,),
-            )
-            base = cur.fetchone()[0]
-            n = len(to_insert)
-            words_arr = [it["word"].lower() for it in to_insert]
-            koreans = [(it.get("korean") or "").strip() for it in to_insert]
-            kds = [it.get("korean_detail") or "" for it in to_insert]
-            eds = [it.get("english_def") or "" for it in to_insert]
-            exs = [it.get("example") or "" for it in to_insert]
-            tags = [it.get("tag") or "미지정" for it in to_insert]
-            sos = [base - n + i for i in range(n)]
-            # 한 번의 INSERT ... SELECT unnest 로 전부 삽입 (DB 왕복 1회)
-            cur.execute(
-                """INSERT INTO words
-                       (user_id, word, korean, korean_detail, english_def,
-                        example, tag, sort_order, next_review)
-                   SELECT %s, v.word, v.korean, v.kd, v.ed, v.ex, v.tag, v.so,
-                          NOW() + INTERVAL '7 days'
-                   FROM unnest(
-                            %s::text[], %s::text[], %s::text[], %s::text[],
-                            %s::text[], %s::text[], %s::int[]
-                        ) AS v(word, korean, kd, ed, ex, tag, so)""",
-                (user_id, words_arr, koreans, kds, eds, exs, tags, sos),
-            )
-            added = cur.rowcount
+            # ── 기존 단어 덮어쓰기: 값 있는 칸만 갱신 (CASE로 빈칸 보존, 왕복 1회) ──
+            if to_update:
+                u_words = [it["word"].lower() for it in to_update]
+                u_kors = [(it.get("korean") or "").strip() for it in to_update]
+                u_kds = [it.get("korean_detail") or "" for it in to_update]
+                u_exs = [it.get("example") or "" for it in to_update]
+                u_tags = [it.get("tag") or "" for it in to_update]
+                cur.execute(
+                    """UPDATE words AS w
+                       SET korean        = CASE WHEN v.korean <> '' THEN v.korean ELSE w.korean END,
+                           korean_detail = CASE WHEN v.kd <> ''     THEN v.kd     ELSE w.korean_detail END,
+                           example       = CASE WHEN v.ex <> ''     THEN v.ex     ELSE w.example END,
+                           tag           = CASE WHEN v.tag <> ''    THEN v.tag    ELSE w.tag END
+                       FROM unnest(
+                                %s::text[], %s::text[], %s::text[], %s::text[], %s::text[]
+                            ) AS v(word, korean, kd, ex, tag)
+                       WHERE w.user_id = %s AND lower(w.word) = v.word""",
+                    (u_words, u_kors, u_kds, u_exs, u_tags, user_id),
+                )
+                updated = cur.rowcount
         conn.commit()
-    return {"added": added, "skipped": skipped, "total": added + skipped}
-
-
+    return {"added": added, "updated": updated, "skipped": skipped,
+            "total": added + updated + skipped}
 def get_all_words(user_id: str, tag: str | None = None):
     cols = """id, word, korean, korean_detail, english_def, example,
               tag, created_at, next_review, sort_order"""
@@ -582,55 +611,124 @@ REVIEW_INTERVALS = {
 }
 
 
-def bulk_update_words(user_id: str, items) -> int:
-    """여러 단어를 한 번에 편집. 각 item: {id, korean_detail, english_def,
-    example, tag, next_review}. word·korean은 변경하지 않음.
+def bulk_update_words(user_id: str, items) -> dict:
+    """여러 단어를 한 번에 편집. 각 item: {id, word?, korean?, korean_detail,
+    english_def, example, tag, next_review}.
+    영어단어(word)·한국어(korean)도 편집 가능. word는 소문자로 저장.
     next_review 는 상대기간 코드('1d'/'1w'/'1m'/'3m') → NOW()+INTERVAL,
-    빈값이면 복습일 변경 안 함. (예전 'YYYY-MM-DD' 문자열도 그대로 허용)"""
-    ids, kds, eds, exs, tags, nrs = [], [], [], [], [], []
+    빈값이면 복습일 변경 안 함. (예전 'YYYY-MM-DD' 문자열도 그대로 허용)
+
+    words 유니크 인덱스 (user_id, lower(word)) 충돌 처리:
+      - 단어를 바꾸다 기존(다른) 단어와 겹치는 행은 통째로 건너뛰고(skip),
+        충돌 단어명을 conflicts 로 돌려준다.
+      - 두 단어 값을 서로 맞바꾸는(swap) 등 단일 UPDATE 중 위반이 나면
+        전체를 롤백하고 ok=False 로 알린다(데이터 보존).
+    반환: {ok, updated, skipped, conflicts:[...]}"""
+    # 1) 입력 파싱 (id 기준 dict)
+    parsed = {}
+    order = []
     for it in items:
         try:
             wid = int(it["id"])
         except (KeyError, TypeError, ValueError):
             continue
-        ids.append(wid)
-        kds.append(it.get("korean_detail", "") or "")
-        eds.append(it.get("english_def", "") or "")
-        exs.append(it.get("example", "") or "")
-        tags.append(it.get("tag") or "미지정")
-        nrs.append((it.get("next_review") or "").strip())
-    if not ids:
-        return 0
-    # 행마다 다른 값 + 복습일 코드를 한 번의 UPDATE(unnest)로 처리 → DB 왕복 1회.
-    # 복습일: 코드는 NOW()+INTERVAL(월말·윤년 자동), ''는 변경 안 함, 그 외는 날짜로 해석.
+        parsed[wid] = it
+        order.append(wid)
+    if not parsed:
+        return {"ok": True, "updated": 0, "skipped": 0, "conflicts": []}
+
     with get_conn() as conn:
         with conn.cursor() as cur:
+            # 2) 사용자의 모든 단어 id→lower(word) 조회 (충돌 판정용)
             cur.execute(
-                """UPDATE words AS w
-                   SET korean_detail = v.kd,
-                       english_def = v.ed,
-                       example = v.ex,
-                       tag = v.tag,
-                       next_review = CASE v.nr
-                           WHEN '1d' THEN NOW() + INTERVAL '1 day'
-                           WHEN '1w' THEN NOW() + INTERVAL '7 days'
-                           WHEN '1m' THEN NOW() + INTERVAL '1 month'
-                           WHEN '3m' THEN NOW() + INTERVAL '3 months'
-                           WHEN '' THEN w.next_review
-                           ELSE v.nr::timestamp
-                       END
-                   FROM unnest(
-                            %s::int[], %s::text[], %s::text[],
-                            %s::text[], %s::text[], %s::text[]
-                        ) AS v(id, kd, ed, ex, tag, nr)
-                   WHERE w.id = v.id AND w.user_id = %s""",
-                (ids, kds, eds, exs, tags, nrs, user_id),
+                "SELECT id, lower(word) FROM words WHERE user_id = %s", (user_id,)
             )
-            updated = cur.rowcount
+            cur_words = {row[0]: row[1] for row in cur.fetchall()}
+
+            # 3) 편집 후 각 행의 최종 lower(word) 계산 (빈 단어는 기존값 유지)
+            target = dict(cur_words)  # 미편집 행은 현재값 그대로
+            new_word = {}  # id -> 입력된 새 단어(소문자) (편집된 경우만)
+            for wid in order:
+                if wid not in cur_words:
+                    continue  # 내 소유 아님
+                raw = (parsed[wid].get("word") or "").strip()
+                lw = raw.lower() if raw else cur_words[wid]
+                new_word[wid] = lw
+                target[wid] = lw
+
+            # 4) 최종 단어 다중 집합에서 중복 탐지 → 단어를 '바꾼' 충돌 행만 skip
+            counts = {}
+            for lw in target.values():
+                counts[lw] = counts.get(lw, 0) + 1
+            conflict_ids = set()
+            conflicts = []
+            for wid in order:
+                if wid not in cur_words:
+                    continue
+                changed = new_word[wid] != cur_words[wid]
+                if changed and counts.get(new_word[wid], 0) > 1:
+                    conflict_ids.add(wid)
+                    conflicts.append(parsed[wid].get("word") or new_word[wid])
+
+            # 5) 충돌 아닌 행만 UPDATE 대상으로 구성
+            ids, words_, kors, kds, eds, exs, tags, nrs = [], [], [], [], [], [], [], []
+            for wid in order:
+                if wid not in cur_words or wid in conflict_ids:
+                    continue
+                it = parsed[wid]
+                ids.append(wid)
+                words_.append(new_word[wid])  # 소문자 저장
+                kors.append(it.get("korean", "") or "")
+                kds.append(it.get("korean_detail", "") or "")
+                eds.append(it.get("english_def", "") or "")
+                exs.append(it.get("example", "") or "")
+                tags.append(it.get("tag") or "미지정")
+                nrs.append((it.get("next_review") or "").strip())
+
+            if not ids:
+                conn.commit()
+                return {"ok": True, "updated": 0, "skipped": len(conflict_ids),
+                        "conflicts": conflicts}
+
+            # 행마다 다른 값 + 복습일 코드를 한 번의 UPDATE(unnest)로 처리 → DB 왕복 1회.
+            # 복습일: 코드는 NOW()+INTERVAL(월말·윤년 자동), ''는 변경 안 함, 그 외는 날짜로 해석.
+            try:
+                cur.execute(
+                    """UPDATE words AS w
+                       SET word = v.word,
+                           korean = v.kor,
+                           korean_detail = v.kd,
+                           english_def = v.ed,
+                           example = v.ex,
+                           tag = v.tag,
+                           next_review = CASE v.nr
+                               WHEN '1d' THEN NOW() + INTERVAL '1 day'
+                               WHEN '1w' THEN NOW() + INTERVAL '7 days'
+                               WHEN '1m' THEN NOW() + INTERVAL '1 month'
+                               WHEN '3m' THEN NOW() + INTERVAL '3 months'
+                               WHEN '' THEN w.next_review
+                               ELSE v.nr::timestamp
+                           END
+                       FROM unnest(
+                                %s::int[], %s::text[], %s::text[], %s::text[],
+                                %s::text[], %s::text[], %s::text[], %s::text[]
+                            ) AS v(id, word, kor, kd, ed, ex, tag, nr)
+                       WHERE w.id = v.id AND w.user_id = %s""",
+                    (ids, words_, kors, kds, eds, exs, tags, nrs, user_id),
+                )
+                updated = cur.rowcount
+            except psycopg2.errors.UniqueViolation:
+                conn.rollback()
+                return {
+                    "ok": False,
+                    "updated": 0,
+                    "skipped": len(conflict_ids),
+                    "conflicts": conflicts,
+                    "message": "단어를 서로 맞바꾸는 등 중복이 생겨 저장하지 못했어요. 겹치는 단어를 확인해주세요.",
+                }
         conn.commit()
-    return updated
-
-
+    return {"ok": True, "updated": updated, "skipped": len(conflict_ids),
+            "conflicts": conflicts}
 def bulk_delete_words(user_id: str, ids) -> int:
     """체크된 여러 단어를 한 번에 삭제 (본인 소유만)."""
     clean = []
@@ -823,3 +921,4 @@ def delete_label(user_id: str, name: str) -> tuple[list[str], bool, str, int]:
             cur.execute("DELETE FROM labels WHERE user_id = %s AND name = %s", (user_id, name))
         conn.commit()
     return get_labels(user_id), True, "삭제되었습니다.", deleted
+
