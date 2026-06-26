@@ -157,8 +157,10 @@ def init_db():
                     total_questions INTEGER DEFAULT 0,
                     score           NUMERIC DEFAULT 0,
                     created_at      TIMESTAMP DEFAULT NOW(),
-                    completed_at    TIMESTAMP
+                    completed_at    TIMESTAMP,
+                    review_applied_at TIMESTAMP
                 );
+                ALTER TABLE quiz_sessions ADD COLUMN IF NOT EXISTS review_applied_at TIMESTAMP;
 
                 CREATE TABLE IF NOT EXISTS quiz_question_results (
                     id                    SERIAL PRIMARY KEY,
@@ -560,6 +562,247 @@ def save_quiz_question_results(user_id: str, session_id: int, results: list[dict
                     ),
                 )
         conn.commit()
+
+
+def get_quiz_stats(user_id: str) -> dict:
+    """Quiz 탭 전용 학습 통계.
+
+    단어장 도메인을 건드리지 않고 저장된 quiz_question_results에서 직접 집계한다.
+    """
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                """SELECT
+                       COUNT(*)::int AS attempt_count,
+                       COALESCE(SUM(score), 0)::float AS total_score,
+                       COUNT(*) FILTER (WHERE status = 'correct')::int AS correct_count,
+                       COUNT(*) FILTER (WHERE status = 'partial')::int AS partial_count,
+                       COUNT(*) FILTER (WHERE status = 'incorrect')::int AS incorrect_count,
+                       COUNT(DISTINCT COALESCE(source_word_id, word_id)) FILTER (
+                           WHERE status = 'incorrect'
+                       )::int AS incorrect_word_count,
+                       MAX(created_at) AS last_quiz_at
+                   FROM quiz_question_results
+                   WHERE user_id = %s""",
+                (user_id,),
+            )
+            summary = dict(cur.fetchone() or {})
+
+            cur.execute(
+                """SELECT
+                       COALESCE(source_word_id, word_id)::int AS word_id,
+                       COALESCE(NULLIF(source_word, ''), NULLIF(target_word, ''), '') AS word,
+                       COUNT(*)::int AS attempt_count,
+                       COALESCE(SUM(score), 0)::float AS total_score,
+                       COUNT(*) FILTER (WHERE status = 'correct')::int AS correct_count,
+                       COUNT(*) FILTER (WHERE status = 'partial')::int AS partial_count,
+                       COUNT(*) FILTER (WHERE status = 'incorrect')::int AS incorrect_count,
+                       MAX(created_at) AS last_quiz_at
+                   FROM quiz_question_results
+                   WHERE user_id = %s AND COALESCE(source_word_id, word_id) IS NOT NULL
+                   GROUP BY COALESCE(source_word_id, word_id),
+                            COALESCE(NULLIF(source_word, ''), NULLIF(target_word, ''), '')
+                   ORDER BY incorrect_count DESC, attempt_count DESC, last_quiz_at DESC
+                   LIMIT 50""",
+                (user_id,),
+            )
+            word_stats = [dict(row) for row in cur.fetchall()]
+
+            cur.execute(
+                """SELECT
+                       question_type,
+                       COUNT(*)::int AS attempt_count,
+                       COALESCE(SUM(score), 0)::float AS total_score,
+                       COUNT(*) FILTER (WHERE status = 'incorrect')::int AS incorrect_count
+                   FROM quiz_question_results
+                   WHERE user_id = %s
+                   GROUP BY question_type
+                   ORDER BY attempt_count DESC""",
+                (user_id,),
+            )
+            type_stats = [dict(row) for row in cur.fetchall()]
+
+            cur.execute(
+                """SELECT
+                       COALESCE(source_word_id, word_id)::int AS word_id,
+                       COALESCE(NULLIF(source_word, ''), NULLIF(target_word, ''), '') AS word,
+                       target_word,
+                       question_type,
+                       prompt,
+                       user_answer,
+                       correct_answer,
+                       feedback,
+                       created_at
+                   FROM quiz_question_results
+                   WHERE user_id = %s AND status = 'incorrect'
+                   ORDER BY created_at DESC
+                   LIMIT 10""",
+                (user_id,),
+            )
+            recent_incorrect = [dict(row) for row in cur.fetchall()]
+
+    attempt_count = int(summary.get("attempt_count") or 0)
+    total_score = float(summary.get("total_score") or 0)
+    incorrect_count = int(summary.get("incorrect_count") or 0)
+    summary["accuracy"] = round(total_score / attempt_count, 3) if attempt_count else 0
+    summary["incorrect_rate"] = round(incorrect_count / attempt_count, 3) if attempt_count else 0
+
+    for item in word_stats:
+        attempts = int(item.get("attempt_count") or 0)
+        item["accuracy"] = round(float(item.get("total_score") or 0) / attempts, 3) if attempts else 0
+        item["incorrect_rate"] = round(int(item.get("incorrect_count") or 0) / attempts, 3) if attempts else 0
+
+    for item in type_stats:
+        attempts = int(item.get("attempt_count") or 0)
+        item["accuracy"] = round(float(item.get("total_score") or 0) / attempts, 3) if attempts else 0
+        item["incorrect_rate"] = round(int(item.get("incorrect_count") or 0) / attempts, 3) if attempts else 0
+
+    return {
+        "summary": summary,
+        "word_stats": word_stats,
+        "type_stats": type_stats,
+        "recent_incorrect": recent_incorrect,
+    }
+
+
+def _review_schedule_preview_from_rows(rows) -> list[dict]:
+    buckets: dict[int, dict] = {}
+    for row in rows:
+        try:
+            word_id = int(row["word_id"])
+        except (TypeError, ValueError):
+            continue
+        bucket = buckets.setdefault(
+            word_id,
+            {"word_id": word_id, "word": "", "score": 0.0, "total": 0},
+        )
+        if not bucket["word"]:
+            bucket["word"] = row.get("source_word") or row.get("target_word") or ""
+        bucket["score"] += float(row.get("score") or 0)
+        bucket["total"] += 1
+
+    now = datetime.now()
+    preview = []
+    for bucket in buckets.values():
+        average = bucket["score"] / bucket["total"] if bucket["total"] else 0
+        if average >= 0.8:
+            continue
+        days = 1
+        preview.append(
+            {
+                "word_id": bucket["word_id"],
+                "word": bucket["word"],
+                "result": "incorrect",
+                "proposed_next_review": (now + timedelta(days=days)).date().isoformat(),
+                "interval_days": days,
+            }
+        )
+    return preview
+
+
+def get_quiz_review_schedule_preview(user_id: str, session_id: int) -> list[dict]:
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                """SELECT COALESCE(source_word_id, word_id) AS word_id,
+                          source_word, target_word, score
+                   FROM quiz_question_results
+                   WHERE user_id = %s AND session_id = %s
+                         AND COALESCE(source_word_id, word_id) IS NOT NULL""",
+                (user_id, session_id),
+            )
+            return _review_schedule_preview_from_rows([dict(row) for row in cur.fetchall()])
+
+
+def _interval_days(interval_code: str) -> int:
+    return {
+        "1d": 1,
+        "1w": 7,
+        "1m": 30,
+        "3m": 90,
+    }.get((interval_code or "").strip(), 1)
+
+
+def apply_quiz_review_schedule(user_id: str, session_id: int, incorrect_interval: str = "1d") -> dict:
+    """저장된 채점 결과를 기준으로 복습일 조정을 사용자가 확인한 뒤 적용한다."""
+    interval_days = _interval_days(incorrect_interval)
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                """SELECT id, review_applied_at
+                   FROM quiz_sessions
+                   WHERE id = %s AND user_id = %s
+                   FOR UPDATE""",
+                (session_id, user_id),
+            )
+            session = cur.fetchone()
+            if not session:
+                conn.commit()
+                return {
+                    "ok": False,
+                    "session_id": session_id,
+                    "updated": 0,
+                    "already_applied": False,
+                    "message": "퀴즈 세션을 찾을 수 없습니다.",
+                    "review_schedule_preview": [],
+                }
+
+            cur.execute(
+                """SELECT COALESCE(source_word_id, word_id) AS word_id,
+                          source_word, target_word, score
+                   FROM quiz_question_results
+                   WHERE user_id = %s AND session_id = %s
+                         AND COALESCE(source_word_id, word_id) IS NOT NULL""",
+                (user_id, session_id),
+            )
+            rows = [dict(row) for row in cur.fetchall()]
+            preview = _review_schedule_preview_from_rows(rows)
+            for item in preview:
+                item["interval_days"] = interval_days
+                item["proposed_next_review"] = (
+                    datetime.now() + timedelta(days=interval_days)
+                ).date().isoformat()
+
+            if session["review_applied_at"]:
+                conn.commit()
+                return {
+                    "ok": True,
+                    "session_id": session_id,
+                    "updated": 0,
+                    "already_applied": True,
+                    "message": "이미 복습일 조정이 적용된 퀴즈입니다.",
+                    "review_schedule_preview": preview,
+                }
+
+            updated = 0
+            for item in preview:
+                cur.execute(
+                    """UPDATE words
+                       SET next_review = NOW() + (%s::text || ' days')::interval
+                       WHERE id = %s AND user_id = %s""",
+                    (item["interval_days"], item["word_id"], user_id),
+                )
+                if cur.rowcount:
+                    updated += cur.rowcount
+                    cur.execute(
+                        "INSERT INTO quiz_history (word_id, result) VALUES (%s, %s)",
+                        (item["word_id"], item["result"] == "correct"),
+                    )
+
+            cur.execute(
+                "UPDATE quiz_sessions SET review_applied_at = NOW() WHERE id = %s AND user_id = %s",
+                (session_id, user_id),
+            )
+        conn.commit()
+
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "updated": updated,
+        "already_applied": False,
+        "message": f"{updated}개 단어의 다음 복습일을 조정했습니다.",
+        "review_schedule_preview": preview,
+    }
 
 def update_word(user_id: str, word_id: int, korean_detail, english_def,
                 example, tag, next_review) -> bool:

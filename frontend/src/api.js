@@ -188,6 +188,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ answer_token: answerToken, answers }),
     }),
+  quizApplyReviewSchedule: (sessionId, incorrectInterval = "1d") =>
+    jsonFetch("/api/quiz/review-schedule/apply", {
+      method: "POST",
+      body: JSON.stringify({
+        session_id: sessionId,
+        incorrect_interval: incorrectInterval,
+      }),
+    }),
+  quizStats: () => jsonFetch("/api/quiz/stats"),
 
   // ── 롤플레잉 ──
   roleplayStart: () => jsonFetch("/api/roleplay/start", { method: "POST" }),
