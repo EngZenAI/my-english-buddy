@@ -119,9 +119,18 @@ class RenameLabelIn(BaseModel):
     new_name: str
 
 
+class RoleplayStartIn(BaseModel):
+    level: str = "intermediate"          # beginner | intermediate | advanced
+    scenario: str = "daily"              # daily | opic | tag
+    tag: str | None = None               # scenario == "tag" 일 때 사용
+
+
 class RoleplayContinueIn(BaseModel):
     history: list  # [[user, bot], ...]
     message: str
+    level: str = "intermediate"
+    scenario: str = "daily"
+    tag: str | None = None
 
 
 class SlangIn(BaseModel):
@@ -456,15 +465,36 @@ def quiz_stats(_user: dict = Depends(require_user)):
 
 
 # ── 롤플레잉 — 회원 전용 ───────────────────────────────────
+def _roleplay_words(user_id: str, scenario: str, tag: str | None):
+    """시나리오에 맞는 단어 목록을 고른다.
+
+    태그 시나리오는 해당 태그의 단어로 맥락을 구성하고, 그 외에는 복습 예정 단어를
+    사용한다. 단어가 없어도(신규 사용자 등) start_roleplay가 동작한다.
+    """
+    if (scenario or "").lower() == "tag" and tag:
+        return get_all_words(user_id, tag)
+    return get_words_to_review(user_id)
+
+
 @router.post("/roleplay/start")
-def roleplay_start(_user: dict = Depends(require_user)):
-    words = get_words_to_review(_user["id"])
-    history = start_roleplay(words)  # [("", response)]
+def roleplay_start(payload: RoleplayStartIn, _user: dict = Depends(require_user)):
+    words = _roleplay_words(_user["id"], payload.scenario, payload.tag)
+    history = start_roleplay(
+        words, level=payload.level, scenario=payload.scenario, tag=payload.tag
+    )  # [("", response)]
     return {"history": [list(pair) for pair in history]}
 
 
 @router.post("/roleplay/continue")
 def roleplay_continue(payload: RoleplayContinueIn, _user: dict = Depends(require_user)):
     history = [list(pair) for pair in payload.history]
-    new_history = continue_roleplay(history, payload.message)
+    words = _roleplay_words(_user["id"], payload.scenario, payload.tag)
+    new_history = continue_roleplay(
+        history,
+        payload.message,
+        level=payload.level,
+        scenario=payload.scenario,
+        tag=payload.tag,
+        words=words,
+    )
     return {"history": [list(pair) for pair in new_history]}

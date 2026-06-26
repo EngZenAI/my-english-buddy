@@ -32,6 +32,13 @@ FEATURE_MODEL_PROFILES = {
         "model_id": "openai/gpt-oss-120b",
         "params": {"max_tokens": 4096},
     },
+    "roleplay": {
+        # 매 턴 1회 호출(지연 민감) + 자연스러운 영어 회화 품질이 핵심.
+        # 120b는 과하고 granite-small보다 회화가 좋은 중형 instruct 모델을 사용.
+        "provider": "watsonx",
+        "model_id": "meta-llama/llama-3-3-70b-instruct",
+        "params": {"max_tokens": 512, "temperature": 0.7, "top_p": 0.9},
+    },
 }
 FALLBACK_MODEL_KEY = "qwen"
 _llm_cache = {"qwen": qwen_llm, "exaone": exaone_llm}
@@ -144,30 +151,79 @@ grade_prompt = ChatPromptTemplate.from_template("""
 """)
 grade_chain = grade_prompt | llm | parser
 
-roleplay_start_prompt = ChatPromptTemplate.from_template("""
-당신은 영어 회화 튜터입니다.
-아래 단어들이 자연스럽게 등장하는 롤플레잉을 시작해주세요.
+# ── 롤플레잉: 레벨·시나리오별 시스템 프롬프트 빌더 ──────────
+# 레벨에 따라 AI의 어휘/속도/질문 난이도를 조절한다.
+ROLEPLAY_LEVEL_GUIDES = {
+    "beginner": (
+        "The learner is a BEGINNER. Use simple, common vocabulary and short "
+        "sentences. Speak slowly and clearly. Ask easy, concrete questions, "
+        "one at a time."
+    ),
+    "intermediate": (
+        "The learner is INTERMEDIATE. Use everyday vocabulary with some common "
+        "idioms. Ask follow-up questions that require explanation and opinions."
+    ),
+    "advanced": (
+        "The learner is ADVANCED. Use rich, natural, native-level vocabulary "
+        "and idioms. Ask nuanced, open-ended questions and push the learner to "
+        "elaborate and defend their views."
+    ),
+}
 
-상황: 카페에서 직원(AI)과 손님(사용자)의 대화
-규칙:
-- 영어로만 대화
-- 아래 단어들을 대화 중 자연스럽게 사용
-- 사용자가 틀린 영어를 쓰면 대화 끝에 살짝 교정해줄 것
-- 첫 인사부터 시작
 
-반드시 사용할 단어: {word_list}
-""")
-roleplay_start_chain = roleplay_start_prompt | llm | parser
+def _roleplay_level_guide(level: str) -> str:
+    return ROLEPLAY_LEVEL_GUIDES.get(
+        (level or "").lower(), ROLEPLAY_LEVEL_GUIDES["intermediate"]
+    )
 
-chat_prompt = ChatPromptTemplate.from_messages([
-    ("system", """당신은 영어 회화 튜터입니다.
-카페 직원 역할로 손님(사용자)과 영어로 대화하세요.
-사용자가 문법적으로 틀린 영어를 쓰면 대화 마지막에 괄호로 살짝 교정해주세요.
-예: (Correction: "I want" not "I wants")"""),
-    ("placeholder", "{history}"),
-    ("human", "{user_msg}")
-])
-chat_chain = chat_prompt | llm | parser
+
+def _roleplay_scenario_intro(scenario: str, tag: str | None, words: list) -> str:
+    word_list = ", ".join([w["word"] for w in words]) if words else ""
+    scenario = (scenario or "daily").lower()
+
+    if scenario == "opic":
+        intro = (
+            "This is an OPIc-style English speaking test. You are the OPIc "
+            "interviewer named Ava. Run the session like a real OPIc exam: open "
+            "with a friendly self-introduction prompt, then move through everyday "
+            "topics and role-play tasks. Ask exactly one question per turn and, "
+            "like an examiner scoring fluency, naturally probe for more detail, "
+            "opinions, and reactions."
+        )
+    elif scenario == "tag":
+        topic = tag or "일상"
+        intro = (
+            f"This is a themed role-play about '{topic}'. Play a natural "
+            f"native-speaker counterpart who fits a realistic '{topic}' situation. "
+            "Keep it immersive, like chatting with a native friend over a "
+            "messenger app."
+        )
+    else:
+        intro = (
+            "This is a casual English conversation with a friendly native "
+            "speaker, like texting a close friend."
+        )
+
+    if word_list:
+        intro += (
+            "\n\nWhen it fits naturally, weave in these review words from the "
+            f"learner's wordbook: {word_list}."
+        )
+    return intro
+
+
+def _roleplay_system_prompt(level, scenario, tag, words) -> str:
+    return f"""You are an English conversation tutor and a friendly native speaker.
+
+{_roleplay_scenario_intro(scenario, tag, words)}
+
+{_roleplay_level_guide(level)}
+
+Rules:
+- Speak ONLY in English.
+- Keep your turn fairly short and end with a question to keep the conversation going.
+- If the learner makes a grammar or word-choice mistake, add a brief, gentle correction at the very end in parentheses. Example: (Correction: "I want" not "I wants")
+"""
 
 
 # ── 4. LangGraph 상태 정의 ────────────────────────────────
@@ -228,11 +284,25 @@ def grade_quiz(words: list, quiz_text: str, user_answer: str) -> str:
     })
     return result["feedback"]
 
-def start_roleplay(words: list) -> list:
-    if not words:
-        return [("", "📚 복습할 단어가 없어요! 단어를 먼저 저장해주세요.")]
-    word_list = ", ".join([w["word"] for w in words])
-    response  = roleplay_start_chain.invoke({"word_list": word_list})
+def start_roleplay(
+    words: list | None = None,
+    level: str = "intermediate",
+    scenario: str = "daily",
+    tag: str | None = None,
+) -> list:
+    """레벨·시나리오에 맞춰 롤플레잉 첫 메시지를 생성한다.
+
+    words가 없어도 동작한다(OPIc/태그 시나리오는 복습단어가 없을 수 있음).
+    반환 형식은 기존과 동일한 [("", response)] (api에서 객체로 변환).
+    """
+    words = words or []
+    system = _roleplay_system_prompt(level, scenario, tag, words)
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system),
+        ("human", "Start the role-play now: greet me and ask your first question."),
+    ])
+    chain = prompt | get_llm("roleplay") | parser
+    response = chain.invoke({})
     return [("", response)]
 
 def explain_slang(word: str, kor_word: str = "") -> str:
@@ -261,14 +331,29 @@ Respond in Korean using this format:
     chain = prompt | llm | parser
     return chain.invoke({"word": word, "kor_word": kor_word})
 
-def continue_roleplay(history: list, user_msg: str) -> list:
+def continue_roleplay(
+    history: list,
+    user_msg: str,
+    level: str = "intermediate",
+    scenario: str = "daily",
+    tag: str | None = None,
+    words: list | None = None,
+) -> list:
     if not user_msg.strip():
         return history
+    words = words or []
+    system = _roleplay_system_prompt(level, scenario, tag, words)
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system),
+        ("placeholder", "{history}"),
+        ("human", "{user_msg}"),
+    ])
+    chain = prompt | get_llm("roleplay") | parser
     lc_history = []
     for user, bot in history:
         if user: lc_history.append(("human",     user))
         if bot:  lc_history.append(("assistant", bot))
-    response = chat_chain.invoke({
+    response = chain.invoke({
         "history":  lc_history,
         "user_msg": user_msg
     })

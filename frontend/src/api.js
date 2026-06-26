@@ -199,11 +199,26 @@ export const api = {
   quizStats: () => jsonFetch("/api/quiz/stats"),
 
   // ── 롤플레잉 ──
-  roleplayStart: () => jsonFetch("/api/roleplay/start", { method: "POST" }),
-  roleplayContinue: (history, message) =>
+  // opts: { level, scenario, tag } — 세션 설정. 매 턴 함께 전달해 일관 유지.
+  roleplayStart: (opts = {}) =>
+    jsonFetch("/api/roleplay/start", {
+      method: "POST",
+      body: JSON.stringify({
+        level: opts.level ?? "intermediate",
+        scenario: opts.scenario ?? "daily",
+        tag: opts.tag ?? null,
+      }),
+    }),
+  roleplayContinue: (history, message, opts = {}) =>
     jsonFetch("/api/roleplay/continue", {
       method: "POST",
-      body: JSON.stringify({ history, message }),
+      body: JSON.stringify({
+        history,
+        message,
+        level: opts.level ?? "intermediate",
+        scenario: opts.scenario ?? "daily",
+        tag: opts.tag ?? null,
+      }),
     }),
 };
 
