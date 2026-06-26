@@ -68,6 +68,22 @@ export default function WordbookTab({ user, onRequireLogin }) {
   const toggleExpandedEx = toggleInSet(setExpandedEx);
   const toggleMeaning = toggleInSet(setOpenMeaning);
 
+  // 편집 카드의 복습일 미리보기: 코드(1d/1w/1m/3m)를 오늘 기준 미래 날짜로 환산해 보여준다.
+  // (실제 저장값은 백엔드가 NOW()+INTERVAL로 계산하므로 여기선 안내용)
+  const fmtYMD2 = (date) =>
+    `${String(date.getFullYear()).slice(2)}-${String(date.getMonth() + 1).padStart(
+      2,
+      "0"
+    )}-${String(date.getDate()).padStart(2, "0")}`;
+  const reviewPreview = (code) => {
+    const dt = new Date();
+    if (code === "1d") dt.setDate(dt.getDate() + 1);
+    else if (code === "1w") dt.setDate(dt.getDate() + 7);
+    else if (code === "1m") dt.setMonth(dt.getMonth() + 1);
+    else if (code === "3m") dt.setMonth(dt.getMonth() + 3);
+    return fmtYMD2(dt);
+  };
+
   // 드래그 정렬
   const [dragIndex, setDragIndex] = useState(null);
 
@@ -850,12 +866,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
                             </select>
                           </label>
                           <label className="block">
-                            <span className="text-[11px] text-slate-400">
-                              복습일{" "}
-                              <span className="text-slate-300">
-                                (현재 {String(w.next_review).slice(2, 10)})
-                              </span>
-                            </span>
+                            <span className="text-[11px] text-slate-400">복습일</span>
                             <select
                               value={d.next_review ?? ""}
                               onChange={(e) =>
@@ -870,6 +881,17 @@ export default function WordbookTab({ user, onRequireLogin }) {
                               <option value="1m">한달 뒤</option>
                               <option value="3m">3개월 뒤</option>
                             </select>
+                            <span className="mt-1 block text-[11px]">
+                              {d.next_review ? (
+                                <span className="text-brand-600 font-medium">
+                                  → {reviewPreview(d.next_review)}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400">
+                                  현재 {String(w.next_review).slice(2, 10)}
+                                </span>
+                              )}
+                            </span>
                           </label>
                         </div>
                       </div>
