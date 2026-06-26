@@ -112,15 +112,6 @@ export default function WordbookTab({ user, onRequireLogin }) {
     setFilter(label);
   };
 
-  const refresh = () => {
-    // 단어 목록은 앱이 드래그·편집·삭제·가져오기 때 캐시를 정확히 유지하므로
-    // 여기서 DB를 강제 재조회하지 않는다. (쓰기 직후 즉시 재조회 시 read-after-write
-    // 가시성 지연으로 방금 바꾼 순서가 잠깐 옛것으로 튀는 문제를 피하기 위함.)
-    // DB에서 완전히 새로 끌어오려면 브라우저 새로고침(F5)을 사용.
-    queryClient.invalidateQueries({ queryKey: queryKeys.labels });
-    queryClient.invalidateQueries({ queryKey: ["label-word-count"] });
-  };
-
   const refreshWords = async () => {
     await queryClient.invalidateQueries({ queryKey: ["words"] });
     await queryClient.invalidateQueries({ queryKey: ["label-word-count"] });
@@ -458,14 +449,6 @@ export default function WordbookTab({ user, onRequireLogin }) {
                            disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 삭제{selected.size ? ` (${selected.size})` : ""}
-              </button>
-              <button
-                onClick={refresh}
-                disabled={!user}
-                className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50
-                           px-3 py-1.5 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                새로고침
               </button>
             </>
           ) : (

@@ -18,7 +18,7 @@ LLM 기반 나만의 영어 학습 앱
 |---|---|
 | UI | React + Vite + Tailwind |
 | API | FastAPI REST (`/api/*`) |
-| DB | PostgreSQL (Supabase) |
+| DB | PostgreSQL (Railway) |
 | LLM | WatsonX / Ollama(qwen2.5) |
 | 번역 | Google Cloud Translation API |
 | 사전 | Free Dictionary API |
@@ -52,6 +52,8 @@ AUTH_SECRET=...            #  없으면 openssl rand -hex 32로 생성
 AUTH_COOKIE_SECURE=false   # 로컬 HTTP 환경에서=false, HTTPS 배포 환경에서는=true
 GOOGLE_OAUTH_CLIENT_ID=...
 GOOGLE_OAUTH_CLIENT_SECRET=...
+OAUTH_SUCCESS_REDIRECT_URL=/auth/complete   # 구글 로그인 완료 후 프론트 복귀 경로(필수)
+# APP_PUBLIC_URL=http://localhost:8000      # 단일 서버(8000)로 접속할 때만 설정. dev(5173)는 생략
 ```
 
 > WatsonX 키 없으면 자동으로 Ollama(qwen2.5:7b)로 전환됩니다.
@@ -89,48 +91,41 @@ npm install
 > 구성은 두 조각입니다 — **백엔드(8000) = 데이터/두뇌**, **프론트(화면) = 껍데기**.
 > 화면을 띄우는 방법에 따라 아래 두 가지 실행 방식이 있습니다.
 
-### 방식 A — 8000 한 곳만 (평소 추천, 가장 단순)
-
-화면을 미리 빌드해서 백엔드에 넣고, 백엔드만 켭니다. 터미널 1개면 됩니다.
+### 평소 실행 (개발 표준) — 터미널 2개, **5173으로 접속**
 
 ```bash
-# 1) 화면 빌드 (프론트 코드를 바꿀 때마다 다시 실행)
-cd frontend
-npm run build          # frontend/dist 생성
-
-# 2) 백엔드 실행
-cd ..
-uvicorn backend.main:app --reload
-```
-
-→ 브라우저에서 **http://localhost:8000** 접속. (5173·`npm run dev` 불필요)
-→ 화면 코드를 수정하면 `npm run build`를 **다시** 해야 반영됩니다.
-
-### 방식 B — 5173 + 8000 둘 다 (프론트를 자주 고칠 때만)
-
-화면을 핫리로드로 개발할 때 사용. **터미널 2개**가 필요합니다.
-
-```bash
-# 터미널 1 — 백엔드 (반드시 같이 켜야 함!)
-uvicorn backend.main:app --reload          # localhost:8000
+# 터미널 1 — 백엔드 (항상 켜둘 것)
+uvicorn backend.main:app --reload          # localhost:8000  (API·인증·DB)
 
 # 터미널 2 — 프론트 dev 서버
-cd frontend && npm run dev                 # localhost:5173
+cd frontend && npm run dev                 # localhost:5173  ← 여기로 접속
 ```
 
-→ 브라우저에서 **http://localhost:5173** 접속. 코드 저장 시 즉시 반영.
-→ `/api`와 백엔드 인증 요청은 Vite가 8000번 백엔드로 자동 전달(프록시)합니다.
-→ **5173만 켜면 화면은 떠도 기능은 안 됩니다.** 백엔드(8000)를 같이 켜세요.
+→ 브라우저에서 **http://localhost:5173** 접속. 코드 저장 시 즉시 반영(핫리로드).
+→ `/api`·`/auth` 요청은 Vite가 8000 백엔드로 자동 전달(프록시)합니다.
+→ **`npm run build`는 평소엔 불필요.** dev 서버가 실시간 컴파일합니다.
+→ 주의: **5173은 `npm run dev`가 떠 있을 때만 열립니다.** build만 하고 5173에 접속하면 "사이트에 연결할 수 없음(연결 거부)"이 정상입니다 — 그땐 dev를 켜세요.
+→ `.env`에 `OAUTH_SUCCESS_REDIRECT_URL=/auth/complete`가 있어야 구글 로그인 완료 처리가 됩니다(기본 `APP_PUBLIC_URL`은 5173).
 
-### 접속 경로 (방식 공통)
+### (선택) 단일 서버 — 8000 한 곳 (배포처럼 묶을 때만)
+
+화면을 빌드해 백엔드가 함께 서빙. 평소 개발엔 위 방식을 쓰세요.
+
+```bash
+cd frontend && npm run build               # frontend/dist 생성 (반드시 서버 시작 '전'에)
+cd .. && uvicorn backend.main:app --reload # http://localhost:8000 접속
+```
+
+> `main.py`는 **시작 시점**에 `frontend/dist` 유무를 검사해 있을 때만 SPA를 서빙합니다.
+> 따라서 **빌드 → 그다음 서버** 순서. 서버를 먼저 켜면 8000이 503/빈 화면이 됩니다(빌드 후 재시작).
+> 8000으로 접속할 땐 `.env`에 `APP_PUBLIC_URL=http://localhost:8000`도 설정하세요(구글 로그인 리다이렉트).
+
+### 접속 경로
 
 | 경로 | 내용 |
 |---|---|
-| `/`        | React 앱 (방식 A는 8000, 방식 B는 5173) |
+| `/`        | React 앱 (평소 5173, 단일 서버 모드는 8000) |
 | `/api/*`   | REST API (검색·단어장·퀴즈·롤플레잉·슬랭·TTS) |
-
-> 방식 A에서 `frontend/dist`가 없으면(=빌드 안 함) `/` 접속 시 "빌드하세요" 안내(503)가 반환됩니다.
-> 이 경우 `frontend` 폴더에서 `npm run build`를 먼저 실행하세요.
 
 ---
 
