@@ -24,6 +24,7 @@ from backend.database import (
     delete_word,
     existing_words_lower,
     get_all_words,
+    get_quiz_stats,
     get_words_for_quiz,
     get_labels,
     get_words_to_review,
@@ -39,8 +40,8 @@ from backend.llm import (
     explain_slang,
     start_roleplay,
 )
-from backend.quiz.schemas import QuizGenerateIn, QuizGradeIn
-from backend.quiz.service import generate_assignment, grade_assignment
+from backend.quiz.schemas import QuizGenerateIn, QuizGradeIn, QuizReviewScheduleApplyIn
+from backend.quiz.service import apply_review_schedule, generate_assignment, grade_assignment
 from backend.services import (
     search_from_english,
     search_from_korean,
@@ -432,6 +433,26 @@ def quiz_grade(payload: QuizGradeIn, _user: dict = Depends(require_user)):
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/quiz/review-schedule/apply")
+def quiz_review_schedule_apply(
+    payload: QuizReviewScheduleApplyIn,
+    _user: dict = Depends(require_user),
+):
+    result = apply_review_schedule(
+        _user["id"],
+        payload.session_id,
+        payload.incorrect_interval,
+    )
+    if not result.ok:
+        raise HTTPException(status_code=404, detail=result.message)
+    return result
+
+
+@router.get("/quiz/stats")
+def quiz_stats(_user: dict = Depends(require_user)):
+    return get_quiz_stats(_user["id"])
 
 
 # ── 롤플레잉 — 회원 전용 ───────────────────────────────────

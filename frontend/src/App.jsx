@@ -20,6 +20,32 @@ const TABS = [
 
 const AUTH_RETURN_KEY = "englishBuddy.authReturn";
 
+function todayMinus(days) {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return date.toISOString().slice(0, 10);
+}
+
+function createInitialQuizState() {
+  return {
+    goal: {
+      mode: "random",
+      tag: "",
+      saved_from: todayMinus(30),
+      saved_to: new Date().toISOString().slice(0, 10),
+      instruction: "",
+      question_count: 10,
+    },
+    questions: [],
+    answerToken: "",
+    answers: {},
+    gradeResult: null,
+    message: "",
+    savedSuggestions: {},
+    reviewInterval: "1d",
+  };
+}
+
 function getInitialView() {
   if (window.location.pathname === "/auth/complete") return "auth-complete";
   return "home";
@@ -63,6 +89,7 @@ export default function App() {
   const [view, setView] = useState(getInitialView);
   const [tab, setTab] = useState("search");
   const [authCompleteFailed, setAuthCompleteFailed] = useState(false);
+  const [quizState, setQuizState] = useState(createInitialQuizState);
 
   const { data: meData, isPending: authLoading } = useQuery({
     queryKey: queryKeys.me,
@@ -125,6 +152,7 @@ export default function App() {
     queryClient.removeQueries({ queryKey: ["words"] });
     queryClient.removeQueries({ queryKey: ["word-saved"] });
     queryClient.removeQueries({ queryKey: ["label-word-count"] });
+    setQuizState(createInitialQuizState());
     goToView("home");
   };
 
@@ -269,6 +297,8 @@ export default function App() {
           <ActiveTab
             user={user}
             onRequireLogin={() => startLogin({ view: "home", tab })}
+            quizState={quizState}
+            setQuizState={setQuizState}
           />
         </>
       )}

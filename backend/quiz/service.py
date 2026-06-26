@@ -5,18 +5,20 @@ import json
 import logging
 import errno
 import time
+from datetime import datetime, timedelta
 from typing import Any
 
-from langchain_core.output_parsers import PydanticOutputParser, StrOutputParser
+from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from backend.config import settings
 from backend.database import (
+    apply_quiz_review_schedule,
     complete_quiz_session,
     create_quiz_session,
+    existing_words_lower,
     save_quiz_question_results,
-    update_review,
 )
 import backend.llm as llm_module
 from backend.quiz.schemas import (
@@ -26,6 +28,8 @@ from backend.quiz.schemas import (
     QuizGradedQuestion,
     QuizGradeResponse,
     QuizQuestion,
+    QuizReviewScheduleApplyResponse,
+    QuizReviewScheduleItem,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,18 +39,17 @@ DEFAULT_QUESTION_COUNT = 10
 MAX_QUESTION_COUNT = 20
 MAX_CANDIDATES = 50
 TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24
+WORD_PAYLOAD_TEXT_LIMIT = 220
 CHOICE_IDS = ("A", "B", "C", "D")
 QUESTION_TYPES = (
     "meaning_choice",
     "context_choice",
-    "grammar_blank_choice",
     "short_answer",
     "sentence_answer",
 )
 CHOICE_QUESTION_TYPES = {
     "meaning_choice",
     "context_choice",
-    "grammar_blank_choice",
 }
 SAVED_GRAMMAR_BLANK_CHOICE_ALIASES = {"_".join(("to" + "eic", "part5"))}
 GENERATION_ATTEMPTS = 3
@@ -74,10 +77,13 @@ class _GeneratedQuestion(BaseModel):
     choice_explanations: dict[str, str] = Field(default_factory=dict)
     study_note: str = ""
     is_derived: bool = False
+    is_related: bool = False
+    relation_type: str = ""
     derived_from_word_id: int | None = None
     suggested_korean: str = ""
     suggested_english_def: str = ""
     suggested_example: str = ""
+    suggested_tag: str = ""
 
 
 class _GeneratedQuiz(BaseModel):
@@ -93,7 +99,6 @@ class _SubjectiveGrade(BaseModel):
 
 _quiz_parser = PydanticOutputParser(pydantic_object=_GeneratedQuiz)
 _subjective_parser = PydanticOutputParser(pydantic_object=_SubjectiveGrade)
-_text_parser = StrOutputParser()
 
 _quiz_prompt = ChatPromptTemplate.from_template(
     """
@@ -104,16 +109,34 @@ derived forms of saved words when it helps learning.
 Create {question_count} questions. Mix these types from easy to hard:
 - meaning_choice: simple meaning or word matching
 - context_choice: choose a word/form that fits a sentence
-- grammar_blank_choice: exam-style sentence blank grammar/vocabulary question
 - short_answer: type the target word or derived form
 - sentence_answer: write a short English sentence using the target word
 
 Rules:
 - Use only provided word_id values as source_word_id/word_id anchors.
 - question_type must be one of: meaning_choice, context_choice,
-  grammar_blank_choice, short_answer, sentence_answer.
+  short_answer, sentence_answer.
+- For context_choice, put the English sentence with the blank in passage and
+  put only the Korean instruction/question in prompt.
+- Create fresh original contexts and sentences. Do not copy, lightly rewrite,
+  or imitate any saved example sentence. If examples are absent, invent natural
+  new contexts from the word meaning.
+- Vary situations, collocations, part-of-speech usage, sentence structure, and
+  distractor logic across questions.
 - For derived words, keep word_id/source_word_id as the original saved word id,
   set is_derived=true, target_word to the derived word, and derived_from_word_id.
+- Objective questions may use a related target_word that is not in the saved
+  wordbook when it improves learning: derived forms, synonyms, antonyms,
+  collocations, same word family, or a contextually natural expression. Keep
+  source_word_id anchored to the saved word, set is_related=true, and set
+  relation_type to one of: derived, synonym, antonym, collocation, word_family,
+  contextual.
+- When target_word is not the saved source word, fill suggested_korean,
+  suggested_english_def, suggested_example, and suggested_tag so the learner can
+  add the missed target to the wordbook after grading.
+- Subjective text questions must ask for the saved word or a clear derived form
+  only. Do not require a synonym or unrelated related expression as the typed
+  answer.
 - Objective questions must have exactly four choices A-D and correct_choice_id.
 - Objective wrong choices must not be limited to saved wordbook words. Generate
   realistic distractors that could be confused by part of speech, meaning,
@@ -168,9 +191,6 @@ Grade with this policy:
 {format_instructions}
 """
 )
-
-_subjective_chain = _subjective_prompt | quiz_llm | _subjective_parser
-
 
 def _clamp_question_count(value: int | None) -> int:
     try:
@@ -228,16 +248,19 @@ def _read_answer_token(user_id: str, token: str) -> dict[str, Any]:
 
 
 def _word_payload(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def compact(value: Any, limit: int = WORD_PAYLOAD_TEXT_LIMIT) -> str:
+        text = " ".join(str(value or "").split())
+        if len(text) <= limit:
+            return text
+        return f"{text[:limit].rstrip()}..."
+
     return [
         {
             "id": int(w["id"]),
-            "word": w.get("word") or "",
-            "korean": w.get("korean") or "",
-            "korean_detail": w.get("korean_detail") or "",
-            "english_def": w.get("english_def") or "",
-            "example": w.get("example") or "",
+            "word": compact(w.get("word"), 80),
+            "korean": compact(w.get("korean"), 120),
+            "english_def": compact(w.get("english_def")),
             "tag": w.get("tag") or "미지정",
-            "created_at": str(w.get("created_at") or "")[:10],
         }
         for w in words[:MAX_CANDIDATES]
     ]
@@ -261,7 +284,9 @@ def _choice_text(choice: dict[str, str]) -> str:
 def _normalize_question_type(qtype: str | None) -> str:
     raw = (qtype or "").strip()
     if raw in SAVED_GRAMMAR_BLANK_CHOICE_ALIASES:
-        return "grammar_blank_choice"
+        return "context_choice"
+    if raw == "grammar_blank_choice":
+        return "context_choice"
     if raw in QUESTION_TYPES:
         return raw
     return "meaning_choice"
@@ -352,6 +377,30 @@ def _normalize_generated(generated: _GeneratedQuiz, words: list[dict[str, Any]],
             continue
 
         is_derived = bool(item.is_derived)
+        source_word_text = (source.get("word") or "").strip().lower()
+        target_text = target.strip().lower()
+        target_differs_from_source = bool(
+            source_word_text and target_text and target_text != source_word_text
+        )
+        if (
+            target_differs_from_source
+            and qtype not in CHOICE_QUESTION_TYPES
+            and not is_derived
+        ):
+            continue
+        is_related = bool(item.is_related) or (
+            qtype in CHOICE_QUESTION_TYPES and target_differs_from_source
+        )
+        relation_type = item.relation_type.strip()
+        suggested_korean = item.suggested_korean.strip()
+        suggested_english_def = item.suggested_english_def.strip()
+        suggested_example = item.suggested_example.strip()
+        suggested_tag = item.suggested_tag.strip()
+        if not target_differs_from_source:
+            suggested_korean = suggested_korean or source.get("korean") or ""
+            suggested_english_def = suggested_english_def or source.get("english_def") or ""
+            suggested_example = suggested_example or source.get("example") or ""
+            suggested_tag = suggested_tag or source.get("tag") or "미지정"
         normalized.append(
             {
                 "id": f"q{len(normalized) + 1}",
@@ -375,11 +424,13 @@ def _normalize_generated(generated: _GeneratedQuiz, words: list[dict[str, Any]],
                 },
                 "study_note": item.study_note.strip(),
                 "is_derived": is_derived,
+                "is_related": is_related,
+                "relation_type": relation_type,
                 "derived_from_word_id": int(item.derived_from_word_id or source_word_id) if is_derived else None,
-                "suggested_korean": item.suggested_korean.strip() or source.get("korean") or "",
-                "suggested_english_def": item.suggested_english_def.strip() or source.get("english_def") or "",
-                "suggested_example": item.suggested_example.strip() or source.get("example") or "",
-                "suggested_tag": source.get("tag") or "미지정",
+                "suggested_korean": suggested_korean,
+                "suggested_english_def": suggested_english_def,
+                "suggested_example": suggested_example,
+                "suggested_tag": suggested_tag or "미지정",
             }
         )
         if len(normalized) >= count:
@@ -421,6 +472,69 @@ def _active_model_name() -> str:
 def _quiz_llm():
     get_llm = getattr(llm_module, "get_llm", None)
     return get_llm("quiz") if get_llm else quiz_llm
+
+
+def _usage_value(usage: Any, *keys: str) -> int | None:
+    for key in keys:
+        if isinstance(usage, dict) and usage.get(key) is not None:
+            try:
+                return int(usage.get(key))
+            except (TypeError, ValueError):
+                return None
+        value = getattr(usage, key, None)
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _token_usage(response: Any) -> dict[str, int | None]:
+    usage = getattr(response, "usage_metadata", None)
+    metadata = getattr(response, "response_metadata", None) or {}
+    if not usage and isinstance(metadata, dict):
+        usage = metadata.get("token_usage") or metadata.get("usage")
+    input_tokens = _usage_value(
+        usage,
+        "input_tokens",
+        "prompt_tokens",
+        "input_token_count",
+        "prompt_eval_count",
+    )
+    output_tokens = _usage_value(
+        usage,
+        "output_tokens",
+        "completion_tokens",
+        "generated_token_count",
+        "eval_count",
+    )
+    total_tokens = _usage_value(usage, "total_tokens")
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
+def _invoke_quiz_llm(operation: str, prompt_value: Any) -> Any:
+    started = time.perf_counter()
+    response = _quiz_llm().invoke(prompt_value)
+    elapsed_ms = round((time.perf_counter() - started) * 1000)
+    usage = _token_usage(response)
+    logger.info(
+        "llm_request_completed feature=quiz operation=%s model=%s "
+        "input_tokens=%s output_tokens=%s total_tokens=%s duration_ms=%s",
+        operation,
+        _active_model_name(),
+        usage["input_tokens"],
+        usage["output_tokens"],
+        usage["total_tokens"],
+        elapsed_ms,
+    )
+    return response
 
 
 def _raw_text(value: Any) -> str:
@@ -506,8 +620,7 @@ def _generate_llm_questions(
         )
         raw_generated = ""
         try:
-            quiz_chain = _quiz_prompt | _quiz_llm() | _text_parser
-            raw_generated = quiz_chain.invoke(
+            prompt_value = _quiz_prompt.invoke(
                 {
                     "question_count": remaining,
                     "goal_json": json.dumps(goal_payload, ensure_ascii=False),
@@ -516,6 +629,7 @@ def _generate_llm_questions(
                     "format_instructions": _quiz_parser.get_format_instructions(),
                 }
             )
+            raw_generated = _invoke_quiz_llm("generate_quiz", prompt_value)
             generated = _parse_generated_quiz(raw_generated)
         except Exception as exc:
             raw_preview = _raw_text(raw_generated).strip()[:500]
@@ -559,6 +673,8 @@ def _public_question(question: dict[str, Any]) -> QuizQuestion:
         choices=[QuizChoice(**choice) for choice in question.get("choices", [])],
         answer_format="text" if qtype in {"short_answer", "sentence_answer"} else "choice",
         is_derived=bool(question.get("is_derived")),
+        is_related=bool(question.get("is_related")),
+        relation_type=question.get("relation_type") or "",
         derived_from_word_id=question.get("derived_from_word_id"),
     )
 
@@ -577,6 +693,12 @@ def generate_assignment(
         )
 
     target_count = min(count, len(quiz_words))
+    logger.info(
+        "quiz_generation_payload requested_count=%s target_count=%s candidate_count=%s",
+        count,
+        target_count,
+        len(quiz_words),
+    )
     generated_questions = _generate_llm_questions(quiz_words, goal, target_count)
     if not generated_questions:
         return QuizGenerateResponse(
@@ -613,7 +735,7 @@ def _grade_subjective(question: dict[str, Any], user_answer: str) -> _Subjective
             feedback="답변이 비어 있습니다.",
         )
     try:
-        return _subjective_chain.invoke(
+        prompt_value = _subjective_prompt.invoke(
             {
                 "prompt": question["prompt"],
                 "target_word": question.get("target_word") or question.get("source_word") or "",
@@ -622,6 +744,8 @@ def _grade_subjective(question: dict[str, Any], user_answer: str) -> _Subjective
                 "format_instructions": _subjective_parser.get_format_instructions(),
             }
         )
+        response = _invoke_quiz_llm("grade_subjective", prompt_value)
+        return _subjective_parser.parse(_raw_text(response))
     except Exception as exc:
         logger.warning("LLM subjective grading failed; using fallback grade: %s", exc)
         expected = [a.lower() for a in question.get("acceptable_answers", [])]
@@ -633,6 +757,41 @@ def _grade_subjective(question: dict[str, Any], user_answer: str) -> _Subjective
             confidence=0.55,
             feedback="AI 채점에 실패해 정답 키워드 포함 여부로 임시 채점했습니다.",
         )
+
+
+def _review_schedule_preview(records: list[dict[str, Any]]) -> list[QuizReviewScheduleItem]:
+    buckets: dict[int, dict[str, Any]] = {}
+    for record in records:
+        try:
+            word_id = int(record.get("source_word_id") or record.get("word_id"))
+        except (TypeError, ValueError):
+            continue
+        bucket = buckets.setdefault(
+            word_id,
+            {"word_id": word_id, "word": "", "score": 0.0, "total": 0},
+        )
+        if not bucket["word"]:
+            bucket["word"] = record.get("source_word") or record.get("target_word") or ""
+        bucket["score"] += float(record.get("score") or 0)
+        bucket["total"] += 1
+
+    now = datetime.now()
+    preview = []
+    for bucket in buckets.values():
+        average = bucket["score"] / bucket["total"] if bucket["total"] else 0
+        if average >= 0.8:
+            continue
+        days = 1
+        preview.append(
+            QuizReviewScheduleItem(
+                word_id=bucket["word_id"],
+                word=bucket["word"],
+                result="incorrect",
+                proposed_next_review=(now + timedelta(days=days)).date().isoformat(),
+                interval_days=days,
+            )
+        )
+    return preview
 
 
 def grade_assignment(
@@ -654,6 +813,7 @@ def grade_assignment(
     records: list[dict[str, Any]] = []
     score = 0.0
     type_stats: dict[str, dict[str, float]] = {}
+    saved_words = existing_words_lower(user_id)
 
     for question in payload["questions"]:
         question_id = question["id"]
@@ -689,7 +849,12 @@ def grade_assignment(
         is_correct = status == "correct"
         score += item_score
         source_word_id = int(question.get("source_word_id") or question.get("word_id"))
-        update_review(user_id, source_word_id, item_score >= 0.8)
+        target_word = (question.get("target_word") or "").strip()
+        can_add_to_wordbook = (
+            status != "correct"
+            and bool(target_word)
+            and target_word.lower() not in saved_words
+        )
 
         type_stat = type_stats.setdefault(qtype, {"correct": 0, "total": 0, "score": 0})
         type_stat["total"] += 1
@@ -731,13 +896,15 @@ def grade_assignment(
             choice_explanations=choice_explanations,
             study_note=study_note,
             is_derived=bool(question.get("is_derived")),
+            is_related=bool(question.get("is_related")),
+            relation_type=question.get("relation_type") or "",
             derived_from_word_id=question.get("derived_from_word_id"),
-            suggested_word=question.get("target_word") if question.get("is_derived") else "",
+            suggested_word=target_word if can_add_to_wordbook else "",
             suggested_korean=question.get("suggested_korean") or "",
             suggested_english_def=question.get("suggested_english_def") or "",
             suggested_example=question.get("suggested_example") or "",
             suggested_tag=question.get("suggested_tag") or "미지정",
-            can_add_to_wordbook=bool(question.get("is_derived") and question.get("target_word")),
+            can_add_to_wordbook=can_add_to_wordbook,
         )
         results.append(result)
         records.append(
@@ -757,6 +924,8 @@ def grade_assignment(
                 "confidence": result.confidence,
                 "feedback": feedback,
                 "is_derived": result.is_derived,
+                "is_related": result.is_related,
+                "relation_type": result.relation_type,
                 "derived_from_word_id": result.derived_from_word_id,
                 "suggested_word": result.suggested_word,
                 "suggested_korean": result.suggested_korean,
@@ -769,6 +938,7 @@ def grade_assignment(
     total = len(results)
     save_quiz_question_results(user_id, session_id, records)
     complete_quiz_session(user_id, session_id, score, total)
+    review_schedule_preview = _review_schedule_preview(records)
 
     normalized_stats = {
         key: {
@@ -780,7 +950,6 @@ def grade_assignment(
     }
     feedback = (
         f"{total}문제 중 {score:.1f}점을 획득했습니다. "
-        "객관식은 정답표로, 주관식은 AI 루브릭과 confidence로 채점했습니다."
     )
     return QuizGradeResponse(
         ok=True,
@@ -789,5 +958,17 @@ def grade_assignment(
         total=total,
         feedback=feedback,
         type_stats=normalized_stats,
+        review_schedule_preview=review_schedule_preview,
+        review_schedule_applied=False,
         results=results,
+    )
+
+
+def apply_review_schedule(
+    user_id: str,
+    session_id: int,
+    incorrect_interval: str = "1d",
+) -> QuizReviewScheduleApplyResponse:
+    return QuizReviewScheduleApplyResponse(
+        **apply_quiz_review_schedule(user_id, session_id, incorrect_interval)
     )
