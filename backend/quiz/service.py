@@ -576,7 +576,6 @@ def generate_assignment(
             message="퀴즈를 만들 단어가 없습니다. 단어장이나 목표 조건을 확인해주세요.",
         )
 
-    session_id = create_quiz_session(user_id, _goal_payload(goal), count)
     target_count = min(count, len(quiz_words))
     generated_questions = _generate_llm_questions(quiz_words, goal, target_count)
     if not generated_questions:
@@ -586,7 +585,6 @@ def generate_assignment(
                 "AI가 유효한 퀴즈를 생성하지 못했습니다. "
                 "잠시 후 다시 시도하거나 출제 지시문을 더 구체적으로 입력해주세요."
             ),
-            session_id=session_id,
         )
 
     message = f"{len(generated_questions)}문제를 생성했습니다."
@@ -596,6 +594,7 @@ def generate_assignment(
             "코드가 임의 문항을 보충하지 않았습니다."
         )
 
+    session_id = create_quiz_session(user_id, _goal_payload(goal), count)
     return QuizGenerateResponse(
         ok=True,
         message=message,

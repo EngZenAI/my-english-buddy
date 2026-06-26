@@ -83,13 +83,12 @@ def get_llm(feature: str = "default"):
 
     logger.warning("[WARN] %s 모델을 Ollama(qwen)로 대체", cache_key)
     _active_model_names[cache_key] = FALLBACK_MODEL_KEY
-    _llm_cache[cache_key] = _llm_cache[FALLBACK_MODEL_KEY]
-    return _llm_cache[cache_key]
+    return _llm_cache[FALLBACK_MODEL_KEY]
 
 
 def get_active_model_name(feature: str = "default") -> str:
     cache_key = feature if feature in FEATURE_MODEL_PROFILES else "default"
-    if cache_key not in _active_model_names:
+    if cache_key not in _llm_cache:
         get_llm(cache_key)
     return _active_model_names.get(cache_key, FALLBACK_MODEL_KEY)
 
