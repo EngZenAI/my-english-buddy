@@ -12,6 +12,16 @@ import MemberNotice from "../components/MemberNotice";
 const COLS = 10;
 const PAGE_SIZE = 40;
 
+// 태그 편집 input 폭: 한글(전각)은 넓고 영문/숫자는 좁아서 글자 수로만 잡으면
+// 칸마다 오른쪽 여백이 들쭉날쭉해진다. 글자별 실측 폭을 더해 여백을 통일한다. (단위: rem)
+const isWideChar = (ch) =>
+  /[ᄀ-ᇿ㄰-㆏가-힣　-〿＀-￯]/.test(ch);
+const estLabelWidth = (s) => {
+  let w = 0;
+  for (const ch of s || "") w += isWideChar(ch) ? 0.95 : 0.55;
+  return Math.max(w, 1.5) + 0.5; // 최소 폭 + 일정한 오른쪽 여백
+};
+
 const WordRowsSkeleton = () =>
   Array.from({ length: 5 }).map((_, row) => (
     <tr key={row} className="border-t border-slate-100">
@@ -34,6 +44,8 @@ export default function WordbookTab({ user, onRequireLogin }) {
   // 태그 편집 모드
   const [editMode, setEditMode] = useState(false);
   const [editValues, setEditValues] = useState({}); // 원래이름 -> 편집중 값
+  const [newLabel, setNewLabel] = useState(""); // 편집 모드에서 새 태그 추가 입력
+  const [labelError, setLabelError] = useState("");
 
   // 단어 일괄 편집 모드
   const [rowEdit, setRowEdit] = useState(false);
@@ -46,10 +58,12 @@ export default function WordbookTab({ user, onRequireLogin }) {
   // 드래그 정렬
   const [dragIndex, setDragIndex] = useState(null);
 
-  // CSV/XLSX 가져오기 (미리보기 모달)
+  // CSV/XLSX 가져오기 (안내 모달 → 파일 선택 → 미리보기 모달)
+  const [guideOpen, setGuideOpen] = useState(false); // 가져오기 형식 안내
   const [importing, setImporting] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewRows, setPreviewRows] = useState([]); // {key, word, korean, korean_detail, example, tag, dup}
+  const [overwriteDup, setOverwriteDup] = useState(false); // 이미 있는 단어 덮어쓰기
   const [committing, setCommitting] = useState(false);
 
   const labelsQuery = useQuery({
@@ -86,6 +100,34 @@ export default function WordbookTab({ user, onRequireLogin }) {
   const renameLabelMutation = useMutation({
     mutationFn: ({ orig, val }) => api.renameLabel(orig, val),
   });
+
+  const addLabelMutation = useMutation({
+    mutationFn: api.addLabel,
+    onSuccess: ({ labels: next, ok }) => {
+      queryClient.setQueryData(queryKeys.labels, { labels: next });
+      if (ok) {
+        setNewLabel("");
+        setLabelError("");
+      } else {
+        setLabelError("태그는 최대 20개까지 추가할 수 있어요.");
+      }
+    },
+    onError: () => setLabelError("태그 추가에 실패했어요. 잠시 후 다시 시도해주세요."),
+  });
+
+  const handleAddLabel = () => {
+    const name = newLabel.trim();
+    if (!name) return;
+    if (labels.includes(name)) {
+      setNewLabel("");
+      return;
+    }
+    if (labels.length >= 20) {
+      setLabelError("태그는 최대 20개까지 추가할 수 있어요.");
+      return;
+    }
+    addLabelMutation.mutate(name);
+  };
 
   const deleteLabelMutation = useMutation({
     mutationFn: api.deleteLabel,
@@ -141,6 +183,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
           dup: r.dup,
         }))
       );
+      setGuideOpen(false); // 안내 모달 닫고 미리보기로 전환
       setPreviewOpen(true);
     } catch {
       alert("가져오는 중 오류가 발생했어요. 파일 형식을 확인해주세요.");
@@ -166,6 +209,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
   const closePreview = () => {
     setPreviewOpen(false);
     setPreviewRows([]);
+    setOverwriteDup(false);
   };
 
   const commitPreview = async () => {
@@ -184,7 +228,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
     }
     setCommitting(true);
     try {
-      const res = await api.importCommit(items);
+      const res = await api.importCommit(items, overwriteDup);
       if (res.ok === false) {
         alert(res.message || "적용에 실패했어요.");
         return;
@@ -207,12 +251,16 @@ export default function WordbookTab({ user, onRequireLogin }) {
       if (n !== "미지정") init[n] = n;
     });
     setEditValues(init);
+    setNewLabel("");
+    setLabelError("");
     setEditMode(true);
   };
 
   const cancelEdit = () => {
     setEditMode(false);
     setEditValues({});
+    setNewLabel("");
+    setLabelError("");
   };
 
   const commitEdits = async () => {
@@ -258,6 +306,8 @@ export default function WordbookTab({ user, onRequireLogin }) {
     const init = {};
     words.forEach((w) => {
       init[w.id] = {
+        word: w.word || "",
+        korean: w.korean || "",
         korean_detail: w.korean_detail || "",
         english_def: w.english_def || "",
         example: w.example || "",
@@ -284,8 +334,13 @@ export default function WordbookTab({ user, onRequireLogin }) {
       const items = words.map((w) => ({ id: w.id, ...drafts[w.id] }));
       const res = await api.bulkUpdateWords(items);
       if (res.ok === false) {
+        // swap 등으로 전체 실패 → 편집 모드 유지(사용자가 고칠 수 있게)
         alert(res.message || "저장에 실패했어요.");
         return;
+      }
+      // 일부 충돌 행은 건너뛰고 저장됨 → 안내
+      if (res.conflicts?.length) {
+        alert(res.message);
       }
       setRowEdit(false);
       setDrafts({});
@@ -422,9 +477,9 @@ export default function WordbookTab({ user, onRequireLogin }) {
             className="hidden"
           />
           <button
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => setGuideOpen(true)}
             disabled={!user || importing || rowEdit}
-            title="구글 번역 단어장 등에서 받은 CSV/XLSX (첫 두 열: 영어 | 한국어)를 한 번에 추가"
+            title="CSV/XLSX 파일에서 단어를 한 번에 추가"
             className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50
                        px-3 py-1.5 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -511,7 +566,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
                            text-slate-400 text-[13px] font-medium px-3 h-8"
                 title="기본 태그 - 변경/삭제 불가"
               >
-                미지정 잠금
+                미지정
               </span>
             );
           }
@@ -530,7 +585,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
                 onKeyDown={(e) => {
                   if (e.key === "Enter") commitEdits();
                 }}
-                style={{ width: `${Math.max((val || "").length, 2) + 1.2}em` }}
+                style={{ width: `${estLabelWidth(val)}rem` }}
                 className="text-[13px] bg-transparent outline-none"
               />
               <button
@@ -557,6 +612,33 @@ export default function WordbookTab({ user, onRequireLogin }) {
             </button>
           ) : (
             <>
+              {labels.length < 20 && (
+                <span className="inline-flex items-center gap-1">
+                  <input
+                    value={newLabel}
+                    onChange={(e) => setNewLabel(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleAddLabel();
+                      }
+                    }}
+                    placeholder="새 태그"
+                    className="w-24 rounded-full border border-slate-300 px-3 h-8 text-[13px]
+                               focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddLabel}
+                    disabled={addLabelMutation.isPending}
+                    className="rounded-full text-[13px] font-medium px-3 h-8 bg-brand-50
+                               text-brand-600 border border-brand-200 hover:bg-brand-100
+                               disabled:opacity-50"
+                  >
+                    추가
+                  </button>
+                </span>
+              )}
               <button
                 onClick={commitEdits}
                 className="rounded-full text-[13px] font-semibold px-4 h-8 bg-brand-600
@@ -576,20 +658,30 @@ export default function WordbookTab({ user, onRequireLogin }) {
       </div>
 
       {editMode && (
-        <p className="text-[11px] text-slate-400 -mt-2 mb-3">
-          태그 칸을 클릭해 이름을 고치고, x로 삭제할 수 있어요. '미지정'은 기본 태그라 변경/삭제할 수 없어요.
-        </p>
+        <div className="-mt-2 mb-3 rounded-lg bg-slate-50 border border-slate-100
+                        px-3 py-2 text-[11.5px] text-slate-500 leading-relaxed">
+          태그 이름을 고치려면 칸에 입력, 삭제는 <b className="font-semibold">×</b>,
+          새 태그는 <b className="font-semibold">‘새 태그’</b> 칸에 입력 후 <b className="font-semibold">추가</b>.
+          <span className="text-slate-400"> ‘미지정’은 기본 태그라 변경·삭제할 수 없어요.</span>
+          {labelError && (
+            <span className="block text-rose-500 mt-1">{labelError}</span>
+          )}
+        </div>
       )}
 
       {rowEdit && (
-        <p className="text-[11px] text-slate-400 -mt-2 mb-3">
-          모든 행을 한 번에 편집 중이에요. 영어단어/한국어는 고정이고, 한국어 상세/영어뜻/예문/태그/복습일을 고친 뒤 저장을 누르세요.
-        </p>
+        <div className="-mt-2 mb-3 rounded-lg bg-brand-50/60 border border-brand-100
+                        px-3 py-2 text-[11.5px] text-slate-600 leading-relaxed">
+          셀을 고친 뒤 <b className="font-semibold">저장</b>을 누르세요.
+          <span className="text-slate-500"> 단어는 중복될 수 없어, 이미 있는 단어와 겹치면 그 행은 건너뜁니다.</span>
+        </div>
       )}
-      {!rowEdit && canReorder && words.length > 1 && (
-        <p className="text-[11px] text-slate-400 -mt-2 mb-3">
-          맨 앞 손잡이를 드래그해 순서를 바꿀 수 있어요(자동 저장). 체크박스를 고르고(Shift+클릭으로 범위 선택) '삭제'를 누르면 한 번에 지워져요.
-        </p>
+      {!rowEdit && !editMode && canReorder && words.length > 1 && (
+        <div className="-mt-2 mb-3 rounded-lg bg-slate-50 border border-slate-100
+                        px-3 py-2 text-[11.5px] text-slate-500 leading-relaxed">
+          <b className="font-semibold">⠿</b> 손잡이를 드래그해 순서 변경(자동 저장) ·
+          체크박스 선택(<b className="font-semibold">Shift+클릭</b>=범위) 후 <b className="font-semibold">삭제</b>로 한 번에 제거.
+        </div>
       )}
 
       {!user && (
@@ -671,8 +763,34 @@ export default function WordbookTab({ user, onRequireLogin }) {
                     >
                       ::
                     </td>
-                    <td className="px-3 py-2 font-medium">{w.word}</td>
-                    <td className="px-3 py-2">{w.korean}</td>
+                    <td className="px-3 py-2 font-medium">
+                      {rowEdit ? (
+                        <input
+                          value={d.word ?? ""}
+                          onChange={(e) =>
+                            setDraftField(w.id, "word", e.target.value)
+                          }
+                          className="w-full min-w-[6rem] rounded-md border border-slate-300 px-2 py-1
+                                     text-sm outline-none focus:border-brand-400"
+                        />
+                      ) : (
+                        w.word
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      {rowEdit ? (
+                        <input
+                          value={d.korean ?? ""}
+                          onChange={(e) =>
+                            setDraftField(w.id, "korean", e.target.value)
+                          }
+                          className="w-full min-w-[5rem] rounded-md border border-slate-300 px-2 py-1
+                                     text-sm outline-none focus:border-brand-400"
+                        />
+                      ) : (
+                        w.korean
+                      )}
+                    </td>
 
                     <td className="px-3 py-2 whitespace-pre-wrap text-slate-600">
                       {rowEdit ? (
@@ -811,15 +929,114 @@ export default function WordbookTab({ user, onRequireLogin }) {
         </div>
       )}
 
+      {guideOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div
+            className="bg-white rounded-2xl shadow-2xl ring-1 ring-black/5 w-full max-w-lg
+                       max-h-[85vh] flex flex-col overflow-hidden"
+          >
+            <div className="px-6 pt-5 pb-4 border-b border-slate-200 flex items-start justify-between">
+              <div>
+                <h3 className="text-lg font-bold">단어 가져오기</h3>
+                <p className="text-[13px] text-slate-500 mt-0.5">
+                  CSV 또는 Excel(.xlsx) 파일에서 단어를 한 번에 추가해요.
+                </p>
+              </div>
+              <button
+                onClick={() => setGuideOpen(false)}
+                className="text-slate-400 hover:text-slate-600 text-2xl leading-none -mt-1"
+                title="닫기"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="px-6 py-4 overflow-auto grow space-y-4 text-sm text-slate-600">
+              <div>
+                <p className="font-semibold text-slate-700 mb-1.5">지원 형식</p>
+                <p className="text-[13px] leading-relaxed">
+                  <b>.csv</b>, <b>.xlsx</b> 파일을 지원해요. 첫 두 열이
+                  <b> 영어 · 한국어</b>면 됩니다. 구글 번역 단어장 내보내기 파일도 그대로 쓸 수 있어요.
+                </p>
+              </div>
+
+              <div>
+                <p className="font-semibold text-slate-700 mb-1.5">예시 ① 간단한 2열</p>
+                <div className="overflow-hidden rounded-lg border border-slate-200">
+                  <table className="w-full text-[13px]">
+                    <thead className="bg-slate-50 text-slate-500">
+                      <tr>
+                        <th className="text-left px-3 py-1.5 font-semibold border-b border-slate-200">영어</th>
+                        <th className="text-left px-3 py-1.5 font-semibold border-b border-slate-200">한국어</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr><td className="px-3 py-1.5">apple</td><td className="px-3 py-1.5">사과</td></tr>
+                      <tr className="bg-slate-50/60"><td className="px-3 py-1.5">commute</td><td className="px-3 py-1.5">통근하다</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div>
+                <p className="font-semibold text-slate-700 mb-1.5">예시 ② 구글 번역 내보내기(4열)</p>
+                <div className="overflow-hidden rounded-lg border border-slate-200">
+                  <table className="w-full text-[13px]">
+                    <thead className="bg-slate-50 text-slate-500">
+                      <tr>
+                        <th className="text-left px-3 py-1.5 font-semibold border-b border-slate-200">영어</th>
+                        <th className="text-left px-3 py-1.5 font-semibold border-b border-slate-200">한국어</th>
+                        <th className="text-left px-3 py-1.5 font-semibold border-b border-slate-200">word</th>
+                        <th className="text-left px-3 py-1.5 font-semibold border-b border-slate-200">번역</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr><td className="px-3 py-1.5">영어</td><td className="px-3 py-1.5">한국어</td><td className="px-3 py-1.5">apple</td><td className="px-3 py-1.5">사과</td></tr>
+                      <tr className="bg-slate-50/60"><td className="px-3 py-1.5">영어</td><td className="px-3 py-1.5">한국어</td><td className="px-3 py-1.5">commute</td><td className="px-3 py-1.5">통근하다</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-[12px] text-slate-400 mt-1.5">
+                  언어 라벨(영어/한국어)을 보고 영어 쪽을 단어로 자동 인식해요.
+                </p>
+              </div>
+
+              <p className="text-[12px] text-slate-400">
+                파일을 고르면 <b>미리보기</b> 화면에서 검토·수정한 뒤 적용해요. 이미 있는 단어는 자동으로 건너뜁니다.
+              </p>
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setGuideOpen(false)}
+                disabled={importing}
+                className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50
+                           px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+              >
+                취소
+              </button>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={importing}
+                className="rounded-lg bg-brand-600 text-white hover:bg-brand-700
+                           px-4 py-1.5 text-sm font-semibold disabled:opacity-50"
+              >
+                {importing ? "읽는 중..." : "파일 선택 (.csv / .xlsx)"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {previewOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={closePreview}
         >
+          {/* 배경 클릭으로 닫지 않음 — input 드래그 선택 중 실수로 닫혀 작업이 사라지는 문제 방지.
+              닫기는 X/취소/적용 버튼으로만. */}
           <div
             className="bg-white rounded-2xl shadow-2xl ring-1 ring-black/5 w-full max-w-3xl
                        max-h-[85vh] flex flex-col overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
           >
             {/* 헤더 */}
             <div className="px-6 pt-5 pb-4 border-b border-slate-200">
@@ -874,12 +1091,22 @@ export default function WordbookTab({ user, onRequireLogin }) {
                 ))}
               </select>
               {dupCount > 0 && (
-                <button
-                  onClick={removeDupRows}
-                  className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50 px-2.5 py-1.5 font-medium"
-                >
-                  이미 있는 {dupCount}개 빼기
-                </button>
+                <>
+                  <button
+                    onClick={removeDupRows}
+                    className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50 px-2.5 py-1.5 font-medium"
+                  >
+                    이미 있는 {dupCount}개 빼기
+                  </button>
+                  <label className="inline-flex items-center gap-1.5 ml-auto text-slate-600 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={overwriteDup}
+                      onChange={(e) => setOverwriteDup(e.target.checked)}
+                    />
+                    이미 있는 단어 덮어쓰기
+                  </label>
+                </>
               )}
             </div>
 
@@ -957,10 +1184,16 @@ export default function WordbookTab({ user, onRequireLogin }) {
                       <td className="py-1.5 text-right whitespace-nowrap">
                         {r.dup && (
                           <span
-                            title="이미 단어장에 있어요. 적용하면 이 단어는 건너뜁니다."
-                            className="inline-block mr-1 text-[11px] text-amber-700"
+                            title={
+                              overwriteDup
+                                ? "이미 단어장에 있어요. 적용하면 새 내용으로 덮어씁니다."
+                                : "이미 단어장에 있어요. 적용하면 이 단어는 건너뜁니다."
+                            }
+                            className={`inline-block mr-1 text-[11px] ${
+                              overwriteDup ? "text-brand-600" : "text-amber-700"
+                            }`}
                           >
-                            이미 있음
+                            {overwriteDup ? "덮어씀" : "이미 있음"}
                           </span>
                         )}
                         <button
@@ -980,7 +1213,9 @@ export default function WordbookTab({ user, onRequireLogin }) {
 
             <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
               <span className="text-[12px] text-slate-400 mr-auto">
-                '이미 있음' 단어는 적용 시 자동으로 건너뜁니다.
+                {overwriteDup
+                  ? "이미 있는 단어는 가져온 값(빈칸 제외)으로 덮어씁니다."
+                  : "이미 있는 단어는 적용 시 자동으로 건너뜁니다."}
               </span>
               <button
                 onClick={closePreview}

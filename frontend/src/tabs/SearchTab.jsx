@@ -13,7 +13,7 @@ const LabelChip = ({ children }) => (
   </span>
 );
 
-const SaveButton = ({ saved, onClick, disabled, loading }) => (
+const SaveButton = ({ saved, onClick, disabled }) => (
   <button
     type="button"
     onClick={onClick}
@@ -24,7 +24,7 @@ const SaveButton = ({ saved, onClick, disabled, loading }) => (
         : "text-brand-600 border-brand-200 bg-white hover:bg-brand-50"}
       disabled:opacity-60 disabled:cursor-not-allowed`}
   >
-    {loading ? "저장 중…" : saved ? "✅ 저장됨" : "📥 단어장에 저장"}
+    {saved ? "✅ 저장됨" : "📥 단어장에 저장"}
   </button>
 );
 
@@ -45,7 +45,7 @@ const ReadOnlyField = ({ label, value, rows = 3, loading }) => (
   </div>
 );
 
-const DEBOUNCE_MS = 150;
+const DEBOUNCE_MS = 250;
 
 export default function SearchTab({ user, onRequireLogin }) {
   const queryClient = useQueryClient();
@@ -56,7 +56,6 @@ export default function SearchTab({ user, onRequireLogin }) {
   const [example, setExample] = useState("");
   const [customExample, setCustomExample] = useState(""); // 내 맞춤 예문 (편집/저장 대상)
   const [phonetic, setPhonetic] = useState("");
-  const [saved, setSaved] = useState(false);
   const [gate, setGate] = useState(""); // 비회원 기능 안내 (표시할 기능명, "" = 숨김)
 
   // 태그(카테고리)
@@ -73,6 +72,10 @@ export default function SearchTab({ user, onRequireLogin }) {
   const reqSeq = useRef(0);
   const appliedSearchKey = useRef("");
   const [searchRequest, setSearchRequest] = useState(null);
+  const [appliedKey, setAppliedKey] = useState(""); // 현재 입력에 반영된 검색 결과 key (검색 완료 판정용)
+  // 가장 최근에 '완료된' 검색이 실제로 가리키는 영어 단어. 저장 대상(eng)과 일치할 때만 저장 허용.
+  // (디바운스 중엔 searchRequest가 이전 단어를 가리켜 '완료'처럼 보이는 레이스를 막는다.)
+  const [settledWord, setSettledWord] = useState("");
 
   const labelsQuery = useQuery({
     queryKey: queryKeys.labels,
@@ -87,29 +90,41 @@ export default function SearchTab({ user, onRequireLogin }) {
     queryKey: searchRequest
       ? queryKeys.search(searchRequest.type, searchRequest.word)
       : ["search", "idle"],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       searchRequest.type === "en"
-        ? api.searchEnglish(searchRequest.word)
-        : api.searchKorean(searchRequest.word),
+        ? api.searchEnglish(searchRequest.word, signal)
+        : api.searchKorean(searchRequest.word, signal),
     enabled: !!searchRequest?.word,
     staleTime: 24 * 60 * 60_000,
     gcTime: 24 * 60 * 60_000,
   });
 
-  const savedWord = (searchQuery.data?.english_word || "").trim();
+  // 검색이 '현재 입력'에 대해 끝났는지 (로딩 중이거나 이전 결과면 false)
+  const currentKey = searchRequest
+    ? `${searchRequest.type}:${searchRequest.word}`
+    : "";
+  const searchSettled =
+    !!searchRequest && !searchQuery.isFetching && appliedKey === currentKey;
+
+  // 저장 여부는 '실제로 저장할 단어(eng)' 기준으로, 검색이 끝난 뒤에만 조회한다.
+  const savedWord = eng.trim();
   const userId = user?.id || "";
   const savedQuery = useQuery({
     queryKey: queryKeys.wordSaved(userId, savedWord),
-    queryFn: () => api.wordSaved(savedWord),
-    enabled: !!userId && !!savedWord,
-    staleTime: 30_000,
+    queryFn: ({ signal }) => api.wordSaved(savedWord, signal),
+    enabled: !!userId && !!savedWord && searchSettled,
+    staleTime: 0, // 활성 단어가 바뀌면 항상 DB 저장여부를 재확인 (옛 false 캐시로 덮어쓰기 방지)
   });
+
+  // 저장 여부는 savedQuery에서 '직접 파생'한다. (effect로 state에 복사하면 react-query의
+  // structural sharing 때문에 같은 단어 재검색 시 참조가 안 바뀌어 갱신이 안 되는 버그가 있음.)
+  const saved = savedQuery.data?.saved === true;
 
   const saveWordMutation = useMutation({
     mutationFn: (payload) => api.saveWord(payload),
     onSuccess: (res, payload) => {
       if (!res.saved) return;
-      setSaved(true);
+      // 캐시를 true로 갱신 → saved가 파생적으로 true가 됨
       queryClient.setQueryData(queryKeys.wordSaved(userId, payload.word), { saved: true });
       queryClient.invalidateQueries({ queryKey: ["words"] });
       queryClient.invalidateQueries({ queryKey: queryKeys.labels });
@@ -135,7 +150,8 @@ export default function SearchTab({ user, onRequireLogin }) {
   const slangMutation = useMutation({
     mutationFn: ({ engWord, korWord }) => api.slang(engWord, korWord),
     onMutate: () => {
-      setSlangText("AI가 의미를 분석 중입니다...");
+      // 로딩 표시는 버튼에서만. 텍스트창엔 넣지 않음(편집/저장값 오염 방지) → 분석 중엔 창 숨김
+      setSlangText("");
     },
     onSuccess: ({ explanation }, { engWord, korWord }) => {
       if (eng.trim() !== engWord || kor.trim() !== korWord) return;
@@ -163,7 +179,6 @@ export default function SearchTab({ user, onRequireLogin }) {
     setExample("");
     setCustomExample("");
     setPhonetic("");
-    setSaved(false);
     setSlangVisible(false);
     setSlangText("");
   };
@@ -174,33 +189,34 @@ export default function SearchTab({ user, onRequireLogin }) {
     const key = `${searchRequest.type}:${searchRequest.word}`;
     if (appliedSearchKey.current === key) return;
     appliedSearchKey.current = key;
+    setAppliedKey(key);
     if (!r.english_word && !r.korean_word && !r.english_def && !r.korean_detail) {
       resetResultState();
+      // 결과가 없어도(사전에 없는 단어) 사용자가 직접 적은 값으로 저장은 허용 → 저장 대상 단어를 확정.
+      setSettledWord(searchRequest.type === "en" ? searchRequest.word : eng.trim());
       return;
     }
     applyCommon(r);
     if (searchRequest.type === "en") {
       lastSearched.current.ko = r.korean_word;
       setKor(r.korean_word);
+      setSettledWord(searchRequest.word);
     } else {
       lastSearched.current.en = r.english_word;
       setEng(r.english_word);
+      setSettledWord(r.english_word);
     }
-    setSaved(false);
   }, [searchQuery.data, searchRequest]);
 
   useEffect(() => {
     if (!searchQuery.isError || !searchRequest) return;
     resetResultState();
+    const key = `${searchRequest.type}:${searchRequest.word}`;
+    appliedSearchKey.current = key;
+    setAppliedKey(key);
+    // 검색 실패 시에도 사용자가 입력한 단어로 저장은 허용 (영어 입력 기준).
+    setSettledWord(searchRequest.type === "en" ? searchRequest.word : eng.trim());
   }, [searchQuery.isError, searchRequest]);
-
-  useEffect(() => {
-    if (!user) {
-      setSaved(false);
-      return;
-    }
-    if (savedQuery.data) setSaved(savedQuery.data.saved);
-  }, [savedQuery.data, user]);
 
   const runEnglish = (word) => {
     const w = word.trim();
@@ -208,6 +224,8 @@ export default function SearchTab({ user, onRequireLogin }) {
     lastSearched.current.en = w;
     reqSeq.current += 1;
     appliedSearchKey.current = "";
+    setAppliedKey("");
+    setSettledWord(""); // 새 검색 시작 → 완료 전까지 저장 잠금
     resetResultState();
     setSearchRequest({ type: "en", word: w });
   };
@@ -218,6 +236,8 @@ export default function SearchTab({ user, onRequireLogin }) {
     lastSearched.current.ko = w;
     reqSeq.current += 1;
     appliedSearchKey.current = "";
+    setAppliedKey("");
+    setSettledWord(""); // 새 검색 시작 → 완료 전까지 저장 잠금
     resetResultState();
     setSearchRequest({ type: "ko", word: w });
   };
@@ -236,41 +256,30 @@ export default function SearchTab({ user, onRequireLogin }) {
     return () => clearTimeout(t);
   }, [kor]);
 
-  const result = searchQuery.data;
-  const resultKey = searchRequest
-    ? `${searchRequest.type}:${searchRequest.word}`
-    : "";
-  const resultFieldsReady = Boolean(
-    result?.english_word?.trim() &&
-      result?.korean_word?.trim() &&
-      engDef.trim() &&
-      korDetail.trim()
-  );
-  const resultMatchesInputs = Boolean(
-    searchRequest &&
-      result &&
-      appliedSearchKey.current === resultKey &&
-      (searchRequest.type === "en"
-        ? eng.trim() === searchRequest.word &&
-          kor.trim() === result.korean_word.trim()
-        : kor.trim() === searchRequest.word &&
-          eng.trim() === result.english_word.trim())
-  );
-  const hasConfirmedSearchResult = Boolean(
-    resultFieldsReady &&
-      resultMatchesInputs &&
-      !searchQuery.isFetching &&
-      !searchQuery.isError
-  );
+  // 저장 버튼은 (1)검색 완료 (2)회원이면 저장여부 확인 완료 (3)미저장 (4)eng 존재 일 때만 활성화.
+  // 검색/확인이 끝나기 전 빠른 클릭으로 기존 단어를 덮어쓰는 레이스를 막는다.
+  const savedCheckReady = !user || (savedQuery.isSuccess && !savedQuery.isFetching);
+  // 완료된 검색이 '지금 저장하려는 단어(eng)'와 정확히 같을 때만 저장 허용.
+  // 타이핑으로 단어가 바뀐 직후(디바운스 중)엔 이전 검색이 '완료'처럼 보여도 여기서 막힌다.
+  const resultMatchesInput =
+    !!settledWord.trim() &&
+    settledWord.trim().toLowerCase() === eng.trim().toLowerCase();
+  const canSave =
+    !!eng.trim() &&
+    !saved &&
+    !saveWordMutation.isPending &&
+    searchSettled &&
+    resultMatchesInput &&
+    savedCheckReady;
 
   const handleSave = async () => {
-    if (!hasConfirmedSearchResult) return;
+    if (!canSave) return; // 모든 체크가 끝나기 전엔 저장 금지 (덮어쓰기 레이스 방지)
     if (!user) {
       setGate("단어장 저장"); // 비회원 → 회원 기능 안내
       return;
     }
     saveWordMutation.mutate({
-      word: eng,
+      word: eng.trim(),
       korean: kor,
       korean_detail: korDetail,
       english_def: engDef,
@@ -306,8 +315,8 @@ export default function SearchTab({ user, onRequireLogin }) {
 
   const hasSearch = !!searchRequest;
   const searchLoading = searchQuery.isFetching && !searchQuery.data;
-  const saveLoading = saveWordMutation.isPending || savedQuery.isFetching;
-  const saveDisabled = saveWordMutation.isPending || !hasConfirmedSearchResult;
+  // 검색·저장여부 확인이 모두 끝나야 활성화 (canSave). 그 전엔 항상 비활성화.
+  const saveDisabled = !canSave;
 
   return (
     <div>
@@ -324,7 +333,6 @@ export default function SearchTab({ user, onRequireLogin }) {
             saved={saved}
             onClick={handleSave}
             disabled={saveDisabled}
-            loading={saveLoading && !!user}
           />
         </div>
         <div className="flex items-center gap-2">
@@ -353,12 +361,6 @@ export default function SearchTab({ user, onRequireLogin }) {
         {/* 한국어 헤더 */}
         <div className="flex items-center justify-between min-h-[40px] mt-2 pt-2 border-t border-slate-100">
           <LabelChip>🇰🇷 한국어</LabelChip>
-          <SaveButton
-            saved={saved}
-            onClick={handleSave}
-            disabled={saveDisabled}
-            loading={saveLoading && !!user}
-          />
         </div>
         <div className="flex items-center gap-2">
           <input
@@ -402,11 +404,13 @@ export default function SearchTab({ user, onRequireLogin }) {
         )}
         {slangText && (
           <textarea
-            readOnly
             rows={10}
             value={slangText}
-            className="w-full mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2
-                       text-sm text-slate-800 resize-none whitespace-pre-wrap"
+            onChange={(e) => setSlangText(e.target.value)}
+            placeholder="AI 설명을 내 표현에 맞게 고쳐서 저장할 수 있어요"
+            className="w-full mt-2 rounded-lg border border-slate-300 bg-white px-3 py-2
+                       text-sm text-slate-800 resize-none whitespace-pre-wrap
+                       focus:outline-none focus:ring-2 focus:ring-brand-200"
           />
         )}
       </div>

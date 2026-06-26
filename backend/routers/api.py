@@ -79,6 +79,8 @@ class UpdateWordIn(BaseModel):
 
 class BulkUpdateItem(BaseModel):
     id: int
+    word: str = ""  # 빈값이면 영어단어 변경 안 함 (기존값 유지)
+    korean: str = ""
     korean_detail: str = ""
     english_def: str = ""
     example: str = ""
@@ -104,6 +106,7 @@ class ImportItem(BaseModel):
 
 class ImportCommitIn(BaseModel):
     items: list[ImportItem]
+    overwrite: bool = False  # True면 이미 있는 단어를 값 있는 칸만 덮어씀
 
 
 class LabelIn(BaseModel):
@@ -231,8 +234,31 @@ def remove_word(word_id: int, _user: dict = Depends(require_user)):
 @router.post("/words/bulk-update")
 def bulk_update(payload: BulkUpdateIn, _user: dict = Depends(require_user)):
     items = [it.model_dump() for it in payload.items]
-    updated = bulk_update_words(_user["id"], items)
-    return {"ok": True, "updated": updated, "message": f"💾 {updated}개 저장했어요!"}
+    res = bulk_update_words(_user["id"], items)
+    updated = res.get("updated", 0)
+    conflicts = res.get("conflicts", [])
+    if not res.get("ok", True):
+        # swap 등으로 전체 실패
+        return {
+            "ok": False,
+            "updated": 0,
+            "skipped": res.get("skipped", 0),
+            "conflicts": conflicts,
+            "message": res.get("message", "중복으로 저장하지 못했어요."),
+        }
+    message = f"💾 {updated}개 저장했어요!"
+    if conflicts:
+        message += (
+            f" ({len(conflicts)}개는 이미 있는 단어와 겹쳐 건너뜀: "
+            + ", ".join(conflicts) + ")"
+        )
+    return {
+        "ok": True,
+        "updated": updated,
+        "skipped": res.get("skipped", 0),
+        "conflicts": conflicts,
+        "message": message,
+    }
 
 
 @router.post("/words/bulk-delete")
@@ -359,11 +385,15 @@ def import_commit(payload: ImportCommitIn, _user: dict = Depends(require_user)):
     items = [it.model_dump() for it in payload.items]
     if not items:
         return {"ok": False, "message": "적용할 단어가 없어요."}
-    result = insert_words(_user["id"], items)
+    result = insert_words(_user["id"], items, overwrite=payload.overwrite)
+    parts = [f"📥 {result['added']}개 추가"]
+    if result.get("updated"):
+        parts.append(f"{result['updated']}개 덮어씀")
+    if result.get("skipped"):
+        parts.append(f"{result['skipped']}개는 이미 있어 건너뜀")
     return {
         "ok": True,
-        "message": f"📥 {result['added']}개 추가"
-        + (f", {result['skipped']}개는 이미 있어 건너뜀" if result["skipped"] else ""),
+        "message": ", ".join(parts),
         **result,
     }
 

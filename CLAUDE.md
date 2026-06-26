@@ -167,11 +167,44 @@ cd frontend && npm run dev              # 5173 (여기로 접속; /api·/auth는
 ## 브랜치/협업 상태
 - 단어장(WordbookTab) 작업은 `feature/wordbook-ux` 브랜치에서 진행됨 → develop에 머지 예정.
 - **퀴즈탭(QuizTab)은 팀원이 다른 브랜치에서 개발 중** → 충돌 방지 위해 건드리지 말 것.
-- **다음 작업 = 롤플레잉탭(RoleplayTab)** (아래 스펙). 새 브랜치(예: `feature/roleplay`)에서 진행.
+- **다음 작업 순서: (1) 단어장 버그 수정(아래 "단어장 버그 수정 스펙") → (2) 롤플레잉탭(RoleplayTab).**
+  버그 수정은 새 브랜치(예: `feature/wordbook-fixes`), 롤플레잉은 그 후 `feature/roleplay`.
 
 ---
 
-## 다음 세션: 롤플레잉탭(RoleplayTab) 재설계 — 스펙
+## 다음 세션(먼저): 단어장 버그 수정 — 스펙
+
+실제 사용 중 발견된 버그/개선. 관련 파일: `frontend/src/tabs/SearchTab.jsx`,
+`frontend/src/tabs/WordbookTab.jsx`, `backend/routers/api.py`, `backend/database.py`.
+
+1. **태그 편집에 '태그 추가' 추가** (현재는 SearchTab에서만 추가 가능 → 불편).
+   - WordbookTab의 태그 편집 모드(`editMode`)에 입력칸+‘추가’ 버튼 → `api.addLabel(name)` 호출.
+   - 백엔드는 이미 있음: `add_label(user_id, name)` / `POST /api/labels` (MAX_LABELS=20, 중복 무시).
+2. **검색 결과가 안 나와도 저장 가능하게** (현재는 단어만 저장되고 예문/문장이 저장 안 됨).
+   - SearchTab 저장 로직이 사전 결과가 없을 때도 사용자가 가진 값(단어+예문/맥락)을 저장하도록 수정.
+   - 백엔드 `save_word`는 빈 필드 허용하므로 주로 프론트 게이팅 문제.
+3. **검색 중 ‘저장중..’ 표기 제거 → ‘단어장에 저장’ 버튼만 비활성화** (라벨은 그대로, disabled만).
+4. **AI 슬랭 결과 저장 시 편집 가능하게**: 현재 AI 답변이 그대로 `english_def`로 저장됨 →
+   답변을 **편집 가능한 textarea**로 보여주고, 사용자가 고친 값을 저장. (어느 칼럼에 넣을지도 검토)
+5. **버그: 가져오기 미리보기에서 수정 중 모달이 갑자기 닫혀 작업이 사라짐.**
+   - 원인 후보: 모달 배경(overlay) `onClick={closePreview}` 때문에 input 텍스트 드래그 선택이
+     배경에서 끝나면 닫힘. (또는 react-query `refetchOnWindowFocus`로 인한 재렌더.)
+   - 권장 수정: **배경 클릭으로 닫기 제거**(X/취소/적용 버튼으로만 닫기), 필요시 모달 열려있는 동안
+     포커스 재조회 비활성화. previewRows 편집 중 절대 초기화되지 않도록 보장.
+6. **단어장 일괄 편집에서 영어단어·한국어(`word`/`korean`)도 편집 가능하게** (현재는 고정).
+   - 프론트: 해당 칼럼을 input으로. 백엔드 `bulk_update_words`에 `word`,`korean` 갱신 추가.
+   - **주의**: `words` 유니크 인덱스 `(user_id, lower(word))` — 단어를 고치다 기존 단어와 충돌하면
+     UNIQUE 위반. 충돌 행은 건너뛰고(또는 명확히 에러 반환) 결과를 사용자에게 알릴 것.
+7. **(보기 시각화) 단어장 카드형 리스트** — **DB/API/쿼리 변경 없이 렌더링(JSX/Tailwind)만**.
+   네이버 영어단어장/구글 번역 단어장 느낌. 카드(단어)당: 영어단어(굵게)+발음 스피커(`AudioButton`,
+   lang="en"), 한국어, 예문 한 줄(truncate→hover/확장으로 전체), 태그 칩·등록일·복습일.
+   **영어뜻/한국어상세는 평소 숨기고 hover 팝오버**(데스크톱 group-hover, 모바일은 클릭 토글).
+   기존 일괄편집·체크박스+Shift 삭제·드래그정렬·페이지네이션40·가져오기 모달·react-query는 그대로 유지.
+   `phonetic`(발음기호)은 단어장 데이터엔 없음(DB 제거됨) → 카드엔 생략. (먼저 적용 후 피드백 받아 조정)
+
+---
+
+## 다음 세션(그 후): 롤플레잉탭(RoleplayTab) 재설계 — 스펙
 
 **목표/컨셉**: 사용자의 영어 *회화* 능력 강화. "원어민 친구/애인과 WhatsApp·카톡으로 채팅하는 느낌"
 — 실시간 말하기가 어려운 상황(카페·가족과 함께 등)에서도 텍스트로 몰입 학습. AI는 단순 핑퐁이
