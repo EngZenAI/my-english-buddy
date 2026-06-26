@@ -144,6 +144,53 @@ def init_db():
                 );
                 ALTER TABLE quiz_history DROP CONSTRAINT IF EXISTS quiz_history_word_id_fkey;
 
+                CREATE TABLE IF NOT EXISTS quiz_sessions (
+                    id              SERIAL PRIMARY KEY,
+                    user_id         UUID NOT NULL,
+                    mode            TEXT NOT NULL,
+                    tag             TEXT,
+                    saved_from      DATE,
+                    saved_to        DATE,
+                    instruction     TEXT,
+                    question_count  INTEGER DEFAULT 10,
+                    total_questions INTEGER DEFAULT 0,
+                    score           NUMERIC DEFAULT 0,
+                    created_at      TIMESTAMP DEFAULT NOW(),
+                    completed_at    TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS quiz_question_results (
+                    id                    SERIAL PRIMARY KEY,
+                    session_id            INTEGER NOT NULL,
+                    user_id               UUID NOT NULL,
+                    word_id               INTEGER,
+                    source_word_id        INTEGER,
+                    source_word           TEXT,
+                    target_word           TEXT,
+                    question_type         TEXT,
+                    difficulty            TEXT,
+                    prompt                TEXT,
+                    user_answer           TEXT,
+                    correct_answer        TEXT,
+                    status                TEXT,
+                    correct               BOOLEAN,
+                    score                 NUMERIC DEFAULT 0,
+                    confidence            NUMERIC DEFAULT 1,
+                    feedback              TEXT,
+                    is_derived            BOOLEAN DEFAULT FALSE,
+                    derived_from_word_id  INTEGER,
+                    suggested_word        TEXT,
+                    suggested_korean      TEXT,
+                    suggested_english_def TEXT,
+                    suggested_example     TEXT,
+                    suggested_tag         TEXT,
+                    created_at            TIMESTAMP DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS ix_quiz_question_results_user_created
+                    ON quiz_question_results (user_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS ix_quiz_question_results_session
+                    ON quiz_question_results (session_id);
+
                 CREATE TABLE IF NOT EXISTS labels (
                     id          SERIAL PRIMARY KEY,
                     user_id     UUID NOT NULL,
@@ -359,6 +406,131 @@ def get_all_words(user_id: str, tag: str | None = None):
                     (user_id,),
                 )
             return [dict(row) for row in cur.fetchall()]
+
+
+def get_words_for_quiz(
+    user_id: str,
+    mode: str = "random",
+    tag: str = "",
+    saved_from: str = "",
+    saved_to: str = "",
+    limit: int = 50,
+):
+    """퀴즈 목표 설정에 맞는 후보 단어를 가져온다.
+
+    TODO: 복습 스케줄 기반 출제로 되돌릴 때 next_review 조건을 옵션으로 추가한다.
+    """
+    mode = (mode or "random").strip()
+    limit = max(1, min(int(limit or 50), 100))
+    clauses = ["user_id = %s"]
+    params: list = [user_id]
+    if mode == "tag" and tag:
+        clauses.append("tag = %s")
+        params.append(tag)
+    if mode == "saved_date":
+        if saved_from:
+            clauses.append("created_at::date >= %s")
+            params.append(saved_from)
+        if saved_to:
+            clauses.append("created_at::date <= %s")
+            params.append(saved_to)
+
+    order_by = "RANDOM()" if mode == "random" else "sort_order ASC NULLS LAST, created_at DESC"
+    params.append(limit)
+    cols = """id, word, korean, korean_detail, english_def, example,
+              tag, created_at, next_review, sort_order"""
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                f"""SELECT {cols}
+                    FROM words
+                    WHERE {' AND '.join(clauses)}
+                    ORDER BY {order_by}
+                    LIMIT %s""",
+                params,
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+
+def create_quiz_session(user_id: str, goal: dict, question_count: int) -> int:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO quiz_sessions
+                       (user_id, mode, tag, saved_from, saved_to, instruction, question_count)
+                   VALUES (%s, %s, %s, NULLIF(%s, '')::date, NULLIF(%s, '')::date, %s, %s)
+                   RETURNING id""",
+                (
+                    user_id,
+                    goal.get("mode") or "random",
+                    goal.get("tag") or "",
+                    goal.get("saved_from") or "",
+                    goal.get("saved_to") or "",
+                    goal.get("instruction") or "",
+                    question_count,
+                ),
+            )
+            session_id = cur.fetchone()[0]
+        conn.commit()
+    return session_id
+
+
+def complete_quiz_session(user_id: str, session_id: int, score: float, total: int) -> None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE quiz_sessions
+                   SET score = %s, total_questions = %s, completed_at = NOW()
+                   WHERE id = %s AND user_id = %s""",
+                (score, total, session_id, user_id),
+            )
+        conn.commit()
+
+
+def save_quiz_question_results(user_id: str, session_id: int, results: list[dict]) -> None:
+    if not results:
+        return
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            for result in results:
+                cur.execute(
+                    """INSERT INTO quiz_question_results
+                           (session_id, user_id, word_id, source_word_id, source_word,
+                            target_word, question_type, difficulty, prompt, user_answer,
+                            correct_answer, status, correct, score, confidence, feedback,
+                            is_derived, derived_from_word_id, suggested_word,
+                            suggested_korean, suggested_english_def, suggested_example,
+                            suggested_tag)
+                       VALUES
+                           (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (
+                        session_id,
+                        user_id,
+                        result.get("word_id"),
+                        result.get("source_word_id"),
+                        result.get("source_word") or "",
+                        result.get("target_word") or "",
+                        result.get("question_type") or "",
+                        result.get("difficulty") or "",
+                        result.get("prompt") or "",
+                        result.get("user_answer") or "",
+                        result.get("correct_answer") or "",
+                        result.get("status") or "",
+                        result.get("correct"),
+                        result.get("score", 0),
+                        result.get("confidence", 1),
+                        result.get("feedback") or "",
+                        result.get("is_derived", False),
+                        result.get("derived_from_word_id"),
+                        result.get("suggested_word") or "",
+                        result.get("suggested_korean") or "",
+                        result.get("suggested_english_def") or "",
+                        result.get("suggested_example") or "",
+                        result.get("suggested_tag") or "미지정",
+                    ),
+                )
+        conn.commit()
 
 def update_word(user_id: str, word_id: int, korean_detail, english_def,
                 example, tag, next_review) -> bool:

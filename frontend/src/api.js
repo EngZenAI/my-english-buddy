@@ -178,7 +178,11 @@ export const api = {
     }),
 
   // ── 퀴즈 ──
-  quizGenerate: () => jsonFetch("/api/quiz/generate", { method: "POST" }),
+  quizGenerate: (payload) =>
+    jsonFetch("/api/quiz/generate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   quizGrade: (answerToken, answers) =>
     jsonFetch("/api/quiz/grade", {
       method: "POST",

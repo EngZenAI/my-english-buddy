@@ -24,6 +24,7 @@ from backend.database import (
     delete_word,
     existing_words_lower,
     get_all_words,
+    get_words_for_quiz,
     get_labels,
     get_words_to_review,
     insert_words,
@@ -38,7 +39,7 @@ from backend.llm import (
     explain_slang,
     start_roleplay,
 )
-from backend.quiz.schemas import QuizGradeIn
+from backend.quiz.schemas import QuizGenerateIn, QuizGradeIn
 from backend.quiz.service import generate_assignment, grade_assignment
 from backend.services import (
     search_from_english,
@@ -378,10 +379,17 @@ def slang(payload: SlangIn, _user: dict = Depends(require_user)):
 
 # ── 퀴즈 — 회원 전용 ───────────────────────────────────────
 @router.post("/quiz/generate")
-def quiz_generate(_user: dict = Depends(require_user)):
-    # TODO: 복습 스케줄 기반 출제로 되돌릴 때 get_words_to_review(_user["id"])를 사용한다.
-    words = get_all_words(_user["id"])
-    return generate_assignment(_user["id"], words)
+def quiz_generate(payload: QuizGenerateIn, _user: dict = Depends(require_user)):
+    # TODO: 복습 스케줄 기반 출제로 되돌릴 때 get_words_for_quiz에 next_review 조건을 추가한다.
+    words = get_words_for_quiz(
+        _user["id"],
+        mode=payload.mode,
+        tag=payload.tag.strip(),
+        saved_from=payload.saved_from.strip(),
+        saved_to=payload.saved_to.strip(),
+        limit=max(payload.question_count * 3, payload.question_count),
+    )
+    return generate_assignment(_user["id"], words, payload)
 
 
 @router.post("/quiz/grade")
