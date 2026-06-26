@@ -139,10 +139,12 @@ def init_db():
 
                 CREATE TABLE IF NOT EXISTS quiz_history (
                     id          SERIAL PRIMARY KEY,
+                    user_id     UUID,
                     word_id     INTEGER,
                     result      BOOLEAN,
                     reviewed_at TIMESTAMP DEFAULT NOW()
                 );
+                ALTER TABLE quiz_history ADD COLUMN IF NOT EXISTS user_id UUID;
                 ALTER TABLE quiz_history DROP CONSTRAINT IF EXISTS quiz_history_word_id_fkey;
 
                 CREATE TABLE IF NOT EXISTS quiz_sessions (
@@ -160,6 +162,7 @@ def init_db():
                     completed_at    TIMESTAMP,
                     review_applied_at TIMESTAMP
                 );
+                ALTER TABLE quiz_sessions ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP;
                 ALTER TABLE quiz_sessions ADD COLUMN IF NOT EXISTS review_applied_at TIMESTAMP;
 
                 CREATE TABLE IF NOT EXISTS quiz_question_results (
@@ -785,8 +788,8 @@ def apply_quiz_review_schedule(user_id: str, session_id: int, incorrect_interval
                 if cur.rowcount:
                     updated += cur.rowcount
                     cur.execute(
-                        "INSERT INTO quiz_history (word_id, result) VALUES (%s, %s)",
-                        (item["word_id"], item["result"] == "correct"),
+                        "INSERT INTO quiz_history (user_id, word_id, result) VALUES (%s, %s, %s)",
+                        (user_id, item["word_id"], item["result"] == "correct"),
                     )
 
             cur.execute(
@@ -1048,8 +1051,8 @@ def update_review(user_id: str, word_id: int, correct: bool):
                 conn.commit()
                 return
             cur.execute(
-                "INSERT INTO quiz_history (word_id, result) VALUES (%s, %s)",
-                (word_id, correct)
+                "INSERT INTO quiz_history (user_id, word_id, result) VALUES (%s, %s, %s)",
+                (user_id, word_id, correct)
             )
         conn.commit()
 
@@ -1164,4 +1167,3 @@ def delete_label(user_id: str, name: str) -> tuple[list[str], bool, str, int]:
             cur.execute("DELETE FROM labels WHERE user_id = %s AND name = %s", (user_id, name))
         conn.commit()
     return get_labels(user_id), True, "삭제되었습니다.", deleted
-

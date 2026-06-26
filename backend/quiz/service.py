@@ -83,6 +83,7 @@ class _GeneratedQuestion(BaseModel):
     suggested_korean: str = ""
     suggested_english_def: str = ""
     suggested_example: str = ""
+    suggested_tag: str = ""
 
 
 class _GeneratedQuiz(BaseModel):
@@ -378,12 +379,28 @@ def _normalize_generated(generated: _GeneratedQuiz, words: list[dict[str, Any]],
         is_derived = bool(item.is_derived)
         source_word_text = (source.get("word") or "").strip().lower()
         target_text = target.strip().lower()
+        target_differs_from_source = bool(
+            source_word_text and target_text and target_text != source_word_text
+        )
+        if (
+            target_differs_from_source
+            and qtype not in CHOICE_QUESTION_TYPES
+            and not is_derived
+        ):
+            continue
         is_related = bool(item.is_related) or (
-            qtype in CHOICE_QUESTION_TYPES and bool(target_text) and target_text != source_word_text
+            qtype in CHOICE_QUESTION_TYPES and target_differs_from_source
         )
         relation_type = item.relation_type.strip()
-        if is_related and not relation_type:
-            relation_type = "derived" if is_derived else "contextual"
+        suggested_korean = item.suggested_korean.strip()
+        suggested_english_def = item.suggested_english_def.strip()
+        suggested_example = item.suggested_example.strip()
+        suggested_tag = item.suggested_tag.strip()
+        if not target_differs_from_source:
+            suggested_korean = suggested_korean or source.get("korean") or ""
+            suggested_english_def = suggested_english_def or source.get("english_def") or ""
+            suggested_example = suggested_example or source.get("example") or ""
+            suggested_tag = suggested_tag or source.get("tag") or "미지정"
         normalized.append(
             {
                 "id": f"q{len(normalized) + 1}",
@@ -410,10 +427,10 @@ def _normalize_generated(generated: _GeneratedQuiz, words: list[dict[str, Any]],
                 "is_related": is_related,
                 "relation_type": relation_type,
                 "derived_from_word_id": int(item.derived_from_word_id or source_word_id) if is_derived else None,
-                "suggested_korean": item.suggested_korean.strip() or source.get("korean") or "",
-                "suggested_english_def": item.suggested_english_def.strip() or source.get("english_def") or "",
-                "suggested_example": item.suggested_example.strip() or source.get("example") or "",
-                "suggested_tag": source.get("tag") or "미지정",
+                "suggested_korean": suggested_korean,
+                "suggested_english_def": suggested_english_def,
+                "suggested_example": suggested_example,
+                "suggested_tag": suggested_tag or "미지정",
             }
         )
         if len(normalized) >= count:
@@ -677,8 +694,7 @@ def generate_assignment(
 
     target_count = min(count, len(quiz_words))
     logger.info(
-        "quiz_generation_payload user_id=%s requested_count=%s target_count=%s candidate_count=%s",
-        user_id,
+        "quiz_generation_payload requested_count=%s target_count=%s candidate_count=%s",
         count,
         target_count,
         len(quiz_words),
