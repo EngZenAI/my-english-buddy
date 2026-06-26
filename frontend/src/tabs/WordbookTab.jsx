@@ -8,6 +8,7 @@ import { api } from "../api";
 import { queryKeys } from "../queryClient";
 import { EmptyState, LoadingSpinner, SkeletonBlock } from "../components/AsyncState";
 import MemberNotice from "../components/MemberNotice";
+import AudioButton from "../components/AudioButton";
 
 const COLS = 10;
 const PAGE_SIZE = 40;
@@ -54,6 +55,18 @@ export default function WordbookTab({ user, onRequireLogin }) {
 
   // 체크박스 다중 선택(삭제용)
   const [selected, setSelected] = useState(() => new Set());
+
+  // 카드 보기: 예문 펼치기 / 뜻(영어뜻·한국어상세) 팝오버 토글 (모바일 클릭용)
+  const [expandedEx, setExpandedEx] = useState(() => new Set());
+  const [openMeaning, setOpenMeaning] = useState(() => new Set());
+  const toggleInSet = (setter) => (id) =>
+    setter((s) => {
+      const next = new Set(s);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  const toggleExpandedEx = toggleInSet(setExpandedEx);
+  const toggleMeaning = toggleInSet(setOpenMeaning);
 
   // 드래그 정렬
   const [dragIndex, setDragIndex] = useState(null);
@@ -691,213 +704,290 @@ export default function WordbookTab({ user, onRequireLogin }) {
         />
       )}
 
+      {/* 카드형 그리드 (보기/편집 공용) */}
       {user && (
-        <div className="overflow-x-auto border border-slate-200 rounded-lg bg-white">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-slate-50 text-slate-600 text-left">
-                <th className="px-2 py-2 w-9 text-center">
-                  <input
-                    type="checkbox"
-                    checked={allChecked}
-                    onChange={toggleSelectAll}
-                    disabled={words.length === 0}
-                    title="현재 페이지 전체 선택"
-                  />
-                </th>
-                <th className="px-1 py-2 w-6" />
-                <th className="px-3 py-2 font-semibold">단어</th>
-                <th className="px-3 py-2 font-semibold">한국어</th>
-                <th className="px-3 py-2 font-semibold">한국어 상세</th>
-                <th className="px-3 py-2 font-semibold">영어뜻</th>
-                <th className="px-3 py-2 font-semibold">예문</th>
-                <th className="px-3 py-2 font-semibold whitespace-nowrap">태그</th>
-                <th className="px-3 py-2 font-semibold whitespace-nowrap">등록일</th>
-                <th className="px-3 py-2 font-semibold whitespace-nowrap">다음복습일</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && <WordRowsSkeleton />}
-              {!loading && words.length === 0 && (
-                <tr>
-                  <td colSpan={COLS} className="px-3 py-6 text-center text-slate-400">
-                    {filter
-                      ? `'${filter}' 태그의 단어가 없어요.`
-                      : "저장된 단어가 없어요. 단어 검색 탭에서 저장하거나 CSV를 가져와보세요!"}
-                  </td>
-                </tr>
-              )}
+        <div>
+          {/* 현재 페이지 전체선택 바 (보기 모드만) */}
+          {!rowEdit && !loading && words.length > 0 && (
+            <div className="flex items-center gap-2 mb-2 px-1 text-[13px] text-slate-500">
+              <input
+                type="checkbox"
+                checked={allChecked}
+                onChange={toggleSelectAll}
+                title="현재 페이지 전체 선택"
+              />
+              <span>
+                현재 페이지 전체 선택
+                {selected.size > 0 && (
+                  <span className="text-slate-400"> · {selected.size}개 선택됨</span>
+                )}
+              </span>
+            </div>
+          )}
+
+          {loading && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="rounded-xl border border-slate-200 bg-white p-4"
+                >
+                  <SkeletonBlock className="h-5 w-32 mb-3" />
+                  <SkeletonBlock className="h-4 w-24 mb-2" />
+                  <SkeletonBlock className="h-3 w-full" />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!loading && words.length === 0 && (
+            <EmptyState
+              title={filter ? `'${filter}' 태그의 단어가 없어요.` : "저장된 단어가 없어요."}
+              description={
+                filter
+                  ? "다른 태그를 골라보거나 단어를 추가해보세요."
+                  : "단어 검색 탭에서 저장하거나 CSV를 가져와보세요!"
+              }
+            />
+          )}
+
+          {!loading && words.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {pageWords.map((w, idx) => {
-                const i = start + idx; // words 배열 내 전역 인덱스 (드래그용)
-                const d = drafts[w.id] || {};
+                const i = start + idx; // 전역 인덱스 (드래그용)
                 const checked = selected.has(w.id);
+                const d = drafts[w.id] || {}; // 편집 모드 초안 값
+                const exExpanded = expandedEx.has(w.id);
+                const meaningShown = openMeaning.has(w.id);
+                const hasMeaning = !!(w.english_def || w.korean_detail);
                 return (
-                  <tr
+                  <div
                     key={w.id}
-                    className={`border-t border-slate-100 align-top ${
-                      checked ? "bg-rose-50/40" : rowEdit ? "bg-brand-50/30" : ""
-                    } ${dragIndex === i ? "opacity-50" : ""}`}
+                    className={`group relative rounded-xl border bg-white p-4 transition-shadow
+                      hover:shadow-md ${
+                        checked
+                          ? "border-rose-300 ring-2 ring-rose-100"
+                          : "border-slate-200"
+                      } ${dragIndex === i ? "opacity-50" : ""}`}
                     onDragOver={canReorder ? (e) => e.preventDefault() : undefined}
                     onDrop={canReorder ? () => onDrop(i) : undefined}
                   >
-                    <td className="px-2 py-2 text-center">
+                    {rowEdit ? (
+                      /* ── 편집 모드 카드 ── */
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          <label className="block">
+                            <span className="text-[11px] text-slate-400">영어 단어</span>
+                            <input
+                              value={d.word ?? ""}
+                              onChange={(e) => setDraftField(w.id, "word", e.target.value)}
+                              className="mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1
+                                         text-sm font-semibold outline-none focus:border-brand-400"
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="text-[11px] text-slate-400">한국어</span>
+                            <input
+                              value={d.korean ?? ""}
+                              onChange={(e) => setDraftField(w.id, "korean", e.target.value)}
+                              className="mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1
+                                         text-sm outline-none focus:border-brand-400"
+                            />
+                          </label>
+                        </div>
+
+                        <label className="block">
+                          <span className="text-[11px] text-slate-400">한국어 상세</span>
+                          <textarea
+                            value={d.korean_detail ?? ""}
+                            onChange={(e) =>
+                              setDraftField(w.id, "korean_detail", e.target.value)
+                            }
+                            rows={2}
+                            className="mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1
+                                       text-sm outline-none focus:border-brand-400"
+                          />
+                        </label>
+
+                        <label className="block">
+                          <span className="text-[11px] text-slate-400">영어뜻</span>
+                          <textarea
+                            value={d.english_def ?? ""}
+                            onChange={(e) =>
+                              setDraftField(w.id, "english_def", e.target.value)
+                            }
+                            rows={2}
+                            className="mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1
+                                       text-sm outline-none focus:border-brand-400"
+                          />
+                        </label>
+
+                        <label className="block">
+                          <span className="text-[11px] text-slate-400">예문</span>
+                          <textarea
+                            value={d.example ?? ""}
+                            onChange={(e) => setDraftField(w.id, "example", e.target.value)}
+                            rows={2}
+                            className="mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1
+                                       text-sm outline-none focus:border-brand-400"
+                          />
+                        </label>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <label className="block">
+                            <span className="text-[11px] text-slate-400">태그</span>
+                            <select
+                              value={d.tag ?? "미지정"}
+                              onChange={(e) => setDraftField(w.id, "tag", e.target.value)}
+                              className="mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1
+                                         text-sm bg-white outline-none focus:border-brand-400"
+                            >
+                              {labels.map((name) => (
+                                <option key={name} value={name}>
+                                  {name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="block">
+                            <span className="text-[11px] text-slate-400">
+                              복습일{" "}
+                              <span className="text-slate-300">
+                                (현재 {String(w.next_review).slice(2, 10)})
+                              </span>
+                            </span>
+                            <select
+                              value={d.next_review ?? ""}
+                              onChange={(e) =>
+                                setDraftField(w.id, "next_review", e.target.value)
+                              }
+                              className="mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1
+                                         text-sm bg-white outline-none focus:border-brand-400"
+                            >
+                              <option value="">변경 안 함</option>
+                              <option value="1d">하루 뒤</option>
+                              <option value="1w">일주일 뒤</option>
+                              <option value="1m">한달 뒤</option>
+                              <option value="3m">3개월 뒤</option>
+                            </select>
+                          </label>
+                        </div>
+                      </div>
+                    ) : (
+                    <>
+                    {/* 상단: 체크박스 + 드래그 핸들 */}
+                    <div className="flex items-center justify-between mb-1.5">
                       <input
                         type="checkbox"
                         checked={checked}
                         readOnly
                         onClick={(e) => handleSelectClick(e, idx, w.id)}
+                        title="선택 (Shift+클릭=범위)"
                       />
-                    </td>
-                    <td
-                      className={`px-1 py-2 text-center text-slate-400 ${
-                        canReorder ? "cursor-move" : "opacity-30"
-                      }`}
-                      draggable={canReorder}
-                      onDragStart={canReorder ? () => setDragIndex(i) : undefined}
-                      onDragEnd={() => setDragIndex(null)}
-                      title={
-                        canReorder
-                          ? "드래그해서 순서 변경"
-                          : "순서 변경은 '전체' 보기에서만 가능해요"
-                      }
-                    >
-                      ::
-                    </td>
-                    <td className="px-3 py-2 font-medium">
-                      {rowEdit ? (
-                        <input
-                          value={d.word ?? ""}
-                          onChange={(e) =>
-                            setDraftField(w.id, "word", e.target.value)
-                          }
-                          className="w-full min-w-[6rem] rounded-md border border-slate-300 px-2 py-1
-                                     text-sm outline-none focus:border-brand-400"
-                        />
-                      ) : (
-                        w.word
-                      )}
-                    </td>
-                    <td className="px-3 py-2">
-                      {rowEdit ? (
-                        <input
-                          value={d.korean ?? ""}
-                          onChange={(e) =>
-                            setDraftField(w.id, "korean", e.target.value)
-                          }
-                          className="w-full min-w-[5rem] rounded-md border border-slate-300 px-2 py-1
-                                     text-sm outline-none focus:border-brand-400"
-                        />
-                      ) : (
-                        w.korean
-                      )}
-                    </td>
+                      <span
+                        className={`select-none text-slate-400 ${
+                          canReorder ? "cursor-move" : "opacity-30"
+                        }`}
+                        draggable={canReorder}
+                        onDragStart={canReorder ? () => setDragIndex(i) : undefined}
+                        onDragEnd={() => setDragIndex(null)}
+                        title={
+                          canReorder
+                            ? "드래그해서 순서 변경"
+                            : "순서 변경은 '전체' 보기에서만 가능해요"
+                        }
+                      >
+                        ⠿
+                      </span>
+                    </div>
 
-                    <td className="px-3 py-2 whitespace-pre-wrap text-slate-600">
-                      {rowEdit ? (
-                        <textarea
-                          value={d.korean_detail ?? ""}
-                          onChange={(e) =>
-                            setDraftField(w.id, "korean_detail", e.target.value)
-                          }
-                          rows={2}
-                          className="w-full min-w-[7rem] rounded-md border border-slate-300 px-2 py-1
-                                     text-sm outline-none focus:border-brand-400"
-                        />
-                      ) : (
-                        w.korean_detail || "-"
-                      )}
-                    </td>
+                    {/* 단어 + 발음 */}
+                    <div className="flex items-start justify-between gap-2">
+                      <h4 className="min-w-0 text-lg font-bold text-slate-800 leading-tight break-words">
+                        {w.word}
+                      </h4>
+                      <span className="shrink-0">
+                        <AudioButton word={w.word} lang="en" />
+                      </span>
+                    </div>
 
-                    <td className="px-3 py-2 whitespace-pre-wrap">
-                      {rowEdit ? (
-                        <textarea
-                          value={d.english_def ?? ""}
-                          onChange={(e) =>
-                            setDraftField(w.id, "english_def", e.target.value)
-                          }
-                          rows={2}
-                          className="w-full min-w-[7rem] rounded-md border border-slate-300 px-2 py-1
-                                     text-sm outline-none focus:border-brand-400"
-                        />
-                      ) : (
-                        w.english_def
-                      )}
-                    </td>
+                    {/* 한국어 */}
+                    <p className="mt-0.5 text-sm text-slate-600">
+                      {w.korean || <span className="text-slate-300">-</span>}
+                    </p>
 
-                    <td className="px-3 py-2 whitespace-pre-wrap">
-                      {rowEdit ? (
-                        <textarea
-                          value={d.example ?? ""}
-                          onChange={(e) =>
-                            setDraftField(w.id, "example", e.target.value)
-                          }
-                          rows={2}
-                          className="w-full min-w-[7rem] rounded-md border border-slate-300 px-2 py-1
-                                     text-sm outline-none focus:border-brand-400"
-                        />
-                      ) : (
-                        w.example
-                      )}
-                    </td>
+                    {/* 예문: 한 줄 truncate → 클릭으로 펼치기 */}
+                    {w.example && (
+                      <p
+                        onClick={() => toggleExpandedEx(w.id)}
+                        title={exExpanded ? "접기" : "펼쳐 보기"}
+                        className={`mt-2 text-[13px] text-slate-500 italic cursor-pointer ${
+                          exExpanded ? "whitespace-pre-wrap" : "truncate"
+                        }`}
+                      >
+                        {w.example}
+                      </p>
+                    )}
 
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      {rowEdit ? (
-                        <select
-                          value={d.tag ?? "미지정"}
-                          onChange={(e) => setDraftField(w.id, "tag", e.target.value)}
-                          className="rounded-md border border-slate-300 px-2 py-1 text-sm
-                                     outline-none focus:border-brand-400 bg-white"
+                    {/* 뜻(영어뜻·한국어상세): 평소 숨김 → hover 팝오버 / 모바일 클릭 토글 */}
+                    {hasMeaning && (
+                      <div className="mt-2">
+                        <button
+                          type="button"
+                          onClick={() => toggleMeaning(w.id)}
+                          className="text-[12px] text-brand-600 hover:underline sm:hidden"
                         >
-                          {labels.map((name) => (
-                            <option key={name} value={name}>
-                              {name}
-                            </option>
-                          ))}
-                        </select>
-                      ) : w.tag ? (
-                        <span className="inline-flex items-center rounded-full bg-brand-50
-                                         text-brand-600 text-xs font-medium px-2 py-0.5">
+                          {meaningShown ? "뜻 숨기기" : "뜻 보기"}
+                        </button>
+
+                        {/* 데스크톱: 카드 hover 팝오버 / 모바일: 클릭 시 인라인 표시 */}
+                        <div
+                          className={`mt-1 rounded-lg border border-slate-200 bg-slate-50 p-2.5
+                            text-[12.5px] text-slate-600 leading-relaxed space-y-1
+                            ${meaningShown ? "block" : "hidden"}
+                            sm:block sm:absolute sm:left-3 sm:right-3 sm:top-full sm:mt-1 sm:z-20
+                            sm:opacity-0 sm:invisible sm:shadow-lg
+                            sm:group-hover:opacity-100 sm:group-hover:visible
+                            sm:transition-opacity`}
+                        >
+                          {w.korean_detail && (
+                            <p className="whitespace-pre-wrap">
+                              <span className="text-slate-400">상세 </span>
+                              {w.korean_detail}
+                            </p>
+                          )}
+                          {w.english_def && (
+                            <p className="whitespace-pre-wrap">
+                              <span className="text-slate-400">영어뜻 </span>
+                              {w.english_def}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 하단 메타: 태그 칩 · 등록일 | 복습일 (한 줄, 년도 2자리) */}
+                    <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center gap-2 flex-wrap text-[11px] text-slate-400">
+                      {w.tag && (
+                        <span className="inline-flex items-center rounded-full bg-brand-50 text-brand-600 font-medium px-2 py-0.5">
                           {w.tag}
                         </span>
-                      ) : (
-                        <span className="text-slate-300">-</span>
                       )}
-                    </td>
-
-                    <td className="px-3 py-2 whitespace-nowrap text-slate-500">
-                      {String(w.created_at).slice(0, 10)}
-                    </td>
-
-                    <td className="px-3 py-2 whitespace-nowrap text-slate-500">
-                      {rowEdit ? (
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-[11px] text-slate-400">
-                            현재 {String(w.next_review).slice(0, 10)}
-                          </span>
-                          <select
-                            value={d.next_review ?? ""}
-                            onChange={(e) =>
-                              setDraftField(w.id, "next_review", e.target.value)
-                            }
-                            className="rounded-md border border-slate-300 px-2 py-1 text-sm
-                                       outline-none focus:border-brand-400 bg-white"
-                          >
-                            <option value="">변경 안 함</option>
-                            <option value="1d">하루 뒤</option>
-                            <option value="1w">일주일 뒤</option>
-                            <option value="1m">한달 뒤</option>
-                            <option value="3m">3개월 뒤</option>
-                          </select>
-                        </div>
-                      ) : (
-                        String(w.next_review).slice(0, 10)
-                      )}
-                    </td>
-                  </tr>
+                      <span className="whitespace-nowrap" title="등록일">
+                        {String(w.created_at).slice(2, 10)}
+                      </span>
+                      <span className="text-slate-300">|</span>
+                      <span className="whitespace-nowrap" title="다음 복습일">
+                        {String(w.next_review).slice(2, 10)}
+                      </span>
+                    </div>
+                    </>
+                    )}
+                  </div>
                 );
               })}
-            </tbody>
-          </table>
+            </div>
+          )}
         </div>
       )}
 
