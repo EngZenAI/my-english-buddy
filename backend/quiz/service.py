@@ -29,7 +29,7 @@ from backend.quiz.schemas import (
 )
 
 logger = logging.getLogger(__name__)
-llm = llm_module.llm
+quiz_llm = llm_module.get_llm("quiz")
 
 DEFAULT_QUESTION_COUNT = 10
 MAX_QUESTION_COUNT = 20
@@ -50,7 +50,6 @@ CHOICE_QUESTION_TYPES = {
 }
 SAVED_GRAMMAR_BLANK_CHOICE_ALIASES = {"_".join(("to" + "eic", "part5"))}
 GENERATION_ATTEMPTS = 3
-QUIZ_MAX_TOKENS = 4096
 
 
 class _GeneratedChoice(BaseModel):
@@ -170,7 +169,7 @@ Grade with this policy:
 """
 )
 
-_subjective_chain = _subjective_prompt | llm | _subjective_parser
+_subjective_chain = _subjective_prompt | quiz_llm | _subjective_parser
 
 
 def _clamp_question_count(value: int | None) -> int:
@@ -413,21 +412,15 @@ def _is_connection_refused(exc: Exception) -> bool:
 
 
 def _active_model_name() -> str:
+    get_active_model_name = getattr(llm_module, "get_active_model_name", None)
+    if get_active_model_name:
+        return get_active_model_name("quiz")
     return getattr(llm_module, "ACTIVE_MODEL", "unknown")
 
 
 def _quiz_llm():
-    if _active_model_name() == "watsonx":
-        return llm.bind(max_tokens=QUIZ_MAX_TOKENS)
-    return llm
-
-
-def _watsonx_configured_but_unavailable() -> tuple[bool, str]:
-    configured = bool(getattr(llm_module, "WATSONX_CONFIGURED", False))
-    active_model = _active_model_name()
-    if not configured or active_model == "watsonx":
-        return False, ""
-    return True, str(getattr(llm_module, "WATSONX_INIT_ERROR", ""))
+    get_llm = getattr(llm_module, "get_llm", None)
+    return get_llm("quiz") if get_llm else quiz_llm
 
 
 def _raw_text(value: Any) -> str:
@@ -582,18 +575,7 @@ def generate_assignment(
             ok=False,
             message="퀴즈를 만들 단어가 없습니다. 단어장이나 목표 조건을 확인해주세요.",
         )
-    watsonx_unavailable, watsonx_error = _watsonx_configured_but_unavailable()
-    if watsonx_unavailable:
-        detail = f" ({watsonx_error})" if watsonx_error else ""
-        return QuizGenerateResponse(
-            ok=False,
-            message=(
-                "WatsonX 설정은 있지만 초기화에 실패해 퀴즈를 생성할 수 없습니다"
-                f"{detail}. 백엔드를 재시작하거나 WatsonX 네트워크/URL 설정을 확인해주세요."
-            ),
-        )
 
-    session_id = create_quiz_session(user_id, _goal_payload(goal), count)
     target_count = min(count, len(quiz_words))
     generated_questions = _generate_llm_questions(quiz_words, goal, target_count)
     if not generated_questions:
@@ -603,7 +585,6 @@ def generate_assignment(
                 "AI가 유효한 퀴즈를 생성하지 못했습니다. "
                 "잠시 후 다시 시도하거나 출제 지시문을 더 구체적으로 입력해주세요."
             ),
-            session_id=session_id,
         )
 
     message = f"{len(generated_questions)}문제를 생성했습니다."
@@ -613,6 +594,7 @@ def generate_assignment(
             "코드가 임의 문항을 보충하지 않았습니다."
         )
 
+    session_id = create_quiz_session(user_id, _goal_payload(goal), count)
     return QuizGenerateResponse(
         ok=True,
         message=message,

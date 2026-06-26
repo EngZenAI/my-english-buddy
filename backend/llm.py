@@ -15,33 +15,99 @@ logger = logging.getLogger(__name__)
 qwen_llm   = ChatOllama(model="qwen2.5:7b")
 exaone_llm = ChatOllama(model="exaone3.5:2.4b")
 
-watson_llm = None
 watsonx_api_key    = os.getenv("WATSONX_API_KEY")
 watsonx_project_id = os.getenv("WATSONX_PROJECT_ID")
 watsonx_url        = os.getenv("WATSONX_URL")
+WATSONX_CONFIGURED = all([watsonx_api_key, watsonx_project_id, watsonx_url])
+WATSONX_INIT_ERRORS: dict[str, str] = {}
 
-if all([watsonx_api_key, watsonx_project_id, watsonx_url]):
+FEATURE_MODEL_PROFILES = {
+    "default": {
+        "provider": "watsonx",
+        "model_id": "ibm/granite-4-h-small",
+        "params": {"max_tokens": 500},
+    },
+    "quiz": {
+        "provider": "watsonx",
+        "model_id": "openai/gpt-oss-120b",
+        "params": {"max_tokens": 4096},
+    },
+}
+FALLBACK_MODEL_KEY = "qwen"
+_llm_cache = {"qwen": qwen_llm, "exaone": exaone_llm}
+_active_model_names: dict[str, str] = {}
+
+
+def _profile_for(feature: str) -> dict:
+    return FEATURE_MODEL_PROFILES.get(feature) or FEATURE_MODEL_PROFILES["default"]
+
+
+def _create_watsonx_llm(feature: str, profile: dict):
+    from langchain_ibm import ChatWatsonx
+
+    return ChatWatsonx(
+        model_id=profile["model_id"],
+        url=watsonx_url,
+        apikey=watsonx_api_key,
+        project_id=watsonx_project_id,
+        params=profile.get("params") or {},
+    )
+
+
+def get_llm(feature: str = "default"):
+    """기능별 LLM 인스턴스를 반환한다.
+
+    기능별 모델 프로필은 FEATURE_MODEL_PROFILES에 코드 상수로 정의한다.
+    등록되지 않은 feature는 "default" 프로필을 사용한다. 생성된 모델 인스턴스는 feature 단위로 캐시해 같은 기능에서
+    반복 호출해도 WatsonX 클라이언트를 새로 만들지 않는다.
+
+    예:
+        quiz_llm = get_llm("quiz")       # openai/gpt-oss-120b 우선 사용
+        default_llm = get_llm()          # ibm/granite-4-h-small 우선 사용
+    """
+    profile = _profile_for(feature)
+    cache_key = feature if feature in FEATURE_MODEL_PROFILES else "default"
+    if cache_key in _llm_cache:
+        return _llm_cache[cache_key]
+
+    if profile.get("provider") == "watsonx" and WATSONX_CONFIGURED:
+        try:
+            model = _create_watsonx_llm(cache_key, profile)
+            _llm_cache[cache_key] = model
+            _active_model_names[cache_key] = f"watsonx:{profile['model_id']}"
+            logger.info("[OK] WatsonX 연결됨 (%s)", cache_key)
+            return model
+        except Exception as e:
+            WATSONX_INIT_ERRORS[cache_key] = str(e)
+            logger.warning("[WARN] WatsonX 연결 실패 (%s): %s", cache_key, e)
+
+    logger.warning("[WARN] %s 모델을 Ollama(qwen)로 대체", cache_key)
+    _active_model_names[cache_key] = FALLBACK_MODEL_KEY
+    return _llm_cache[FALLBACK_MODEL_KEY]
+
+
+def get_active_model_name(feature: str = "default") -> str:
+    cache_key = feature if feature in FEATURE_MODEL_PROFILES else "default"
+    if cache_key not in _llm_cache:
+        get_llm(cache_key)
+    return _active_model_names.get(cache_key, FALLBACK_MODEL_KEY)
+
+
+watson_llm = None
+if WATSONX_CONFIGURED:
     try:
-        from langchain_ibm import ChatWatsonx
-        watson_llm = ChatWatsonx(
-            model_id="ibm/granite-4-h-small",
-            url=watsonx_url,
-            apikey=watsonx_api_key,
-            project_id=watsonx_project_id,
-            params={"max_tokens": 500}
-        )
-        logger.info("[OK] WatsonX 연결됨")
+        watson_llm = get_llm("default")
     except Exception as e:
         logger.warning("[WARN] WatsonX 연결 실패: %s", e)
 else:
     logger.warning("[WARN] WatsonX 환경변수 없음 -> Ollama(qwen)로 대체")
 
 llms = {"qwen": qwen_llm, "exaone": exaone_llm}
-if watson_llm:
+if get_active_model_name("default").startswith("watsonx"):
     llms["watsonx"] = watson_llm
 
-ACTIVE_MODEL = "watsonx" if watson_llm else "qwen"
-llm = llms[ACTIVE_MODEL]
+ACTIVE_MODEL = "watsonx" if get_active_model_name("default").startswith("watsonx") else "qwen"
+llm = get_llm("default")
 logger.info("[OK] 기본 모델: %s", ACTIVE_MODEL)
 
 # ── 2. 파서 ───────────────────────────────────────────────
