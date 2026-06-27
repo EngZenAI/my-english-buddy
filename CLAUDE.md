@@ -51,19 +51,18 @@ english-app/
 ## 실행 방법
 
 DB·LLM·OAuth 키는 `.env`에 있음(`.env.example` 참고). 백엔드는 Postgres가 필요.
-Python 의존성은 uv로 관리한다(`uv venv`, `uv pip install -r backend/requirements.txt`, `uv run ...`).
 
 **방식 A — 한 서버 (평소):**
 ```
 cd frontend && npm install && npm run build   # frontend/dist 생성
-cd .. && uv run uvicorn backend.main:app --reload # http://localhost:8000
+cd .. && uvicorn backend.main:app --reload     # http://localhost:8000
 ```
 - `/` → React 앱, `/api/*` → REST, `/auth/*` → 인증.
 - `frontend/dist`가 없으면 `/`는 503 "빌드하세요" 안내.
 
 **방식 B — 프론트 개발(핫리로드, 권장):** 터미널 2개
 ```
-uv run uvicorn backend.main:app --reload # 8000 (반드시 함께 켜야 데이터 동작)
+uvicorn backend.main:app --reload      # 8000 (반드시 함께 켜야 데이터 동작)
 cd frontend && npm run dev              # 5173 (여기로 접속; /api·/auth는 8000으로 프록시)
 ```
 - **5173은 `npm run dev`가 떠 있을 때만 열림.** `npm run build`는 파일만 만들고 끝나서 5173엔 아무것도 안 뜸("연결 거부"). 5173 쓰려면 dev를 켤 것.
