@@ -1,3 +1,4 @@
+import json
 import os
 import threading
 import urllib.parse
@@ -210,6 +211,23 @@ def init_db():
                 DELETE FROM labels WHERE user_id IS NULL;  -- 기존 전역 라벨 정리(사용자별로 재시드)
                 CREATE UNIQUE INDEX IF NOT EXISTS ux_labels_user_name
                     ON labels (user_id, name);
+
+                -- 롤플레잉 결과(학습노트): 대화 요약 + 유용 표현/어휘를 JSONB로 보관
+                CREATE TABLE IF NOT EXISTS roleplay_sessions (
+                    id          SERIAL PRIMARY KEY,
+                    user_id     UUID NOT NULL,
+                    level       TEXT,
+                    scenario    TEXT,
+                    tag         TEXT,
+                    title       TEXT,
+                    turns       INTEGER DEFAULT 0,
+                    summary     TEXT,
+                    expressions JSONB DEFAULT '[]'::jsonb,
+                    vocab       JSONB DEFAULT '[]'::jsonb,
+                    created_at  TIMESTAMP DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS ix_roleplay_sessions_user_created
+                    ON roleplay_sessions (user_id, created_at DESC);
             """)
             # sort_order 백필: 기존 행은 사용자별 최근 저장순(현재 화면 순서)을 0,1,2…로 부여
             cur.execute("""
@@ -1167,3 +1185,51 @@ def delete_label(user_id: str, name: str) -> tuple[list[str], bool, str, int]:
             cur.execute("DELETE FROM labels WHERE user_id = %s AND name = %s", (user_id, name))
         conn.commit()
     return get_labels(user_id), True, "삭제되었습니다.", deleted
+
+
+# ── 롤플레잉 결과(학습노트) ────────────────────────────────
+def save_roleplay_session(user_id, level, scenario, tag, title, turns,
+                          summary, expressions, vocab) -> int:
+    """대화 종료 후 정리 결과를 저장하고 새 세션 id를 반환한다."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO roleplay_sessions
+                       (user_id, level, scenario, tag, title, turns,
+                        summary, expressions, vocab)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+                   RETURNING id""",
+                (user_id, level, scenario, tag, title, turns, summary,
+                 json.dumps(expressions or [], ensure_ascii=False),
+                 json.dumps(vocab or [], ensure_ascii=False)),
+            )
+            sid = cur.fetchone()[0]
+        conn.commit()
+    return sid
+
+
+def get_roleplay_sessions(user_id):
+    """사용자의 롤플레잉 결과를 최신순으로 반환한다(JSONB는 파이썬 list로 옴)."""
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                """SELECT id, level, scenario, tag, title, turns, summary,
+                          expressions, vocab, created_at
+                   FROM roleplay_sessions
+                   WHERE user_id = %s
+                   ORDER BY created_at DESC, id DESC""",
+                (user_id,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+
+def delete_roleplay_session(user_id, session_id) -> bool:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM roleplay_sessions WHERE user_id = %s AND id = %s",
+                (user_id, session_id),
+            )
+            ok = cur.rowcount > 0
+        conn.commit()
+    return ok

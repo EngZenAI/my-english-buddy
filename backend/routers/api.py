@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from backend.auth.users import get_current_user_from_cookie
+from backend.dictionary import translate_korean
 from backend.database import (
     add_label,
     bulk_delete_words,
@@ -27,18 +28,21 @@ from backend.database import (
     get_quiz_stats,
     get_words_for_quiz,
     get_labels,
-    get_words_to_review,
+    get_roleplay_sessions,
     insert_words,
     is_word_saved,
     rename_label,
     reorder_words,
     save_word,
+    save_roleplay_session,
+    delete_roleplay_session,
     update_word,
 )
 from backend.llm import (
     continue_roleplay,
     explain_slang,
     start_roleplay,
+    summarize_roleplay,
 )
 from backend.quiz.schemas import QuizGenerateIn, QuizGradeIn, QuizReviewScheduleApplyIn
 from backend.quiz.service import apply_review_schedule, generate_assignment, grade_assignment
@@ -121,15 +125,32 @@ class RenameLabelIn(BaseModel):
 
 class RoleplayStartIn(BaseModel):
     level: str = "intermediate"          # beginner | intermediate | advanced
-    scenario: str = "daily"              # daily | opic | tag
+    scenario: str = "general"            # general | opic | tag
     tag: str | None = None               # scenario == "tag" 일 때 사용
+    situation: str = ""                  # 예시 카드/자유 입력의 구체적 상황
 
 
 class RoleplayContinueIn(BaseModel):
-    history: list  # [[user, bot], ...]
+    history: list  # [[user, bot, coaching], ...]
     message: str
     level: str = "intermediate"
-    scenario: str = "daily"
+    scenario: str = "general"
+    tag: str | None = None
+    situation: str = ""
+    wrap_up: bool = False  # True면 AI가 자연스럽게 대화를 마무리하도록 유도
+
+
+class RoleplaySummaryIn(BaseModel):
+    history: list  # [[user, bot, coaching], ...]
+    level: str = "intermediate"
+    scenario: str = "general"
+    tag: str | None = None
+    situation: str = ""
+    title: str = ""  # 진행 칩 제목(카드 라벨 / 자유주제 / #태그) — 학습노트 표시용
+
+
+class RoleplaySaveWordsIn(BaseModel):
+    items: list  # [{word, korean, korean_detail?, english_def?, example?}, ...]
     tag: str | None = None
 
 
@@ -466,35 +487,127 @@ def quiz_stats(_user: dict = Depends(require_user)):
 
 # ── 롤플레잉 — 회원 전용 ───────────────────────────────────
 def _roleplay_words(user_id: str, scenario: str, tag: str | None):
-    """시나리오에 맞는 단어 목록을 고른다.
+    """모드에 맞는 단어 목록을 고른다.
 
-    태그 시나리오는 해당 태그의 단어로 맥락을 구성하고, 그 외에는 복습 예정 단어를
-    사용한다. 단어가 없어도(신규 사용자 등) start_roleplay가 동작한다.
+    태그 모드일 때만 해당 태그의 단어를 가져와 "활용 연습" 대상 어휘로 쓴다.
+    OPIc/일반 모드는 단어장에 의존하지 않으므로 빈 목록을 반환한다.
     """
     if (scenario or "").lower() == "tag" and tag:
         return get_all_words(user_id, tag)
-    return get_words_to_review(user_id)
+    return []
+
+
+def _norm_turn(h) -> list:
+    """history 한 항목을 [user, bot, coaching] 3-튜플로 정규화한다."""
+    return [
+        h[0] if len(h) > 0 else "",
+        h[1] if len(h) > 1 else "",
+        h[2] if len(h) > 2 else "",
+    ]
+
+
+def _needs_translation(value: str) -> bool:
+    """LLM/외부 API 결과가 비어 있거나 실패값이면 번역 보강 대상으로 본다."""
+    text = (value or "").strip()
+    return not text or text in {"번역 실패", "translation failed"}
 
 
 @router.post("/roleplay/start")
 def roleplay_start(payload: RoleplayStartIn, _user: dict = Depends(require_user)):
     words = _roleplay_words(_user["id"], payload.scenario, payload.tag)
-    history = start_roleplay(
-        words, level=payload.level, scenario=payload.scenario, tag=payload.tag
-    )  # [("", response)]
-    return {"history": [list(pair) for pair in history]}
+    reply = start_roleplay(
+        level=payload.level,
+        scenario=payload.scenario,
+        tag=payload.tag,
+        situation=payload.situation,
+        words=words,
+    )
+    # 첫 턴: 사용자 발화 없음, 코칭 없음.
+    return {"history": [["", reply, ""]]}
 
 
 @router.post("/roleplay/continue")
 def roleplay_continue(payload: RoleplayContinueIn, _user: dict = Depends(require_user)):
-    history = [list(pair) for pair in payload.history]
+    # LLM 맥락용으로는 (user, bot)만 필요(코칭 제외).
+    context = [(t[0], t[1]) for t in (_norm_turn(h) for h in payload.history)]
     words = _roleplay_words(_user["id"], payload.scenario, payload.tag)
-    new_history = continue_roleplay(
-        history,
+    result = continue_roleplay(
+        context,
         payload.message,
         level=payload.level,
         scenario=payload.scenario,
         tag=payload.tag,
+        situation=payload.situation,
         words=words,
+        wrap_up=payload.wrap_up,
     )
-    return {"history": [list(pair) for pair in new_history]}
+    new_history = [_norm_turn(h) for h in payload.history]
+    new_history.append([payload.message, result["reply"], result["coaching"]])
+    return {"history": new_history}
+
+
+@router.post("/roleplay/summary")
+def roleplay_summary(payload: RoleplaySummaryIn, _user: dict = Depends(require_user)):
+    """대화 전체에서 요약 + 유용 표현 + 유용 어휘를 추출하고(LLM 1회) 학습노트에 저장한다."""
+    context = [(t[0], t[1]) for t in (_norm_turn(h) for h in payload.history)]
+    result = summarize_roleplay(
+        context,
+        level=payload.level,
+        scenario=payload.scenario,
+        tag=payload.tag,
+        situation=payload.situation,
+    )
+    # 사용자 발화 턴 수 = history에서 user가 있는 항목 수
+    turns = sum(1 for u, _b in context if (u or "").strip())
+    session_id = save_roleplay_session(
+        _user["id"],
+        payload.level,
+        payload.scenario,
+        payload.tag,
+        payload.title,
+        turns,
+        result.get("summary", ""),
+        result.get("expressions", []),
+        result.get("vocab", []),
+    )
+    return {**result, "session_id": session_id}
+
+
+@router.post("/roleplay/save-words")
+def roleplay_save_words(payload: RoleplaySaveWordsIn, _user: dict = Depends(require_user)):
+    """정리 페이지에서 선택한 어휘를 단어장에 저장한다(insert_words 재사용)."""
+    tag = (payload.tag or "미지정").strip() or "미지정"
+    items = []
+    for it in payload.items:
+        word = (it.get("word") or "").strip()
+        if not word:
+            continue
+        korean = (it.get("korean") or "").strip()
+        if _needs_translation(korean):
+            korean = translate_korean(word)
+            if _needs_translation(korean):
+                korean = ""
+        items.append({
+            "word": word,
+            "korean": korean,
+            "korean_detail": (it.get("korean_detail") or "").strip(),
+            "english_def": (it.get("english_def") or "").strip(),
+            "example": (it.get("example") or "").strip(),
+            "tag": tag,
+        })
+    if not items:
+        return {"ok": False, "added": 0, "skipped": 0}
+    result = insert_words(_user["id"], items)
+    return {"ok": True, **result}
+
+
+@router.get("/roleplay/sessions")
+def roleplay_sessions(_user: dict = Depends(require_user)):
+    """학습노트: 저장된 롤플레잉 결과 목록(최신순)."""
+    return {"sessions": get_roleplay_sessions(_user["id"])}
+
+
+@router.delete("/roleplay/sessions/{session_id}")
+def roleplay_session_delete(session_id: int, _user: dict = Depends(require_user)):
+    ok = delete_roleplay_session(_user["id"], session_id)
+    return {"ok": ok}

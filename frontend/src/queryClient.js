@@ -7,6 +7,7 @@ export const queryKeys = {
   search: (type, word) => ["search", type, word.trim().toLowerCase()],
   wordSaved: (userId, word) => ["word-saved", userId, word.trim().toLowerCase()],
   labelWordCount: (userId, label) => ["label-word-count", userId, label],
+  roleplaySessions: ["roleplay-sessions"],
 };
 
 export const queryClient = new QueryClient({
