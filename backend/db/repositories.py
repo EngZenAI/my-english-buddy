@@ -16,25 +16,32 @@ def _rows(result) -> list[dict[str, Any]]:
     return [dict(row) for row in result.mappings().all()]
 
 
+async def _exec_driver_statements(conn, statements: tuple[str, ...]) -> None:
+    for statement in statements:
+        await conn.exec_driver_sql(statement)
+
+
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.exec_driver_sql(
-                """
-                DO $$
-                BEGIN
-                    IF EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'words' AND column_name = 'context'
-                    ) AND NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'words' AND column_name = 'tag'
-                    ) THEN
-                        EXECUTE 'ALTER TABLE words RENAME COLUMN context TO tag';
-                    END IF;
-                END $$;
-                """
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'words' AND column_name = 'context'
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'words' AND column_name = 'tag'
+                ) THEN
+                    EXECUTE 'ALTER TABLE words RENAME COLUMN context TO tag';
+                END IF;
+            END $$;
+            """
         )
-        await conn.exec_driver_sql(
+        await _exec_driver_statements(
+            conn,
+            (
                 """
                 CREATE TABLE IF NOT EXISTS words (
                     id            SERIAL PRIMARY KEY,
@@ -47,28 +54,30 @@ async def init_db() -> None:
                     tag           TEXT,
                     created_at    TIMESTAMP DEFAULT NOW(),
                     next_review   TIMESTAMP DEFAULT (NOW() + INTERVAL '7 days')
-                );
-
-                ALTER TABLE words ADD COLUMN IF NOT EXISTS user_id UUID;
-                ALTER TABLE words ADD COLUMN IF NOT EXISTS korean_detail TEXT;
-                ALTER TABLE words ADD COLUMN IF NOT EXISTS sort_order INTEGER;
-                ALTER TABLE words ALTER COLUMN next_review SET DEFAULT NOW() + INTERVAL '7 days';
-                ALTER TABLE words DROP COLUMN IF EXISTS phonetic;
-                ALTER TABLE words DROP CONSTRAINT IF EXISTS words_word_key;
-
+                )
+                """,
+                "ALTER TABLE words ADD COLUMN IF NOT EXISTS user_id UUID",
+                "ALTER TABLE words ADD COLUMN IF NOT EXISTS korean_detail TEXT",
+                "ALTER TABLE words ADD COLUMN IF NOT EXISTS sort_order INTEGER",
+                "ALTER TABLE words ALTER COLUMN next_review SET DEFAULT NOW() + INTERVAL '7 days'",
+                "ALTER TABLE words DROP COLUMN IF EXISTS phonetic",
+                "ALTER TABLE words DROP CONSTRAINT IF EXISTS words_word_key",
+                """
                 CREATE UNIQUE INDEX IF NOT EXISTS ux_words_user_word
-                    ON words (user_id, lower(word));
-
+                    ON words (user_id, lower(word))
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS quiz_history (
                     id          SERIAL PRIMARY KEY,
                     user_id     UUID,
                     word_id     INTEGER,
                     result      BOOLEAN,
                     reviewed_at TIMESTAMP DEFAULT NOW()
-                );
-                ALTER TABLE quiz_history ADD COLUMN IF NOT EXISTS user_id UUID;
-                ALTER TABLE quiz_history DROP CONSTRAINT IF EXISTS quiz_history_word_id_fkey;
-
+                )
+                """,
+                "ALTER TABLE quiz_history ADD COLUMN IF NOT EXISTS user_id UUID",
+                "ALTER TABLE quiz_history DROP CONSTRAINT IF EXISTS quiz_history_word_id_fkey",
+                """
                 CREATE TABLE IF NOT EXISTS quiz_sessions (
                     id              SERIAL PRIMARY KEY,
                     user_id         UUID NOT NULL,
@@ -83,10 +92,11 @@ async def init_db() -> None:
                     created_at      TIMESTAMP DEFAULT NOW(),
                     completed_at    TIMESTAMP,
                     review_applied_at TIMESTAMP
-                );
-                ALTER TABLE quiz_sessions ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP;
-                ALTER TABLE quiz_sessions ADD COLUMN IF NOT EXISTS review_applied_at TIMESTAMP;
-
+                )
+                """,
+                "ALTER TABLE quiz_sessions ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP",
+                "ALTER TABLE quiz_sessions ADD COLUMN IF NOT EXISTS review_applied_at TIMESTAMP",
+                """
                 CREATE TABLE IF NOT EXISTS quiz_question_results (
                     id                    SERIAL PRIMARY KEY,
                     session_id            INTEGER NOT NULL,
@@ -113,25 +123,32 @@ async def init_db() -> None:
                     suggested_example     TEXT,
                     suggested_tag         TEXT,
                     created_at            TIMESTAMP DEFAULT NOW()
-                );
+                )
+                """,
+                """
                 CREATE INDEX IF NOT EXISTS ix_quiz_question_results_user_created
-                    ON quiz_question_results (user_id, created_at DESC);
+                    ON quiz_question_results (user_id, created_at DESC)
+                """,
+                """
                 CREATE INDEX IF NOT EXISTS ix_quiz_question_results_session
-                    ON quiz_question_results (session_id);
-
+                    ON quiz_question_results (session_id)
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS labels (
                     id          SERIAL PRIMARY KEY,
                     user_id     UUID NOT NULL,
                     name        TEXT NOT NULL,
                     created_at  TIMESTAMP DEFAULT NOW()
-                );
-
-                ALTER TABLE labels ADD COLUMN IF NOT EXISTS user_id UUID;
-                ALTER TABLE labels DROP CONSTRAINT IF EXISTS labels_name_key;
-                DELETE FROM labels WHERE user_id IS NULL;
+                )
+                """,
+                "ALTER TABLE labels ADD COLUMN IF NOT EXISTS user_id UUID",
+                "ALTER TABLE labels DROP CONSTRAINT IF EXISTS labels_name_key",
+                "DELETE FROM labels WHERE user_id IS NULL",
+                """
                 CREATE UNIQUE INDEX IF NOT EXISTS ux_labels_user_name
-                    ON labels (user_id, name);
-
+                    ON labels (user_id, name)
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS roleplay_sessions (
                     id          SERIAL PRIMARY KEY,
                     user_id     UUID NOT NULL,
@@ -144,27 +161,30 @@ async def init_db() -> None:
                     expressions JSONB DEFAULT '[]'::jsonb,
                     vocab       JSONB DEFAULT '[]'::jsonb,
                     created_at  TIMESTAMP DEFAULT NOW()
-                );
-                CREATE INDEX IF NOT EXISTS ix_roleplay_sessions_user_created
-                    ON roleplay_sessions (user_id, created_at DESC);
+                )
+                """,
                 """
+                CREATE INDEX IF NOT EXISTS ix_roleplay_sessions_user_created
+                    ON roleplay_sessions (user_id, created_at DESC)
+                """,
+            ),
         )
         await conn.exec_driver_sql(
-                """
-                WITH ranked AS (
-                    SELECT id,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY user_id
-                               ORDER BY created_at DESC, id DESC
-                           ) - 1 AS rn
-                    FROM words
-                    WHERE sort_order IS NULL
-                )
-                UPDATE words w
-                SET sort_order = r.rn
-                FROM ranked r
-                WHERE w.id = r.id;
-                """
+            """
+            WITH ranked AS (
+                SELECT id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY user_id
+                           ORDER BY created_at DESC, id DESC
+                       ) - 1 AS rn
+                FROM words
+                WHERE sort_order IS NULL
+            )
+            UPDATE words w
+            SET sort_order = r.rn
+            FROM ranked r
+            WHERE w.id = r.id
+            """
         )
 
 
