@@ -15,7 +15,6 @@ from backend.auth.email import (
     send_password_reset_code_email,
 )
 from backend.config import settings
-from backend.db.session import SessionFactory
 
 password_helper = PasswordHelper(PasswordHash.recommended())
 
@@ -107,32 +106,34 @@ def validate_reset_password(password: str) -> str:
     return password
 
 
-async def request_password_reset(email: str) -> str | None:
+async def request_password_reset(session: AsyncSession, email: str) -> str | None:
     if not is_reset_delivery_available():
         raise PasswordResetUnavailable()
 
     email = validate_reset_email(email)
-    async with SessionFactory() as session:
-        code = await create_reset_code(session, email)
-        if not code:
-            return None
+    code = await create_reset_code(session, email)
+    if not code:
+        return None
 
     return await deliver_reset_code(email, code)
 
 
-async def verify_password_reset(email: str, code: str) -> None:
+async def verify_password_reset(session: AsyncSession, email: str, code: str) -> None:
     email = validate_reset_email(email)
     code = validate_reset_code(code)
-    async with SessionFactory() as session:
-        await get_valid_reset_code(session, email, code)
+    await get_valid_reset_code(session, email, code)
 
 
-async def confirm_password_reset(email: str, code: str, password: str) -> None:
+async def confirm_password_reset(
+    session: AsyncSession,
+    email: str,
+    code: str,
+    password: str,
+) -> None:
     email = validate_reset_email(email)
     code = validate_reset_code(code)
     password = validate_reset_password(password)
-    async with SessionFactory() as session:
-        await update_password_with_code(session, email, code, password)
+    await update_password_with_code(session, email, code, password)
 
 
 async def create_reset_code(session: AsyncSession, email: str) -> str | None:

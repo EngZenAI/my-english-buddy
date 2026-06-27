@@ -1,11 +1,14 @@
 import json
 from datetime import datetime, timedelta
 from typing import Any
+from uuid import UUID
 
-from sqlalchemy import bindparam, text
+from sqlalchemy import delete, func, insert, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.db.models import Label, QuizHistory, Word
 from backend.db.session import engine
 
 DEFAULT_LABELS = ["미지정", "여행", "비즈니스", "일상", "IT·코딩", "학업"]
@@ -14,6 +17,10 @@ MAX_LABELS = 20
 
 def _rows(result) -> list[dict[str, Any]]:
     return [dict(row) for row in result.mappings().all()]
+
+
+def _uuid(value: str) -> UUID:
+    return value if isinstance(value, UUID) else UUID(str(value))
 
 
 async def _exec_driver_statements(conn, statements: tuple[str, ...]) -> None:
@@ -192,10 +199,12 @@ async def is_word_saved(session: AsyncSession, user_id: str, word: str) -> bool:
     if not word or not word.strip():
         return False
     result = await session.execute(
-        text("SELECT id FROM words WHERE user_id = :user_id AND lower(word) = lower(:word)"),
-        {"user_id": user_id, "word": word.strip()},
+        select(Word.id).where(
+            Word.user_id == _uuid(user_id),
+            func.lower(Word.word) == word.strip().lower(),
+        )
     )
-    return result.first() is not None
+    return result.scalar_one_or_none() is not None
 
 
 async def save_word(
@@ -208,57 +217,46 @@ async def save_word(
     example,
     tag,
 ):
+    user_uuid = _uuid(user_id)
     result = await session.execute(
-        text("SELECT id FROM words WHERE user_id = :user_id AND lower(word) = lower(:word)"),
-        {"user_id": user_id, "word": word},
+        select(Word.id).where(
+            Word.user_id == user_uuid,
+            func.lower(Word.word) == word.lower(),
+        )
     )
-    row = result.first()
-    if row:
+    word_id = result.scalar_one_or_none()
+    if word_id:
         await session.execute(
-            text(
-                """UPDATE words
-                   SET korean = :korean,
-                       english_def = :english_def,
-                       example = :example,
-                       tag = :tag,
-                       korean_detail = :korean_detail
-                   WHERE id = :id AND user_id = :user_id"""
-            ),
-            {
-                "korean": korean,
-                "english_def": english_def,
-                "example": example,
-                "tag": tag,
-                "korean_detail": korean_detail,
-                "id": row[0],
-                "user_id": user_id,
-            },
+            update(Word)
+            .where(Word.id == word_id, Word.user_id == user_uuid)
+            .values(
+                korean=korean,
+                english_def=english_def,
+                example=example,
+                tag=tag,
+                korean_detail=korean_detail,
+            )
         )
         await session.commit()
         return "✏️ 단어 정보를 업데이트했어요!"
     result = await session.execute(
-        text("SELECT COALESCE(MIN(sort_order), 0) - 1 FROM words WHERE user_id = :user_id"),
-        {"user_id": user_id},
+        select(func.coalesce(func.min(Word.sort_order), 0) - 1).where(
+            Word.user_id == user_uuid
+        )
     )
     next_order = result.scalar_one()
     await session.execute(
-        text(
-            """INSERT INTO words
-                (user_id, word, korean, korean_detail, english_def, example, tag, sort_order, next_review)
-               VALUES
-                (:user_id, :word, :korean, :korean_detail, :english_def, :example, :tag, :sort_order,
-                 NOW() + INTERVAL '7 days')"""
-        ),
-        {
-            "user_id": user_id,
-            "word": word,
-            "korean": korean,
-            "korean_detail": korean_detail,
-            "english_def": english_def,
-            "example": example,
-            "tag": tag,
-            "sort_order": next_order,
-        },
+        insert(Word).values(
+            user_id=user_uuid,
+            word=word,
+            korean=korean,
+            korean_detail=korean_detail,
+            english_def=english_def,
+            example=example,
+            tag=tag,
+            sort_order=next_order,
+            next_review=datetime.now() + timedelta(days=7),
+        )
     )
     await session.commit()
     return "✅ 단어장에 저장됐어요!"
@@ -266,10 +264,9 @@ async def save_word(
 
 async def existing_words_lower(session: AsyncSession, user_id: str) -> set:
     result = await session.execute(
-        text("SELECT lower(word) FROM words WHERE user_id = :user_id"),
-        {"user_id": user_id},
+        select(func.lower(Word.word)).where(Word.user_id == _uuid(user_id))
     )
-    return {row[0] for row in result.fetchall()}
+    return set(result.scalars().all())
 
 
 async def bulk_import_words(
@@ -289,11 +286,11 @@ async def insert_words(
     overwrite: bool = False,
 ) -> dict:
     added = updated = skipped = 0
+    user_uuid = _uuid(user_id)
     result = await session.execute(
-        text("SELECT lower(word) FROM words WHERE user_id = :user_id"),
-        {"user_id": user_id},
+        select(func.lower(Word.word)).where(Word.user_id == user_uuid)
     )
-    existing = {row[0] for row in result.fetchall()}
+    existing = set(result.scalars().all())
 
     to_insert = []
     to_update = []
@@ -318,15 +315,16 @@ async def insert_words(
 
     if to_insert:
         result = await session.execute(
-            text("SELECT COALESCE(MIN(sort_order), 0) FROM words WHERE user_id = :user_id"),
-            {"user_id": user_id},
+            select(func.coalesce(func.min(Word.sort_order), 0)).where(
+                Word.user_id == user_uuid
+            )
         )
         base = result.scalar_one()
         params = []
         for index, item in enumerate(to_insert):
             params.append(
                 {
-                    "user_id": user_id,
+                    "user_id": user_uuid,
                     "word": item["word"].lower(),
                     "korean": (item.get("korean") or "").strip(),
                     "korean_detail": item.get("korean_detail") or "",
@@ -334,40 +332,34 @@ async def insert_words(
                     "example": item.get("example") or "",
                     "tag": item.get("tag") or "미지정",
                     "sort_order": base - len(to_insert) + index,
+                    "next_review": datetime.now() + timedelta(days=7),
                 }
             )
         await session.execute(
-            text(
-                """INSERT INTO words
-                    (user_id, word, korean, korean_detail, english_def, example, tag, sort_order, next_review)
-                   VALUES
-                    (:user_id, :word, :korean, :korean_detail, :english_def, :example, :tag, :sort_order,
-                     NOW() + INTERVAL '7 days')"""
-            ),
+            insert(Word),
             params,
         )
         added = len(params)
 
     for item in to_update:
         result = await session.execute(
-            text(
-                """UPDATE words
-                   SET korean = CASE WHEN :korean <> '' THEN :korean ELSE korean END,
-                       korean_detail = CASE WHEN :korean_detail <> '' THEN :korean_detail ELSE korean_detail END,
-                       example = CASE WHEN :example <> '' THEN :example ELSE example END,
-                       tag = CASE WHEN :tag <> '' THEN :tag ELSE tag END
-                   WHERE user_id = :user_id AND lower(word) = :word"""
+            select(Word).where(
+                Word.user_id == user_uuid,
+                func.lower(Word.word) == item["word"].lower(),
             ),
-            {
-                "korean": (item.get("korean") or "").strip(),
-                "korean_detail": item.get("korean_detail") or "",
-                "example": item.get("example") or "",
-                "tag": item.get("tag") or "",
-                "user_id": user_id,
-                "word": item["word"].lower(),
-            },
         )
-        updated += result.rowcount or 0
+        word_row = result.scalar_one_or_none()
+        if not word_row:
+            continue
+        if korean := (item.get("korean") or "").strip():
+            word_row.korean = korean
+        if korean_detail := (item.get("korean_detail") or ""):
+            word_row.korean_detail = korean_detail
+        if example := (item.get("example") or ""):
+            word_row.example = example
+        if tag := (item.get("tag") or ""):
+            word_row.tag = tag
+        updated += 1
     await session.commit()
     return {"added": added, "updated": updated, "skipped": skipped, "total": added + updated + skipped}
 
@@ -377,16 +369,22 @@ async def get_all_words(
     user_id: str,
     tag: str | None = None,
 ):
-    query = """SELECT id, word, korean, korean_detail, english_def, example,
-                      tag, created_at, next_review, sort_order
-               FROM words
-               WHERE user_id = :user_id"""
-    params = {"user_id": user_id}
+    stmt = select(
+        Word.id,
+        Word.word,
+        Word.korean,
+        Word.korean_detail,
+        Word.english_def,
+        Word.example,
+        Word.tag,
+        Word.created_at,
+        Word.next_review,
+        Word.sort_order,
+    ).where(Word.user_id == _uuid(user_id))
     if tag:
-        query += " AND tag = :tag"
-        params["tag"] = tag
-    query += " ORDER BY sort_order ASC NULLS LAST, created_at DESC"
-    result = await session.execute(text(query), params)
+        stmt = stmt.where(Word.tag == tag)
+    stmt = stmt.order_by(Word.sort_order.asc().nulls_last(), Word.created_at.desc())
+    result = await session.execute(stmt)
     return _rows(result)
 
 
@@ -826,8 +824,7 @@ async def update_word(
 
 async def delete_word(session: AsyncSession, user_id: str, word_id: int) -> bool:
     result = await session.execute(
-        text("DELETE FROM words WHERE id = :word_id AND user_id = :user_id"),
-        {"word_id": word_id, "user_id": user_id},
+        delete(Word).where(Word.id == word_id, Word.user_id == _uuid(user_id))
     )
     await session.commit()
     return bool(result.rowcount)
@@ -935,10 +932,9 @@ async def bulk_delete_words(session: AsyncSession, user_id: str, ids) -> int:
             continue
     if not clean:
         return 0
-    stmt = text("DELETE FROM words WHERE user_id = :user_id AND id IN :ids").bindparams(
-        bindparam("ids", expanding=True)
+    result = await session.execute(
+        delete(Word).where(Word.user_id == _uuid(user_id), Word.id.in_(clean))
     )
-    result = await session.execute(stmt, {"user_id": user_id, "ids": clean})
     await session.commit()
     return result.rowcount or 0
 
@@ -951,12 +947,9 @@ async def reorder_words(session: AsyncSession, user_id: str, ordered_ids) -> int
         except (TypeError, ValueError):
             continue
         result = await session.execute(
-            text(
-                """UPDATE words
-                   SET sort_order = :sort_order
-                   WHERE id = :word_id AND user_id = :user_id"""
-            ),
-            {"sort_order": index, "word_id": word_id, "user_id": user_id},
+            update(Word)
+            .where(Word.id == word_id, Word.user_id == _uuid(user_id))
+            .values(sort_order=index)
         )
         updated += result.rowcount or 0
     await session.commit()
@@ -965,49 +958,52 @@ async def reorder_words(session: AsyncSession, user_id: str, ordered_ids) -> int
 
 async def get_words_to_review(session: AsyncSession, user_id: str):
     result = await session.execute(
-        text(
-            """SELECT *
-               FROM words
-               WHERE user_id = :user_id AND next_review <= NOW()
-               ORDER BY next_review ASC"""
-        ),
-        {"user_id": user_id},
+        select(Word).where(
+            Word.user_id == _uuid(user_id),
+            Word.next_review <= datetime.now(),
+        ).order_by(Word.next_review.asc())
     )
-    return _rows(result)
+    return [
+        {
+            "id": word.id,
+            "user_id": word.user_id,
+            "word": word.word,
+            "korean": word.korean,
+            "korean_detail": word.korean_detail,
+            "english_def": word.english_def,
+            "example": word.example,
+            "tag": word.tag,
+            "created_at": word.created_at,
+            "next_review": word.next_review,
+            "sort_order": word.sort_order,
+        }
+        for word in result.scalars().all()
+    ]
 
 
 async def update_review(session: AsyncSession, user_id: str, word_id: int, correct: bool):
     days = 30 if correct else 1
     next_review = datetime.now() + timedelta(days=days)
     result = await session.execute(
-        text(
-            """UPDATE words
-               SET next_review = :next_review
-               WHERE id = :word_id AND user_id = :user_id"""
-        ),
-        {"next_review": next_review, "word_id": word_id, "user_id": user_id},
+        update(Word)
+        .where(Word.id == word_id, Word.user_id == _uuid(user_id))
+        .values(next_review=next_review)
     )
     if not result.rowcount:
         return
-    await session.execute(
-        text(
-            """INSERT INTO quiz_history (user_id, word_id, result)
-               VALUES (:user_id, :word_id, :result)"""
-        ),
-        {"user_id": user_id, "word_id": word_id, "result": correct},
+    session.add(
+        QuizHistory(user_id=_uuid(user_id), word_id=word_id, result=correct)
     )
     await session.commit()
 
 
 async def _seed_default_labels(session: AsyncSession, user_id: str) -> None:
+    user_uuid = _uuid(user_id)
     for name in DEFAULT_LABELS:
         await session.execute(
-            text(
-                """INSERT INTO labels (user_id, name)
-                   VALUES (:user_id, :name)
-                   ON CONFLICT (user_id, name) DO NOTHING"""
-            ),
-            {"user_id": user_id, "name": name},
+            pg_insert(Label)
+            .values(user_id=user_uuid, name=name)
+            .on_conflict_do_nothing(index_elements=[Label.user_id, Label.name])
         )
     await session.commit()
 
@@ -1015,15 +1011,14 @@ async def _seed_default_labels(session: AsyncSession, user_id: str) -> None:
 async def get_labels(session: AsyncSession, user_id: str) -> list[str]:
     async def _fetch() -> list[str]:
         result = await session.execute(
-            text(
-                """SELECT name
-                   FROM labels
-                   WHERE user_id = :user_id
-                   ORDER BY (name = '미지정') DESC, id ASC"""
+            select(Label.name)
+            .where(Label.user_id == _uuid(user_id))
+            .order_by(
+                (Label.name == "미지정").desc(),
+                Label.id.asc(),
             ),
-            {"user_id": user_id},
         )
-        return [row[0] for row in result.fetchall()]
+        return list(result.scalars().all())
 
     labels = await _fetch()
     if not labels:
@@ -1042,12 +1037,9 @@ async def add_label(session: AsyncSession, user_id: str, name: str) -> tuple[lis
     if len(existing) >= MAX_LABELS:
         return existing, False
     await session.execute(
-        text(
-            """INSERT INTO labels (user_id, name)
-               VALUES (:user_id, :name)
-               ON CONFLICT (user_id, name) DO NOTHING"""
-        ),
-        {"user_id": user_id, "name": name},
+        pg_insert(Label)
+        .values(user_id=_uuid(user_id), name=name)
+        .on_conflict_do_nothing(index_elements=[Label.user_id, Label.name])
     )
     await session.commit()
     return await get_labels(session, user_id), True
@@ -1055,8 +1047,10 @@ async def add_label(session: AsyncSession, user_id: str, name: str) -> tuple[lis
 
 async def count_words_by_tag(session: AsyncSession, user_id: str, tag: str) -> int:
     result = await session.execute(
-        text("SELECT COUNT(*) FROM words WHERE user_id = :user_id AND tag = :tag"),
-        {"user_id": user_id, "tag": tag},
+        select(func.count()).select_from(Word).where(
+            Word.user_id == _uuid(user_id),
+            Word.tag == tag,
+        )
     )
     return int(result.scalar_one())
 
@@ -1081,12 +1075,14 @@ async def rename_label(
     if new in existing:
         return existing, False, "이미 있는 태그 이름입니다."
     await session.execute(
-        text("UPDATE labels SET name = :new WHERE user_id = :user_id AND name = :old"),
-        {"new": new, "user_id": user_id, "old": old},
+        update(Label)
+        .where(Label.user_id == _uuid(user_id), Label.name == old)
+        .values(name=new)
     )
     await session.execute(
-        text("UPDATE words SET tag = :new WHERE user_id = :user_id AND tag = :old"),
-        {"new": new, "user_id": user_id, "old": old},
+        update(Word)
+        .where(Word.user_id == _uuid(user_id), Word.tag == old)
+        .values(tag=new)
     )
     await session.commit()
     return await get_labels(session, user_id), True, "변경되었습니다."
@@ -1107,12 +1103,10 @@ async def delete_label(
         return existing, False, "최소 1개의 태그는 있어야 합니다.", 0
     deleted = await count_words_by_tag(session, user_id, name)
     await session.execute(
-        text("DELETE FROM words WHERE user_id = :user_id AND tag = :name"),
-        {"user_id": user_id, "name": name},
+        delete(Word).where(Word.user_id == _uuid(user_id), Word.tag == name)
     )
     await session.execute(
-        text("DELETE FROM labels WHERE user_id = :user_id AND name = :name"),
-        {"user_id": user_id, "name": name},
+        delete(Label).where(Label.user_id == _uuid(user_id), Label.name == name)
     )
     await session.commit()
     return await get_labels(session, user_id), True, "삭제되었습니다.", deleted

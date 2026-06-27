@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from backend.config import settings
 from backend.db.logging import log_sql
 
-
 engine = create_async_engine(
     settings.async_database_url,
     pool_pre_ping=True,

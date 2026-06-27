@@ -1,7 +1,8 @@
 import logging
 from typing import Any
 
-logger = logging.getLogger("backend.db.sql")
+SQL_LOGGER_NAME = "backend.db.sql"
+logger = logging.getLogger(SQL_LOGGER_NAME)
 
 
 def _compact_sql(query: Any) -> str:
@@ -31,9 +32,9 @@ def log_sql(query: Any, params: Any = None, *, many: bool = False) -> None:
     logger.info(message)
 
 
-def enable_sql_logging(*, include_params: bool = False) -> None:
-    """Enable SQL logging for local debugging without adding app settings."""
-    logger.setLevel(logging.DEBUG if include_params else logging.INFO)
+def enable_sql_logging(*, verbose: bool = False) -> None:
+    """Enable compact SQL statement logging locally without adding app settings."""
+    logger.setLevel(logging.DEBUG if verbose else logging.INFO)
     if not logger.handlers:
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
