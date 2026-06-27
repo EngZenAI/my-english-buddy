@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from backend.auth.users import get_current_user_from_cookie
 from backend.dictionary import translate_korean
-from backend.database import (
+from backend.db.legacy import (
     add_label,
     bulk_delete_words,
     bulk_import_words,

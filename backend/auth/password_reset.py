@@ -15,7 +15,7 @@ from backend.auth.email import (
     send_password_reset_code_email,
 )
 from backend.config import settings
-from backend.database import SessionFactory
+from backend.db.session import SessionFactory
 
 password_helper = PasswordHelper(PasswordHash.recommended())
 

@@ -8,7 +8,7 @@ from fastapi_users_db_sqlalchemy.generics import GUID
 from sqlalchemy import DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from backend.database import Base
+from backend.db.base import Base
 
 
 class OAuthAccount(SQLAlchemyBaseOAuthAccountTableUUID, Base):

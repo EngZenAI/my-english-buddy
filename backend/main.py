@@ -6,7 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.database import create_db_schema, init_db
+from backend.db.legacy import init_db
+from backend.db.schema import create_db_schema
 from backend.routers.api import router as api_router
 from backend.routers.auth import router as auth_router
 

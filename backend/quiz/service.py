@@ -13,7 +13,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from backend.config import settings
-from backend.database import (
+from backend.db.legacy import (
     apply_quiz_review_schedule,
     complete_quiz_session,
     create_quiz_session,

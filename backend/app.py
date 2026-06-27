@@ -6,7 +6,7 @@ import time
 import re
 from gtts import gTTS
 from backend.dictionary import search_word, translate_korean, translate_english
-from backend.database   import (init_db, save_word, get_all_words,
+from backend.db.legacy  import (init_db, save_word, get_all_words,
                                  get_words_to_review, update_review,
                                  is_word_saved)
 from backend.llm        import (generate_quiz, grade_quiz,

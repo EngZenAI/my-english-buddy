@@ -16,7 +16,7 @@ from backend.auth.dependencies import AccessTokenDatabaseDep, UserDatabaseDep
 from backend.auth.models import AccessToken, User
 from backend.auth.transports import OAuthCookieTransport
 from backend.config import settings
-from backend.database import SessionFactory
+from backend.db.session import SessionFactory
 
 logger = logging.getLogger(__name__)
 password_helper = PasswordHelper(PasswordHash.recommended())

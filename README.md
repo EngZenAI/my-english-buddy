@@ -173,8 +173,9 @@ english-learning-app/
 │   ├── routers/
 │   │   ├── api.py     # React용 REST 엔드포인트
 │   │   └── auth.py    # 인증 (FastAPI-Users)
+│   ├── db/            # SQLAlchemy 세션/모델 + legacy raw SQL
+│   ├── database.py    # DB 호환 re-export
 │   ├── dictionary.py  # 사전 + 번역 API
-│   ├── database.py    # DB 연결
 │   └── llm.py         # LLM 퀴즈/롤플레잉
 └── frontend/          # React + Vite + Tailwind
     ├── src/
