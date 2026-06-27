@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, func, insert, select, text, update
+from sqlalchemy import Integer, bindparam, delete, func, insert, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -753,9 +753,9 @@ async def apply_quiz_review_schedule(
         result = await session.execute(
             text(
                 """UPDATE words
-                   SET next_review = NOW() + (CAST(:days AS text) || ' days')::interval
+                   SET next_review = NOW() + (:days * INTERVAL '1 day')
                    WHERE id = :word_id AND user_id = :user_id"""
-            ),
+            ).bindparams(bindparam("days", type_=Integer)),
             {"days": item["interval_days"], "word_id": item["word_id"], "user_id": user_id},
         )
         if result.rowcount:
