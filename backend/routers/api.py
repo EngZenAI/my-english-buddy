@@ -405,6 +405,7 @@ def _parse_upload(file: UploadFile, content: bytes) -> list[tuple[str, str]]:
 
 @router.post("/words/import/preview")
 async def import_preview(
+    *,
     file: UploadFile = File(...),
     session: SessionDep,
     _user: CurrentUserDep,
