@@ -30,10 +30,9 @@ LLM 기반 나만의 영어 학습 앱
 
 ### 1. 환경 세팅
 ```bash
-conda create -n english-app python=3.11
-conda activate english-app
-pip install -r backend/requirements.txt
-# pip install --upgrade -r backend/requirements.txt
+uv venv
+uv pip install -r backend/requirements.txt
+# uv pip install --upgrade -r backend/requirements.txt
 ```
 
 ### 2. 환경변수 설정
@@ -95,7 +94,7 @@ npm install
 
 ```bash
 # 터미널 1 — 백엔드 (항상 켜둘 것)
-uvicorn backend.main:app --reload          # localhost:8000  (API·인증·DB)
+uv run uvicorn backend.main:app --reload   # localhost:8000  (API·인증·DB)
 
 # 터미널 2 — 프론트 dev 서버
 cd frontend && npm run dev                 # localhost:5173  ← 여기로 접속
@@ -113,7 +112,7 @@ cd frontend && npm run dev                 # localhost:5173  ← 여기로 접�
 
 ```bash
 cd frontend && npm run build               # frontend/dist 생성 (반드시 서버 시작 '전'에)
-cd .. && uvicorn backend.main:app --reload # http://localhost:8000 접속
+cd .. && uv run uvicorn backend.main:app --reload # http://localhost:8000 접속
 ```
 
 > `main.py`는 **시작 시점**에 `frontend/dist` 유무를 검사해 있을 때만 SPA를 서빙합니다.
@@ -132,7 +131,7 @@ cd .. && uvicorn backend.main:app --reload # http://localhost:8000 접속
 ## 자주 겪는 문제 (Troubleshooting)
 
 **1) `npm run dev` 중 `http proxy error: /api/me ECONNREFUSED`**
-백엔드(8000)가 안 켜져 있어서 그렇습니다. 다른 터미널에서 `uvicorn backend.main:app --reload`를 함께 실행하세요. (방식 B 참고)
+백엔드(8000)가 안 켜져 있어서 그렇습니다. 다른 터미널에서 `uv run uvicorn backend.main:app --reload`를 함께 실행하세요. (방식 B 참고)
 
 **2) `npm run build` 시 `Cannot find module @rollup/rollup-win32-x64-msvc`**
 npm의 알려진 optional 의존성 버그입니다. `frontend` 폴더에서 `node_modules`와 `package-lock.json`을 **둘 다 지우고** 다시 설치하세요.
@@ -184,6 +183,8 @@ english-learning-app/
     │   └── pages/         # Login / Signup
     └── dist/          # 빌드 산출물 (백엔드가 서빙)
 ```
+
+백엔드는 시작 시 compact SQL 로그를 콘솔에 출력합니다. 파라미터는 기본적으로 출력하지 않습니다.
 
 ---
 

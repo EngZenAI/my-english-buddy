@@ -51,18 +51,19 @@ english-app/
 ## 실행 방법
 
 DB·LLM·OAuth 키는 `.env`에 있음(`.env.example` 참고). 백엔드는 Postgres가 필요.
+Python 의존성은 uv로 관리한다(`uv venv`, `uv pip install -r backend/requirements.txt`, `uv run ...`).
 
 **방식 A — 한 서버 (평소):**
 ```
 cd frontend && npm install && npm run build   # frontend/dist 생성
-cd .. && uvicorn backend.main:app --reload     # http://localhost:8000
+cd .. && uv run uvicorn backend.main:app --reload # http://localhost:8000
 ```
 - `/` → React 앱, `/api/*` → REST, `/auth/*` → 인증.
 - `frontend/dist`가 없으면 `/`는 503 "빌드하세요" 안내.
 
 **방식 B — 프론트 개발(핫리로드, 권장):** 터미널 2개
 ```
-uvicorn backend.main:app --reload      # 8000 (반드시 함께 켜야 데이터 동작)
+uv run uvicorn backend.main:app --reload # 8000 (반드시 함께 켜야 데이터 동작)
 cd frontend && npm run dev              # 5173 (여기로 접속; /api·/auth는 8000으로 프록시)
 ```
 - **5173은 `npm run dev`가 떠 있을 때만 열림.** `npm run build`는 파일만 만들고 끝나서 5173엔 아무것도 안 뜸("연결 거부"). 5173 쓰려면 dev를 켤 것.
@@ -77,10 +78,13 @@ cd frontend && npm run dev              # 5173 (여기로 접속; /api·/auth는
 ## 핵심 설계 결정 (꼭 기억)
 
 - **사용자별 데이터 분리**: `words`, `labels` 모두 `user_id`(UUID) 스코프.
-  - 단어 함수 시그니처: `save_word(user_id, ...)`, `get_all_words(user_id, tag=None)`,
-    `get_words_to_review(user_id)`, `is_word_saved(user_id, word)`, `update_review(user_id, ...)`.
-  - 태그 함수: `get_labels(user_id)`, `add_label(user_id, name)`, `rename_label(user_id, old, new)`,
-    `delete_label(user_id, name)`, `count_words_by_tag(user_id, tag)`.
+  - repository 함수는 첫 인자로 `AsyncSession`을 받는다.
+  - 단어 함수 시그니처: `save_word(session, user_id, ...)`, `get_all_words(session, user_id, tag=None)`,
+    `get_words_to_review(session, user_id)`, `is_word_saved(session, user_id, word)`,
+    `update_review(session, user_id, ...)`.
+  - 태그 함수: `get_labels(session, user_id)`, `add_label(session, user_id, name)`,
+    `rename_label(session, user_id, old, new)`, `delete_label(session, user_id, name)`,
+    `count_words_by_tag(session, user_id, tag)`.
   - `words` 유니크: `(user_id, lower(word))`. `labels` 유니크: `(user_id, name)`.
   - api.py에서 `_user = Depends(require_user)` → `_user["id"]`로 user_id를 넘김.
 - **태그(=카테고리, UI 명칭 "태그")**:
@@ -111,8 +115,9 @@ cd frontend && npm run dev              # 5173 (여기로 접속; /api·/auth는
   - **CSV/XLSX 가져오기 = 미리보기 모달 2단계**: `import/preview`(파싱만, 저장X, 중복표시) →
     모달에서 행 편집/삭제·일괄태그 → `import/commit`(편집된 행 저장). 구글 번역 내보내기는
     **4열**(소스언어/타깃언어/소스/타깃)이라 언어 라벨 보고 영어쪽을 단어로 잡음. 인코딩 utf-8-sig→cp949 순 시도.
-  - **성능(원격 DB 왕복 최소화)**: `reorder_words`·`bulk_update_words`는 `unnest`로 **1회 UPDATE**,
-    `insert_words`는 기존단어 1회 조회 후 **`INSERT…SELECT unnest` 1회**. (단어당 1쿼리 금지 — 느림.)
+  - **성능(원격 DB 왕복 최소화)**: `insert_words`는 기존 단어를 1회 조회한 뒤 SQLAlchemy executemany
+    insert로 묶어 저장한다. `bulk_update_words`/`reorder_words`는 현재 행 단위 업데이트라 대량 데이터에서
+    병목이 생기면 별도 최적화 대상.
 - **단어 필드**: `korean`(단순 번역, 암기용)과 `korean_detail`(품사별 상세, 확인용) 둘 다 저장.
   예문은 사전 예문을 기본값으로 채우되 사용자가 편집한 값(`customExample`)을 저장.
   `phonetic` 컬럼은 DB에서 제거됨(검색 화면 발음 버튼은 검색 응답값으로 동작, DB와 무관).
@@ -121,6 +126,8 @@ cd frontend && npm run dev              # 5173 (여기로 접속; /api·/auth는
   결과 표시를 막지 않도록 별도(`/api/words/saved`)로 뒤따라 갱신.
 - **DB 접근**: SQLAlchemy 2 async 엔진/세션 사용. FastAPI 라우터는 `SessionDep`
   (`Annotated[AsyncSession, Depends(...)]`)로 요청 단위 세션을 주입받고 repository에 전달한다.
+- **SQL 로그**: `backend.main`에서 `enable_sql_logging()`을 호출해 compact SQL 로그를 출력한다.
+  기본은 파라미터 미출력. 별도 env는 추가하지 않는다.
 
 ---
 
@@ -130,7 +137,7 @@ cd frontend && npm run dev              # 5173 (여기로 접속; /api·/auth는
 - **프론트 코드 바꾸면 `npm run build` 다시 해야** 8000에서 반영(또는 dev 서버는 자동).
 - **api.py ↔ db/repositories.py 시그니처 동기화 주의.** repository 함수는 `AsyncSession`과
   `user_id`를 받는다. 라우터는 `SessionDep`로 세션을 받고 `_user["id"]`와 함께 넘긴다.
-- **DB 마이그레이션은 init_db 안에서 `ALTER TABLE ... IF EXISTS / 가드 DO 블록`으로 처리.**
+- **DB 마이그레이션은 Alembic 없이 init_db 안에서 `ALTER TABLE ... IF EXISTS / 가드 DO 블록`으로 처리.**
   과거 변경 이력: context→tag 컬럼명 변경, phonetic 제거, korean_detail 추가, words/labels에
   user_id 추가 및 유니크 인덱스 전환, next_review 기본값 7일, **`sort_order` INTEGER 추가 + 기존행
   created_at 기준 백필**(드래그 정렬용). 새 컬럼은 같은 패턴으로 추가.
@@ -141,7 +148,7 @@ cd frontend && npm run dev              # 5173 (여기로 접속; /api·/auth는
 - **read-after-write 지연(Railway 풀/프록시)**: DB에 쓴 직후 즉시 다시 읽으면 잠깐 옛 값이 올 수 있음
   (시간 지나면 정상). 그래서 쓰기 직후 불필요한 강제 재조회를 피하고 낙관적 캐시를 신뢰하는 패턴 사용.
 - **Railway DB 초기화**: 단어/태그만 비우려면 `TRUNCATE words, quiz_history, labels RESTART IDENTITY;`.
-  `user`/`accesstoken`/`oauth_account`(계정)는 건드리지 말 것.
+  `users`/`access_tokens`/`oauth_accounts`(계정)는 건드리지 말 것.
 - **에디터 저장이 가끔 파일 끝을 잘라먹는 환경 이슈가 있었음** → 큰 파일을 쓴 뒤에는 끝부분(닫는 `}`)이
   온전한지 한 번 확인하고 빌드. (없으면 빌드가 "Unexpected end of file"로 실패.)
 - **`npm run build`에서 `@rollup/rollup-win32-x64-msvc` 에러 나면** node_modules와 package-lock.json을
