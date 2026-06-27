@@ -25,7 +25,6 @@ english-app/
 │   ├── services.py          # UI 비의존 순수 로직 (검색 조합, 포맷, gTTS) — 병렬 호출
 │   ├── dictionary.py        # 외부 API: 사전(dictionaryapi.dev) + 번역(Google) + LRU 캐시
 │   ├── db/                  # SQLAlchemy 2 async 세션/모델/Repository + 스키마 초기화
-│   ├── database.py          # DB 호환 re-export
 │   ├── llm.py               # LangChain/LangGraph: 퀴즈 생성·채점, 롤플레잉, 슬랭 설명
 │   └── auth/                # FastAPI-Users 모델/매니저/의존성 (User, AccessToken, OAuthAccount)
 └── frontend/                # React + Vite + Tailwind (구버전 Gradio는 제거됨)
