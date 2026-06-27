@@ -1,0 +1,1131 @@
+import json
+from datetime import datetime, timedelta
+from typing import Any
+
+from sqlalchemy import bindparam, text
+from sqlalchemy.exc import IntegrityError
+
+from backend.db.session import SessionFactory, engine
+
+DEFAULT_LABELS = ["미지정", "여행", "비즈니스", "일상", "IT·코딩", "학업"]
+MAX_LABELS = 20
+
+
+def _rows(result) -> list[dict[str, Any]]:
+    return [dict(row) for row in result.mappings().all()]
+
+
+async def init_db() -> None:
+    async with engine.begin() as conn:
+        await conn.exec_driver_sql(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'words' AND column_name = 'context'
+                    ) AND NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'words' AND column_name = 'tag'
+                    ) THEN
+                        EXECUTE 'ALTER TABLE words RENAME COLUMN context TO tag';
+                    END IF;
+                END $$;
+                """
+        )
+        await conn.exec_driver_sql(
+                """
+                CREATE TABLE IF NOT EXISTS words (
+                    id            SERIAL PRIMARY KEY,
+                    user_id       UUID NOT NULL,
+                    word          TEXT NOT NULL,
+                    korean        TEXT,
+                    korean_detail TEXT,
+                    english_def   TEXT,
+                    example       TEXT,
+                    tag           TEXT,
+                    created_at    TIMESTAMP DEFAULT NOW(),
+                    next_review   TIMESTAMP DEFAULT (NOW() + INTERVAL '7 days')
+                );
+
+                ALTER TABLE words ADD COLUMN IF NOT EXISTS user_id UUID;
+                ALTER TABLE words ADD COLUMN IF NOT EXISTS korean_detail TEXT;
+                ALTER TABLE words ADD COLUMN IF NOT EXISTS sort_order INTEGER;
+                ALTER TABLE words ALTER COLUMN next_review SET DEFAULT NOW() + INTERVAL '7 days';
+                ALTER TABLE words DROP COLUMN IF EXISTS phonetic;
+                ALTER TABLE words DROP CONSTRAINT IF EXISTS words_word_key;
+
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_words_user_word
+                    ON words (user_id, lower(word));
+
+                CREATE TABLE IF NOT EXISTS quiz_history (
+                    id          SERIAL PRIMARY KEY,
+                    user_id     UUID,
+                    word_id     INTEGER,
+                    result      BOOLEAN,
+                    reviewed_at TIMESTAMP DEFAULT NOW()
+                );
+                ALTER TABLE quiz_history ADD COLUMN IF NOT EXISTS user_id UUID;
+                ALTER TABLE quiz_history DROP CONSTRAINT IF EXISTS quiz_history_word_id_fkey;
+
+                CREATE TABLE IF NOT EXISTS quiz_sessions (
+                    id              SERIAL PRIMARY KEY,
+                    user_id         UUID NOT NULL,
+                    mode            TEXT NOT NULL,
+                    tag             TEXT,
+                    saved_from      DATE,
+                    saved_to        DATE,
+                    instruction     TEXT,
+                    question_count  INTEGER DEFAULT 10,
+                    total_questions INTEGER DEFAULT 0,
+                    score           NUMERIC DEFAULT 0,
+                    created_at      TIMESTAMP DEFAULT NOW(),
+                    completed_at    TIMESTAMP,
+                    review_applied_at TIMESTAMP
+                );
+                ALTER TABLE quiz_sessions ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP;
+                ALTER TABLE quiz_sessions ADD COLUMN IF NOT EXISTS review_applied_at TIMESTAMP;
+
+                CREATE TABLE IF NOT EXISTS quiz_question_results (
+                    id                    SERIAL PRIMARY KEY,
+                    session_id            INTEGER NOT NULL,
+                    user_id               UUID NOT NULL,
+                    word_id               INTEGER,
+                    source_word_id        INTEGER,
+                    source_word           TEXT,
+                    target_word           TEXT,
+                    question_type         TEXT,
+                    difficulty            TEXT,
+                    prompt                TEXT,
+                    user_answer           TEXT,
+                    correct_answer        TEXT,
+                    status                TEXT,
+                    correct               BOOLEAN,
+                    score                 NUMERIC DEFAULT 0,
+                    confidence            NUMERIC DEFAULT 1,
+                    feedback              TEXT,
+                    is_derived            BOOLEAN DEFAULT FALSE,
+                    derived_from_word_id  INTEGER,
+                    suggested_word        TEXT,
+                    suggested_korean      TEXT,
+                    suggested_english_def TEXT,
+                    suggested_example     TEXT,
+                    suggested_tag         TEXT,
+                    created_at            TIMESTAMP DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS ix_quiz_question_results_user_created
+                    ON quiz_question_results (user_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS ix_quiz_question_results_session
+                    ON quiz_question_results (session_id);
+
+                CREATE TABLE IF NOT EXISTS labels (
+                    id          SERIAL PRIMARY KEY,
+                    user_id     UUID NOT NULL,
+                    name        TEXT NOT NULL,
+                    created_at  TIMESTAMP DEFAULT NOW()
+                );
+
+                ALTER TABLE labels ADD COLUMN IF NOT EXISTS user_id UUID;
+                ALTER TABLE labels DROP CONSTRAINT IF EXISTS labels_name_key;
+                DELETE FROM labels WHERE user_id IS NULL;
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_labels_user_name
+                    ON labels (user_id, name);
+
+                CREATE TABLE IF NOT EXISTS roleplay_sessions (
+                    id          SERIAL PRIMARY KEY,
+                    user_id     UUID NOT NULL,
+                    level       TEXT,
+                    scenario    TEXT,
+                    tag         TEXT,
+                    title       TEXT,
+                    turns       INTEGER DEFAULT 0,
+                    summary     TEXT,
+                    expressions JSONB DEFAULT '[]'::jsonb,
+                    vocab       JSONB DEFAULT '[]'::jsonb,
+                    created_at  TIMESTAMP DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS ix_roleplay_sessions_user_created
+                    ON roleplay_sessions (user_id, created_at DESC);
+                """
+        )
+        await conn.exec_driver_sql(
+                """
+                WITH ranked AS (
+                    SELECT id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY user_id
+                               ORDER BY created_at DESC, id DESC
+                           ) - 1 AS rn
+                    FROM words
+                    WHERE sort_order IS NULL
+                )
+                UPDATE words w
+                SET sort_order = r.rn
+                FROM ranked r
+                WHERE w.id = r.id;
+                """
+        )
+
+
+async def is_word_saved(user_id: str, word: str) -> bool:
+    if not word or not word.strip():
+        return False
+    async with SessionFactory() as session:
+        result = await session.execute(
+            text("SELECT id FROM words WHERE user_id = :user_id AND lower(word) = lower(:word)"),
+            {"user_id": user_id, "word": word.strip()},
+        )
+        return result.first() is not None
+
+
+async def save_word(user_id, word, korean, korean_detail, english_def, example, tag):
+    async with SessionFactory() as session:
+        async with session.begin():
+            result = await session.execute(
+                text("SELECT id FROM words WHERE user_id = :user_id AND lower(word) = lower(:word)"),
+                {"user_id": user_id, "word": word},
+            )
+            row = result.first()
+            if row:
+                await session.execute(
+                    text(
+                        """UPDATE words
+                           SET korean = :korean,
+                               english_def = :english_def,
+                               example = :example,
+                               tag = :tag,
+                               korean_detail = :korean_detail
+                           WHERE id = :id AND user_id = :user_id"""
+                    ),
+                    {
+                        "korean": korean,
+                        "english_def": english_def,
+                        "example": example,
+                        "tag": tag,
+                        "korean_detail": korean_detail,
+                        "id": row[0],
+                        "user_id": user_id,
+                    },
+                )
+                return "✏️ 단어 정보를 업데이트했어요!"
+            result = await session.execute(
+                text("SELECT COALESCE(MIN(sort_order), 0) - 1 FROM words WHERE user_id = :user_id"),
+                {"user_id": user_id},
+            )
+            next_order = result.scalar_one()
+            await session.execute(
+                text(
+                    """INSERT INTO words
+                        (user_id, word, korean, korean_detail, english_def, example, tag, sort_order, next_review)
+                       VALUES
+                        (:user_id, :word, :korean, :korean_detail, :english_def, :example, :tag, :sort_order,
+                         NOW() + INTERVAL '7 days')"""
+                ),
+                {
+                    "user_id": user_id,
+                    "word": word,
+                    "korean": korean,
+                    "korean_detail": korean_detail,
+                    "english_def": english_def,
+                    "example": example,
+                    "tag": tag,
+                    "sort_order": next_order,
+                },
+            )
+    return "✅ 단어장에 저장됐어요!"
+
+
+async def existing_words_lower(user_id: str) -> set:
+    async with SessionFactory() as session:
+        result = await session.execute(
+            text("SELECT lower(word) FROM words WHERE user_id = :user_id"),
+            {"user_id": user_id},
+        )
+        return {row[0] for row in result.fetchall()}
+
+
+async def bulk_import_words(user_id: str, items, default_tag: str = "미지정") -> dict:
+    rows = [{"word": word, "korean": korean, "tag": default_tag} for word, korean in items]
+    return await insert_words(user_id, rows, overwrite=False)
+
+
+async def insert_words(user_id: str, items, overwrite: bool = False) -> dict:
+    added = updated = skipped = 0
+    async with SessionFactory() as session:
+        async with session.begin():
+            result = await session.execute(
+                text("SELECT lower(word) FROM words WHERE user_id = :user_id"),
+                {"user_id": user_id},
+            )
+            existing = {row[0] for row in result.fetchall()}
+
+            to_insert = []
+            to_update = []
+            seen: set[str] = set()
+            for it in items:
+                word = (it.get("word") or "").strip()
+                if not word:
+                    continue
+                lower_word = word.lower()
+                if lower_word in seen:
+                    skipped += 1
+                    continue
+                seen.add(lower_word)
+                payload = {**it, "word": word}
+                if lower_word in existing:
+                    if overwrite:
+                        to_update.append(payload)
+                    else:
+                        skipped += 1
+                    continue
+                to_insert.append(payload)
+
+            if to_insert:
+                result = await session.execute(
+                    text("SELECT COALESCE(MIN(sort_order), 0) FROM words WHERE user_id = :user_id"),
+                    {"user_id": user_id},
+                )
+                base = result.scalar_one()
+                params = []
+                for index, item in enumerate(to_insert):
+                    params.append(
+                        {
+                            "user_id": user_id,
+                            "word": item["word"].lower(),
+                            "korean": (item.get("korean") or "").strip(),
+                            "korean_detail": item.get("korean_detail") or "",
+                            "english_def": item.get("english_def") or "",
+                            "example": item.get("example") or "",
+                            "tag": item.get("tag") or "미지정",
+                            "sort_order": base - len(to_insert) + index,
+                        }
+                    )
+                await session.execute(
+                    text(
+                        """INSERT INTO words
+                            (user_id, word, korean, korean_detail, english_def, example, tag, sort_order, next_review)
+                           VALUES
+                            (:user_id, :word, :korean, :korean_detail, :english_def, :example, :tag, :sort_order,
+                             NOW() + INTERVAL '7 days')"""
+                    ),
+                    params,
+                )
+                added = len(params)
+
+            for item in to_update:
+                result = await session.execute(
+                    text(
+                        """UPDATE words
+                           SET korean = CASE WHEN :korean <> '' THEN :korean ELSE korean END,
+                               korean_detail = CASE WHEN :korean_detail <> '' THEN :korean_detail ELSE korean_detail END,
+                               example = CASE WHEN :example <> '' THEN :example ELSE example END,
+                               tag = CASE WHEN :tag <> '' THEN :tag ELSE tag END
+                           WHERE user_id = :user_id AND lower(word) = :word"""
+                    ),
+                    {
+                        "korean": (item.get("korean") or "").strip(),
+                        "korean_detail": item.get("korean_detail") or "",
+                        "example": item.get("example") or "",
+                        "tag": item.get("tag") or "",
+                        "user_id": user_id,
+                        "word": item["word"].lower(),
+                    },
+                )
+                updated += result.rowcount or 0
+    return {"added": added, "updated": updated, "skipped": skipped, "total": added + updated + skipped}
+
+
+async def get_all_words(user_id: str, tag: str | None = None):
+    query = """SELECT id, word, korean, korean_detail, english_def, example,
+                      tag, created_at, next_review, sort_order
+               FROM words
+               WHERE user_id = :user_id"""
+    params = {"user_id": user_id}
+    if tag:
+        query += " AND tag = :tag"
+        params["tag"] = tag
+    query += " ORDER BY sort_order ASC NULLS LAST, created_at DESC"
+    async with SessionFactory() as session:
+        result = await session.execute(text(query), params)
+        return _rows(result)
+
+
+async def get_words_for_quiz(
+    user_id: str,
+    mode: str = "random",
+    tag: str = "",
+    saved_from: str = "",
+    saved_to: str = "",
+    limit: int = 50,
+):
+    mode = (mode or "random").strip()
+    limit = max(1, min(int(limit or 50), 100))
+    clauses = ["user_id = :user_id"]
+    params: dict[str, Any] = {"user_id": user_id, "limit": limit}
+    if mode == "tag" and tag:
+        clauses.append("tag = :tag")
+        params["tag"] = tag
+    if mode == "saved_date":
+        if saved_from:
+            clauses.append("created_at::date >= :saved_from")
+            params["saved_from"] = saved_from
+        if saved_to:
+            clauses.append("created_at::date <= :saved_to")
+            params["saved_to"] = saved_to
+    order_by = "RANDOM()" if mode == "random" else "sort_order ASC NULLS LAST, created_at DESC"
+    async with SessionFactory() as session:
+        result = await session.execute(
+            text(
+                f"""SELECT id, word, korean, korean_detail, english_def, example,
+                           tag, created_at, next_review, sort_order
+                    FROM words
+                    WHERE {' AND '.join(clauses)}
+                    ORDER BY {order_by}
+                    LIMIT :limit"""
+            ),
+            params,
+        )
+        return _rows(result)
+
+
+async def create_quiz_session(user_id: str, goal: dict, question_count: int) -> int:
+    async with SessionFactory() as session:
+        async with session.begin():
+            result = await session.execute(
+                text(
+                    """INSERT INTO quiz_sessions
+                           (user_id, mode, tag, saved_from, saved_to, instruction, question_count)
+                       VALUES (:user_id, :mode, :tag, CAST(NULLIF(:saved_from, '') AS date),
+                               CAST(NULLIF(:saved_to, '') AS date), :instruction, :question_count)
+                       RETURNING id"""
+                ),
+                {
+                    "user_id": user_id,
+                    "mode": goal.get("mode") or "random",
+                    "tag": goal.get("tag") or "",
+                    "saved_from": goal.get("saved_from") or "",
+                    "saved_to": goal.get("saved_to") or "",
+                    "instruction": goal.get("instruction") or "",
+                    "question_count": question_count,
+                },
+            )
+            return int(result.scalar_one())
+
+
+async def complete_quiz_session(user_id: str, session_id: int, score: float, total: int) -> None:
+    async with SessionFactory() as session:
+        async with session.begin():
+            await session.execute(
+                text(
+                    """UPDATE quiz_sessions
+                       SET score = :score, total_questions = :total, completed_at = NOW()
+                       WHERE id = :session_id AND user_id = :user_id"""
+                ),
+                {"score": score, "total": total, "session_id": session_id, "user_id": user_id},
+            )
+
+
+async def save_quiz_question_results(user_id: str, session_id: int, results: list[dict]) -> None:
+    if not results:
+        return
+    params = []
+    for result in results:
+        params.append(
+            {
+                "session_id": session_id,
+                "user_id": user_id,
+                "word_id": result.get("word_id"),
+                "source_word_id": result.get("source_word_id"),
+                "source_word": result.get("source_word") or "",
+                "target_word": result.get("target_word") or "",
+                "question_type": result.get("question_type") or "",
+                "difficulty": result.get("difficulty") or "",
+                "prompt": result.get("prompt") or "",
+                "user_answer": result.get("user_answer") or "",
+                "correct_answer": result.get("correct_answer") or "",
+                "status": result.get("status") or "",
+                "correct": result.get("correct"),
+                "score": result.get("score", 0),
+                "confidence": result.get("confidence", 1),
+                "feedback": result.get("feedback") or "",
+                "is_derived": result.get("is_derived", False),
+                "derived_from_word_id": result.get("derived_from_word_id"),
+                "suggested_word": result.get("suggested_word") or "",
+                "suggested_korean": result.get("suggested_korean") or "",
+                "suggested_english_def": result.get("suggested_english_def") or "",
+                "suggested_example": result.get("suggested_example") or "",
+                "suggested_tag": result.get("suggested_tag") or "미지정",
+            }
+        )
+    async with SessionFactory() as session:
+        async with session.begin():
+            await session.execute(
+                text(
+                    """INSERT INTO quiz_question_results
+                        (session_id, user_id, word_id, source_word_id, source_word,
+                         target_word, question_type, difficulty, prompt, user_answer,
+                         correct_answer, status, correct, score, confidence, feedback,
+                         is_derived, derived_from_word_id, suggested_word,
+                         suggested_korean, suggested_english_def, suggested_example, suggested_tag)
+                       VALUES
+                        (:session_id, :user_id, :word_id, :source_word_id, :source_word,
+                         :target_word, :question_type, :difficulty, :prompt, :user_answer,
+                         :correct_answer, :status, :correct, :score, :confidence, :feedback,
+                         :is_derived, :derived_from_word_id, :suggested_word,
+                         :suggested_korean, :suggested_english_def, :suggested_example, :suggested_tag)"""
+                ),
+                params,
+            )
+
+
+async def get_quiz_stats(user_id: str) -> dict:
+    async with SessionFactory() as session:
+        result = await session.execute(
+            text(
+                """SELECT
+                       COUNT(*)::int AS attempt_count,
+                       COALESCE(SUM(score), 0)::float AS total_score,
+                       COUNT(*) FILTER (WHERE status = 'correct')::int AS correct_count,
+                       COUNT(*) FILTER (WHERE status = 'partial')::int AS partial_count,
+                       COUNT(*) FILTER (WHERE status = 'incorrect')::int AS incorrect_count,
+                       COUNT(DISTINCT COALESCE(source_word_id, word_id)) FILTER (
+                           WHERE status = 'incorrect'
+                       )::int AS incorrect_word_count,
+                       MAX(created_at) AS last_quiz_at
+                   FROM quiz_question_results
+                   WHERE user_id = :user_id"""
+            ),
+            {"user_id": user_id},
+        )
+        summary = dict(result.mappings().first() or {})
+
+        result = await session.execute(
+            text(
+                """SELECT
+                       COALESCE(source_word_id, word_id)::int AS word_id,
+                       COALESCE(NULLIF(source_word, ''), NULLIF(target_word, ''), '') AS word,
+                       COUNT(*)::int AS attempt_count,
+                       COALESCE(SUM(score), 0)::float AS total_score,
+                       COUNT(*) FILTER (WHERE status = 'correct')::int AS correct_count,
+                       COUNT(*) FILTER (WHERE status = 'partial')::int AS partial_count,
+                       COUNT(*) FILTER (WHERE status = 'incorrect')::int AS incorrect_count,
+                       MAX(created_at) AS last_quiz_at
+                   FROM quiz_question_results
+                   WHERE user_id = :user_id AND COALESCE(source_word_id, word_id) IS NOT NULL
+                   GROUP BY COALESCE(source_word_id, word_id),
+                            COALESCE(NULLIF(source_word, ''), NULLIF(target_word, ''), '')
+                   ORDER BY incorrect_count DESC, attempt_count DESC, last_quiz_at DESC
+                   LIMIT 50"""
+            ),
+            {"user_id": user_id},
+        )
+        word_stats = _rows(result)
+
+        result = await session.execute(
+            text(
+                """SELECT
+                       question_type,
+                       COUNT(*)::int AS attempt_count,
+                       COALESCE(SUM(score), 0)::float AS total_score,
+                       COUNT(*) FILTER (WHERE status = 'incorrect')::int AS incorrect_count
+                   FROM quiz_question_results
+                   WHERE user_id = :user_id
+                   GROUP BY question_type
+                   ORDER BY attempt_count DESC"""
+            ),
+            {"user_id": user_id},
+        )
+        type_stats = _rows(result)
+
+        result = await session.execute(
+            text(
+                """SELECT
+                       COALESCE(source_word_id, word_id)::int AS word_id,
+                       COALESCE(NULLIF(source_word, ''), NULLIF(target_word, ''), '') AS word,
+                       target_word,
+                       question_type,
+                       prompt,
+                       user_answer,
+                       correct_answer,
+                       feedback,
+                       created_at
+                   FROM quiz_question_results
+                   WHERE user_id = :user_id AND status = 'incorrect'
+                   ORDER BY created_at DESC
+                   LIMIT 10"""
+            ),
+            {"user_id": user_id},
+        )
+        recent_incorrect = _rows(result)
+
+    attempt_count = int(summary.get("attempt_count") or 0)
+    total_score = float(summary.get("total_score") or 0)
+    incorrect_count = int(summary.get("incorrect_count") or 0)
+    summary["accuracy"] = round(total_score / attempt_count, 3) if attempt_count else 0
+    summary["incorrect_rate"] = round(incorrect_count / attempt_count, 3) if attempt_count else 0
+
+    for item in word_stats:
+        attempts = int(item.get("attempt_count") or 0)
+        item["accuracy"] = round(float(item.get("total_score") or 0) / attempts, 3) if attempts else 0
+        item["incorrect_rate"] = round(int(item.get("incorrect_count") or 0) / attempts, 3) if attempts else 0
+
+    for item in type_stats:
+        attempts = int(item.get("attempt_count") or 0)
+        item["accuracy"] = round(float(item.get("total_score") or 0) / attempts, 3) if attempts else 0
+        item["incorrect_rate"] = round(int(item.get("incorrect_count") or 0) / attempts, 3) if attempts else 0
+
+    return {
+        "summary": summary,
+        "word_stats": word_stats,
+        "type_stats": type_stats,
+        "recent_incorrect": recent_incorrect,
+    }
+
+
+def _review_schedule_preview_from_rows(rows) -> list[dict]:
+    buckets: dict[int, dict] = {}
+    for row in rows:
+        try:
+            word_id = int(row["word_id"])
+        except (TypeError, ValueError):
+            continue
+        bucket = buckets.setdefault(
+            word_id,
+            {"word_id": word_id, "word": "", "score": 0.0, "total": 0},
+        )
+        if not bucket["word"]:
+            bucket["word"] = row.get("source_word") or row.get("target_word") or ""
+        bucket["score"] += float(row.get("score") or 0)
+        bucket["total"] += 1
+
+    now = datetime.now()
+    preview = []
+    for bucket in buckets.values():
+        average = bucket["score"] / bucket["total"] if bucket["total"] else 0
+        if average >= 0.8:
+            continue
+        days = 1
+        preview.append(
+            {
+                "word_id": bucket["word_id"],
+                "word": bucket["word"],
+                "result": "incorrect",
+                "proposed_next_review": (now + timedelta(days=days)).date().isoformat(),
+                "interval_days": days,
+            }
+        )
+    return preview
+
+
+async def get_quiz_review_schedule_preview(user_id: str, session_id: int) -> list[dict]:
+    async with SessionFactory() as session:
+        result = await session.execute(
+            text(
+                """SELECT COALESCE(source_word_id, word_id) AS word_id,
+                          source_word, target_word, score
+                   FROM quiz_question_results
+                   WHERE user_id = :user_id AND session_id = :session_id
+                         AND COALESCE(source_word_id, word_id) IS NOT NULL"""
+            ),
+            {"user_id": user_id, "session_id": session_id},
+        )
+        return _review_schedule_preview_from_rows(_rows(result))
+
+
+def _interval_days(interval_code: str) -> int:
+    return {
+        "1d": 1,
+        "1w": 7,
+        "1m": 30,
+        "3m": 90,
+    }.get((interval_code or "").strip(), 1)
+
+
+async def apply_quiz_review_schedule(
+    user_id: str,
+    session_id: int,
+    incorrect_interval: str = "1d",
+) -> dict:
+    interval_days = _interval_days(incorrect_interval)
+    async with SessionFactory() as session:
+        async with session.begin():
+            result = await session.execute(
+                text(
+                    """SELECT id, review_applied_at
+                       FROM quiz_sessions
+                       WHERE id = :session_id AND user_id = :user_id
+                       FOR UPDATE"""
+                ),
+                {"session_id": session_id, "user_id": user_id},
+            )
+            quiz_session = result.mappings().first()
+            if not quiz_session:
+                return {
+                    "ok": False,
+                    "session_id": session_id,
+                    "updated": 0,
+                    "already_applied": False,
+                    "message": "퀴즈 세션을 찾을 수 없습니다.",
+                    "review_schedule_preview": [],
+                }
+
+            result = await session.execute(
+                text(
+                    """SELECT COALESCE(source_word_id, word_id) AS word_id,
+                              source_word, target_word, score
+                       FROM quiz_question_results
+                       WHERE user_id = :user_id AND session_id = :session_id
+                             AND COALESCE(source_word_id, word_id) IS NOT NULL"""
+                ),
+                {"user_id": user_id, "session_id": session_id},
+            )
+            preview = _review_schedule_preview_from_rows(_rows(result))
+            for item in preview:
+                item["interval_days"] = interval_days
+                item["proposed_next_review"] = (
+                    datetime.now() + timedelta(days=interval_days)
+                ).date().isoformat()
+
+            if quiz_session["review_applied_at"]:
+                return {
+                    "ok": True,
+                    "session_id": session_id,
+                    "updated": 0,
+                    "already_applied": True,
+                    "message": "이미 복습일 조정이 적용된 퀴즈입니다.",
+                    "review_schedule_preview": preview,
+                }
+
+            updated = 0
+            for item in preview:
+                result = await session.execute(
+                    text(
+                        """UPDATE words
+                           SET next_review = NOW() + (CAST(:days AS text) || ' days')::interval
+                           WHERE id = :word_id AND user_id = :user_id"""
+                    ),
+                    {"days": item["interval_days"], "word_id": item["word_id"], "user_id": user_id},
+                )
+                if result.rowcount:
+                    updated += result.rowcount
+                    await session.execute(
+                        text(
+                            """INSERT INTO quiz_history (user_id, word_id, result)
+                               VALUES (:user_id, :word_id, :result)"""
+                        ),
+                        {
+                            "user_id": user_id,
+                            "word_id": item["word_id"],
+                            "result": item["result"] == "correct",
+                        },
+                    )
+            await session.execute(
+                text(
+                    """UPDATE quiz_sessions
+                       SET review_applied_at = NOW()
+                       WHERE id = :session_id AND user_id = :user_id"""
+                ),
+                {"session_id": session_id, "user_id": user_id},
+            )
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "updated": updated,
+        "already_applied": False,
+        "message": f"{updated}개 단어의 다음 복습일을 조정했습니다.",
+        "review_schedule_preview": preview,
+    }
+
+
+async def update_word(
+    user_id: str,
+    word_id: int,
+    korean_detail,
+    english_def,
+    example,
+    tag,
+    next_review,
+) -> bool:
+    query = """UPDATE words
+               SET korean_detail = :korean_detail,
+                   english_def = :english_def,
+                   example = :example,
+                   tag = :tag"""
+    params = {
+        "korean_detail": korean_detail,
+        "english_def": english_def,
+        "example": example,
+        "tag": tag or "미지정",
+        "word_id": word_id,
+        "user_id": user_id,
+    }
+    if next_review:
+        query += ", next_review = :next_review"
+        params["next_review"] = next_review
+    query += " WHERE id = :word_id AND user_id = :user_id"
+    async with SessionFactory() as session:
+        async with session.begin():
+            result = await session.execute(text(query), params)
+            return bool(result.rowcount)
+
+
+async def delete_word(user_id: str, word_id: int) -> bool:
+    async with SessionFactory() as session:
+        async with session.begin():
+            result = await session.execute(
+                text("DELETE FROM words WHERE id = :word_id AND user_id = :user_id"),
+                {"word_id": word_id, "user_id": user_id},
+            )
+            return bool(result.rowcount)
+
+
+async def bulk_update_words(user_id: str, items) -> dict:
+    parsed = {}
+    order = []
+    for item in items:
+        try:
+            word_id = int(item["id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        parsed[word_id] = item
+        order.append(word_id)
+    if not parsed:
+        return {"ok": True, "updated": 0, "skipped": 0, "conflicts": []}
+
+    async with SessionFactory() as session:
+        async with session.begin():
+            result = await session.execute(
+                text("SELECT id, lower(word) AS word FROM words WHERE user_id = :user_id"),
+                {"user_id": user_id},
+            )
+            current_words = {row["id"]: row["word"] for row in result.mappings().all()}
+
+            target = dict(current_words)
+            new_word = {}
+            for word_id in order:
+                if word_id not in current_words:
+                    continue
+                raw = (parsed[word_id].get("word") or "").strip()
+                lower_word = raw.lower() if raw else current_words[word_id]
+                new_word[word_id] = lower_word
+                target[word_id] = lower_word
+
+            counts = {}
+            for lower_word in target.values():
+                counts[lower_word] = counts.get(lower_word, 0) + 1
+            conflict_ids = set()
+            conflicts = []
+            for word_id in order:
+                if word_id not in current_words:
+                    continue
+                changed = new_word[word_id] != current_words[word_id]
+                if changed and counts.get(new_word[word_id], 0) > 1:
+                    conflict_ids.add(word_id)
+                    conflicts.append(parsed[word_id].get("word") or new_word[word_id])
+
+            updated = 0
+            try:
+                for word_id in order:
+                    if word_id not in current_words or word_id in conflict_ids:
+                        continue
+                    item = parsed[word_id]
+                    result = await session.execute(
+                        text(
+                            """UPDATE words
+                               SET word = :word,
+                                   korean = :korean,
+                                   korean_detail = :korean_detail,
+                                   english_def = :english_def,
+                                   example = :example,
+                                   tag = :tag,
+                                   next_review = CASE :next_review
+                                       WHEN '1d' THEN NOW() + INTERVAL '1 day'
+                                       WHEN '1w' THEN NOW() + INTERVAL '7 days'
+                                       WHEN '1m' THEN NOW() + INTERVAL '1 month'
+                                       WHEN '3m' THEN NOW() + INTERVAL '3 months'
+                                       WHEN '' THEN next_review
+                                       ELSE CAST(:next_review AS timestamp)
+                                   END
+                               WHERE id = :id AND user_id = :user_id"""
+                        ),
+                        {
+                            "word": new_word[word_id],
+                            "korean": item.get("korean", "") or "",
+                            "korean_detail": item.get("korean_detail", "") or "",
+                            "english_def": item.get("english_def", "") or "",
+                            "example": item.get("example", "") or "",
+                            "tag": item.get("tag") or "미지정",
+                            "next_review": (item.get("next_review") or "").strip(),
+                            "id": word_id,
+                            "user_id": user_id,
+                        },
+                    )
+                    updated += result.rowcount or 0
+            except IntegrityError:
+                await session.rollback()
+                return {
+                    "ok": False,
+                    "updated": 0,
+                    "skipped": len(conflict_ids),
+                    "conflicts": conflicts,
+                    "message": "단어를 서로 맞바꾸는 등 중복이 생겨 저장하지 못했어요. 겹치는 단어를 확인해주세요.",
+                }
+    return {"ok": True, "updated": updated, "skipped": len(conflict_ids), "conflicts": conflicts}
+
+
+async def bulk_delete_words(user_id: str, ids) -> int:
+    clean = []
+    for item in ids or []:
+        try:
+            clean.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    if not clean:
+        return 0
+    stmt = text("DELETE FROM words WHERE user_id = :user_id AND id IN :ids").bindparams(
+        bindparam("ids", expanding=True)
+    )
+    async with SessionFactory() as session:
+        async with session.begin():
+            result = await session.execute(stmt, {"user_id": user_id, "ids": clean})
+            return result.rowcount or 0
+
+
+async def reorder_words(user_id: str, ordered_ids) -> int:
+    updated = 0
+    async with SessionFactory() as session:
+        async with session.begin():
+            for index, raw_id in enumerate(ordered_ids or []):
+                try:
+                    word_id = int(raw_id)
+                except (TypeError, ValueError):
+                    continue
+                result = await session.execute(
+                    text(
+                        """UPDATE words
+                           SET sort_order = :sort_order
+                           WHERE id = :word_id AND user_id = :user_id"""
+                    ),
+                    {"sort_order": index, "word_id": word_id, "user_id": user_id},
+                )
+                updated += result.rowcount or 0
+    return updated
+
+
+async def get_words_to_review(user_id: str):
+    async with SessionFactory() as session:
+        result = await session.execute(
+            text(
+                """SELECT *
+                   FROM words
+                   WHERE user_id = :user_id AND next_review <= NOW()
+                   ORDER BY next_review ASC"""
+            ),
+            {"user_id": user_id},
+        )
+        return _rows(result)
+
+
+async def update_review(user_id: str, word_id: int, correct: bool):
+    days = 30 if correct else 1
+    next_review = datetime.now() + timedelta(days=days)
+    async with SessionFactory() as session:
+        async with session.begin():
+            result = await session.execute(
+                text(
+                    """UPDATE words
+                       SET next_review = :next_review
+                       WHERE id = :word_id AND user_id = :user_id"""
+                ),
+                {"next_review": next_review, "word_id": word_id, "user_id": user_id},
+            )
+            if not result.rowcount:
+                return
+            await session.execute(
+                text(
+                    """INSERT INTO quiz_history (user_id, word_id, result)
+                       VALUES (:user_id, :word_id, :result)"""
+                ),
+                {"user_id": user_id, "word_id": word_id, "result": correct},
+            )
+
+
+async def _seed_default_labels(user_id: str) -> None:
+    async with SessionFactory() as session:
+        async with session.begin():
+            for name in DEFAULT_LABELS:
+                await session.execute(
+                    text(
+                        """INSERT INTO labels (user_id, name)
+                           VALUES (:user_id, :name)
+                           ON CONFLICT (user_id, name) DO NOTHING"""
+                    ),
+                    {"user_id": user_id, "name": name},
+                )
+
+
+async def get_labels(user_id: str) -> list[str]:
+    async def _fetch() -> list[str]:
+        async with SessionFactory() as session:
+            result = await session.execute(
+                text(
+                    """SELECT name
+                       FROM labels
+                       WHERE user_id = :user_id
+                       ORDER BY (name = '미지정') DESC, id ASC"""
+                ),
+                {"user_id": user_id},
+            )
+            return [row[0] for row in result.fetchall()]
+
+    labels = await _fetch()
+    if not labels:
+        await _seed_default_labels(user_id)
+        labels = await _fetch()
+    return labels
+
+
+async def add_label(user_id: str, name: str) -> tuple[list[str], bool]:
+    name = (name or "").strip()
+    existing = await get_labels(user_id)
+    if not name:
+        return existing, False
+    if name in existing:
+        return existing, True
+    if len(existing) >= MAX_LABELS:
+        return existing, False
+    async with SessionFactory() as session:
+        async with session.begin():
+            await session.execute(
+                text(
+                    """INSERT INTO labels (user_id, name)
+                       VALUES (:user_id, :name)
+                       ON CONFLICT (user_id, name) DO NOTHING"""
+                ),
+                {"user_id": user_id, "name": name},
+            )
+    return await get_labels(user_id), True
+
+
+async def count_words_by_tag(user_id: str, tag: str) -> int:
+    async with SessionFactory() as session:
+        result = await session.execute(
+            text("SELECT COUNT(*) FROM words WHERE user_id = :user_id AND tag = :tag"),
+            {"user_id": user_id, "tag": tag},
+        )
+        return int(result.scalar_one())
+
+
+async def rename_label(user_id: str, old: str, new: str) -> tuple[list[str], bool, str]:
+    old = (old or "").strip()
+    new = (new or "").strip()
+    if not old or not new:
+        return await get_labels(user_id), False, "태그 이름이 비어 있습니다."
+    if old == "미지정":
+        return await get_labels(user_id), False, "'미지정' 태그는 변경할 수 없습니다."
+    existing = await get_labels(user_id)
+    if old not in existing:
+        return existing, False, "존재하지 않는 태그입니다."
+    if new == old:
+        return existing, True, "변경 사항이 없습니다."
+    if new in existing:
+        return existing, False, "이미 있는 태그 이름입니다."
+    async with SessionFactory() as session:
+        async with session.begin():
+            await session.execute(
+                text("UPDATE labels SET name = :new WHERE user_id = :user_id AND name = :old"),
+                {"new": new, "user_id": user_id, "old": old},
+            )
+            await session.execute(
+                text("UPDATE words SET tag = :new WHERE user_id = :user_id AND tag = :old"),
+                {"new": new, "user_id": user_id, "old": old},
+            )
+    return await get_labels(user_id), True, "변경되었습니다."
+
+
+async def delete_label(user_id: str, name: str) -> tuple[list[str], bool, str, int]:
+    name = (name or "").strip()
+    if name == "미지정":
+        return await get_labels(user_id), False, "'미지정' 태그는 삭제할 수 없습니다.", 0
+    existing = await get_labels(user_id)
+    if name not in existing:
+        return existing, False, "존재하지 않는 태그입니다.", 0
+    if len(existing) <= 1:
+        return existing, False, "최소 1개의 태그는 있어야 합니다.", 0
+    deleted = await count_words_by_tag(user_id, name)
+    async with SessionFactory() as session:
+        async with session.begin():
+            await session.execute(
+                text("DELETE FROM words WHERE user_id = :user_id AND tag = :name"),
+                {"user_id": user_id, "name": name},
+            )
+            await session.execute(
+                text("DELETE FROM labels WHERE user_id = :user_id AND name = :name"),
+                {"user_id": user_id, "name": name},
+            )
+    return await get_labels(user_id), True, "삭제되었습니다.", deleted
+
+
+async def save_roleplay_session(
+    user_id,
+    level,
+    scenario,
+    tag,
+    title,
+    turns,
+    summary,
+    expressions,
+    vocab,
+) -> int:
+    async with SessionFactory() as session:
+        async with session.begin():
+            result = await session.execute(
+                text(
+                    """INSERT INTO roleplay_sessions
+                           (user_id, level, scenario, tag, title, turns,
+                            summary, expressions, vocab)
+                       VALUES (:user_id, :level, :scenario, :tag, :title, :turns,
+                               :summary, CAST(:expressions AS jsonb), CAST(:vocab AS jsonb))
+                       RETURNING id"""
+                ),
+                {
+                    "user_id": user_id,
+                    "level": level,
+                    "scenario": scenario,
+                    "tag": tag,
+                    "title": title,
+                    "turns": turns,
+                    "summary": summary,
+                    "expressions": json.dumps(expressions or [], ensure_ascii=False),
+                    "vocab": json.dumps(vocab or [], ensure_ascii=False),
+                },
+            )
+            return int(result.scalar_one())
+
+
+async def get_roleplay_sessions(user_id):
+    async with SessionFactory() as session:
+        result = await session.execute(
+            text(
+                """SELECT id, level, scenario, tag, title, turns, summary,
+                          expressions, vocab, created_at
+                   FROM roleplay_sessions
+                   WHERE user_id = :user_id
+                   ORDER BY created_at DESC, id DESC"""
+            ),
+            {"user_id": user_id},
+        )
+        return _rows(result)
+
+
+async def delete_roleplay_session(user_id, session_id) -> bool:
+    async with SessionFactory() as session:
+        async with session.begin():
+            result = await session.execute(
+                text(
+                    """DELETE FROM roleplay_sessions
+                       WHERE user_id = :user_id AND id = :session_id"""
+                ),
+                {"user_id": user_id, "session_id": session_id},
+            )
+            return bool(result.rowcount)

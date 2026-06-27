@@ -1,8 +1,7 @@
 """Compatibility exports for older imports.
 
 New DB infrastructure should be imported from backend.db.* directly.
-Raw SQL domain helpers are temporarily kept in backend.db.legacy while they are
-migrated to SQLAlchemy repositories.
+Domain helpers live in backend.db.repositories.
 """
 
 from backend.db import (
@@ -12,6 +11,5 @@ from backend.db import (
     create_db_schema,
     engine,
     get_async_session,
-    get_conn,
 )
-from backend.db.legacy import *  # noqa: F403
+from backend.db.repositories import *  # noqa: F403

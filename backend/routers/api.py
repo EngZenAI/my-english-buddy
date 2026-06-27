@@ -9,13 +9,14 @@
 
 import csv
 import io
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from backend.auth.users import get_current_user_from_cookie
 from backend.dictionary import translate_korean
-from backend.db.legacy import (
+from backend.db.repositories import (
     add_label,
     bulk_delete_words,
     bulk_import_words,
@@ -61,6 +62,9 @@ async def require_user(request: Request) -> dict:
     if not user:
         raise HTTPException(status_code=401, detail="회원 전용 기능입니다.")
     return user
+
+
+CurrentUserDep = Annotated[dict, Depends(require_user)]
 
 
 # ── 스키마 ─────────────────────────────────────────────────
@@ -186,61 +190,61 @@ def tts(word: str = "", lang: str = "en"):
 
 # ── 단어 저장여부 (검색 화면 배지용, 공개) ──────────────────
 @router.get("/words/saved")
-def word_saved(word: str = "", _user: dict = Depends(require_user)):
-    return {"saved": is_word_saved(_user["id"], word)}
+async def word_saved(word: str = "", *, _user: CurrentUserDep):
+    return {"saved": await is_word_saved(_user["id"], word)}
 
 
 # ── 태그(카테고리) — 회원 전용 ─────────────────────────────
 @router.get("/labels")
-def list_labels(_user: dict = Depends(require_user)):
-    return {"labels": get_labels(_user["id"])}
+async def list_labels(_user: CurrentUserDep):
+    return {"labels": await get_labels(_user["id"])}
 
 
 @router.post("/labels")
-def create_label(payload: LabelIn, _user: dict = Depends(require_user)):
-    labels, ok = add_label(_user["id"], payload.name)
+async def create_label(payload: LabelIn, _user: CurrentUserDep):
+    labels, ok = await add_label(_user["id"], payload.name)
     return {"labels": labels, "ok": ok, "max": 20}
 
 
 @router.post("/labels/rename")
-def rename_label_ep(payload: RenameLabelIn, _user: dict = Depends(require_user)):
-    labels, ok, message = rename_label(_user["id"], payload.old_name, payload.new_name)
+async def rename_label_ep(payload: RenameLabelIn, _user: CurrentUserDep):
+    labels, ok, message = await rename_label(_user["id"], payload.old_name, payload.new_name)
     return {"labels": labels, "ok": ok, "message": message}
 
 
 @router.get("/labels/word-count")
-def label_word_count(tag: str = "", _user: dict = Depends(require_user)):
-    return {"count": count_words_by_tag(_user["id"], tag) if tag else 0}
+async def label_word_count(tag: str = "", *, _user: CurrentUserDep):
+    return {"count": await count_words_by_tag(_user["id"], tag) if tag else 0}
 
 
 @router.delete("/labels")
-def delete_label_ep(name: str = "", _user: dict = Depends(require_user)):
-    labels, ok, message, deleted = delete_label(_user["id"], name)
+async def delete_label_ep(name: str = "", *, _user: CurrentUserDep):
+    labels, ok, message, deleted = await delete_label(_user["id"], name)
     return {"labels": labels, "ok": ok, "message": message, "deleted": deleted}
 
 
 # ── 단어장 — 회원 전용 ─────────────────────────────────────
 @router.get("/words")
-def list_words(tag: str = "", _user: dict = Depends(require_user)):
-    return {"words": get_all_words(_user["id"], tag or None)}
+async def list_words(tag: str = "", *, _user: CurrentUserDep):
+    return {"words": await get_all_words(_user["id"], tag or None)}
 
 
 @router.post("/words")
-def create_word(payload: SaveWordIn, _user: dict = Depends(require_user)):
+async def create_word(payload: SaveWordIn, _user: CurrentUserDep):
     word = payload.word.strip()
     if not word:
         return {"ok": False, "message": "단어가 비어 있습니다."}
     final_def = payload.slang_def.strip() or payload.english_def
     tag = payload.tag.strip() or "미지정"  # 태그 미선택 시 기본값
-    message = save_word(
+    message = await save_word(
         _user["id"], word.lower(), payload.korean, payload.korean_detail, final_def, payload.example, tag
     )
     return {"ok": True, "message": message, "saved": True}
 
 
 @router.patch("/words/{word_id}")
-def edit_word(word_id: int, payload: UpdateWordIn, _user: dict = Depends(require_user)):
-    ok = update_word(
+async def edit_word(word_id: int, payload: UpdateWordIn, _user: CurrentUserDep):
+    ok = await update_word(
         _user["id"],
         word_id,
         payload.korean_detail,
@@ -255,17 +259,17 @@ def edit_word(word_id: int, payload: UpdateWordIn, _user: dict = Depends(require
 
 
 @router.delete("/words/{word_id}")
-def remove_word(word_id: int, _user: dict = Depends(require_user)):
-    ok = delete_word(_user["id"], word_id)
+async def remove_word(word_id: int, _user: CurrentUserDep):
+    ok = await delete_word(_user["id"], word_id)
     if not ok:
         return {"ok": False, "message": "삭제할 단어를 찾을 수 없어요."}
     return {"ok": True, "message": "🗑️ 삭제했어요!"}
 
 
 @router.post("/words/bulk-update")
-def bulk_update(payload: BulkUpdateIn, _user: dict = Depends(require_user)):
+async def bulk_update(payload: BulkUpdateIn, _user: CurrentUserDep):
     items = [it.model_dump() for it in payload.items]
-    res = bulk_update_words(_user["id"], items)
+    res = await bulk_update_words(_user["id"], items)
     updated = res.get("updated", 0)
     conflicts = res.get("conflicts", [])
     if not res.get("ok", True):
@@ -293,14 +297,14 @@ def bulk_update(payload: BulkUpdateIn, _user: dict = Depends(require_user)):
 
 
 @router.post("/words/bulk-delete")
-def bulk_delete(payload: IdsIn, _user: dict = Depends(require_user)):
-    deleted = bulk_delete_words(_user["id"], payload.ids)
+async def bulk_delete(payload: IdsIn, _user: CurrentUserDep):
+    deleted = await bulk_delete_words(_user["id"], payload.ids)
     return {"ok": True, "deleted": deleted, "message": f"🗑️ {deleted}개 삭제했어요!"}
 
 
 @router.post("/words/reorder")
-def reorder(payload: IdsIn, _user: dict = Depends(require_user)):
-    updated = reorder_words(_user["id"], payload.ids)
+async def reorder(payload: IdsIn, _user: CurrentUserDep):
+    updated = await reorder_words(_user["id"], payload.ids)
     return {"ok": True, "updated": updated}
 
 
@@ -402,7 +406,7 @@ async def import_preview(
     if not rows:
         return {"ok": False, "message": "가져올 단어가 없어요. 첫 두 열이 '영어 | 한국어' 형식인지 확인해주세요."}
 
-    existing = existing_words_lower(_user["id"])
+    existing = await existing_words_lower(_user["id"])
     out = [
         {"word": w, "korean": k, "dup": w.lower() in existing}
         for w, k in rows
@@ -411,12 +415,12 @@ async def import_preview(
 
 
 @router.post("/words/import/commit")
-def import_commit(payload: ImportCommitIn, _user: dict = Depends(require_user)):
+async def import_commit(payload: ImportCommitIn, _user: CurrentUserDep):
     """미리보기에서 검토·편집한 행들을 실제로 저장한다."""
     items = [it.model_dump() for it in payload.items]
     if not items:
         return {"ok": False, "message": "적용할 단어가 없어요."}
-    result = insert_words(_user["id"], items, overwrite=payload.overwrite)
+    result = await insert_words(_user["id"], items, overwrite=payload.overwrite)
     parts = [f"📥 {result['added']}개 추가"]
     if result.get("updated"):
         parts.append(f"{result['updated']}개 덮어씀")
@@ -431,7 +435,7 @@ def import_commit(payload: ImportCommitIn, _user: dict = Depends(require_user)):
 
 # ── 슬랭 / 구어체 설명 — 회원 전용 (LLM 비용) ──────────────
 @router.post("/slang")
-def slang(payload: SlangIn, _user: dict = Depends(require_user)):
+def slang(payload: SlangIn, _user: CurrentUserDep):
     word = payload.word.strip()
     if not word:
         return {"explanation": "단어를 먼저 검색해주세요."}
@@ -440,9 +444,9 @@ def slang(payload: SlangIn, _user: dict = Depends(require_user)):
 
 # ── 퀴즈 — 회원 전용 ───────────────────────────────────────
 @router.post("/quiz/generate")
-def quiz_generate(payload: QuizGenerateIn, _user: dict = Depends(require_user)):
+async def quiz_generate(payload: QuizGenerateIn, _user: CurrentUserDep):
     # TODO: 복습 스케줄 기반 출제로 되돌릴 때 get_words_for_quiz에 next_review 조건을 추가한다.
-    words = get_words_for_quiz(
+    words = await get_words_for_quiz(
         _user["id"],
         mode=payload.mode,
         tag=payload.tag.strip(),
@@ -450,13 +454,13 @@ def quiz_generate(payload: QuizGenerateIn, _user: dict = Depends(require_user)):
         saved_to=payload.saved_to.strip(),
         limit=max(payload.question_count * 3, payload.question_count),
     )
-    return generate_assignment(_user["id"], words, payload)
+    return await generate_assignment(_user["id"], words, payload)
 
 
 @router.post("/quiz/grade")
-def quiz_grade(payload: QuizGradeIn, _user: dict = Depends(require_user)):
+async def quiz_grade(payload: QuizGradeIn, _user: CurrentUserDep):
     try:
-        return grade_assignment(
+        return await grade_assignment(
             _user["id"],
             payload.answer_token,
             [answer.model_dump() for answer in payload.answers],
@@ -466,11 +470,11 @@ def quiz_grade(payload: QuizGradeIn, _user: dict = Depends(require_user)):
 
 
 @router.post("/quiz/review-schedule/apply")
-def quiz_review_schedule_apply(
+async def quiz_review_schedule_apply(
     payload: QuizReviewScheduleApplyIn,
-    _user: dict = Depends(require_user),
+    _user: CurrentUserDep,
 ):
-    result = apply_review_schedule(
+    result = await apply_review_schedule(
         _user["id"],
         payload.session_id,
         payload.incorrect_interval,
@@ -481,19 +485,19 @@ def quiz_review_schedule_apply(
 
 
 @router.get("/quiz/stats")
-def quiz_stats(_user: dict = Depends(require_user)):
-    return get_quiz_stats(_user["id"])
+async def quiz_stats(_user: CurrentUserDep):
+    return await get_quiz_stats(_user["id"])
 
 
 # ── 롤플레잉 — 회원 전용 ───────────────────────────────────
-def _roleplay_words(user_id: str, scenario: str, tag: str | None):
+async def _roleplay_words(user_id: str, scenario: str, tag: str | None):
     """모드에 맞는 단어 목록을 고른다.
 
     태그 모드일 때만 해당 태그의 단어를 가져와 "활용 연습" 대상 어휘로 쓴다.
     OPIc/일반 모드는 단어장에 의존하지 않으므로 빈 목록을 반환한다.
     """
     if (scenario or "").lower() == "tag" and tag:
-        return get_all_words(user_id, tag)
+        return await get_all_words(user_id, tag)
     return []
 
 
@@ -513,8 +517,8 @@ def _needs_translation(value: str) -> bool:
 
 
 @router.post("/roleplay/start")
-def roleplay_start(payload: RoleplayStartIn, _user: dict = Depends(require_user)):
-    words = _roleplay_words(_user["id"], payload.scenario, payload.tag)
+async def roleplay_start(payload: RoleplayStartIn, _user: CurrentUserDep):
+    words = await _roleplay_words(_user["id"], payload.scenario, payload.tag)
     reply = start_roleplay(
         level=payload.level,
         scenario=payload.scenario,
@@ -527,10 +531,10 @@ def roleplay_start(payload: RoleplayStartIn, _user: dict = Depends(require_user)
 
 
 @router.post("/roleplay/continue")
-def roleplay_continue(payload: RoleplayContinueIn, _user: dict = Depends(require_user)):
+async def roleplay_continue(payload: RoleplayContinueIn, _user: CurrentUserDep):
     # LLM 맥락용으로는 (user, bot)만 필요(코칭 제외).
     context = [(t[0], t[1]) for t in (_norm_turn(h) for h in payload.history)]
-    words = _roleplay_words(_user["id"], payload.scenario, payload.tag)
+    words = await _roleplay_words(_user["id"], payload.scenario, payload.tag)
     result = continue_roleplay(
         context,
         payload.message,
@@ -547,7 +551,7 @@ def roleplay_continue(payload: RoleplayContinueIn, _user: dict = Depends(require
 
 
 @router.post("/roleplay/summary")
-def roleplay_summary(payload: RoleplaySummaryIn, _user: dict = Depends(require_user)):
+async def roleplay_summary(payload: RoleplaySummaryIn, _user: CurrentUserDep):
     """대화 전체에서 요약 + 유용 표현 + 유용 어휘를 추출하고(LLM 1회) 학습노트에 저장한다."""
     context = [(t[0], t[1]) for t in (_norm_turn(h) for h in payload.history)]
     result = summarize_roleplay(
@@ -559,7 +563,7 @@ def roleplay_summary(payload: RoleplaySummaryIn, _user: dict = Depends(require_u
     )
     # 사용자 발화 턴 수 = history에서 user가 있는 항목 수
     turns = sum(1 for u, _b in context if (u or "").strip())
-    session_id = save_roleplay_session(
+    session_id = await save_roleplay_session(
         _user["id"],
         payload.level,
         payload.scenario,
@@ -574,7 +578,7 @@ def roleplay_summary(payload: RoleplaySummaryIn, _user: dict = Depends(require_u
 
 
 @router.post("/roleplay/save-words")
-def roleplay_save_words(payload: RoleplaySaveWordsIn, _user: dict = Depends(require_user)):
+async def roleplay_save_words(payload: RoleplaySaveWordsIn, _user: CurrentUserDep):
     """정리 페이지에서 선택한 어휘를 단어장에 저장한다(insert_words 재사용)."""
     tag = (payload.tag or "미지정").strip() or "미지정"
     items = []
@@ -597,17 +601,17 @@ def roleplay_save_words(payload: RoleplaySaveWordsIn, _user: dict = Depends(requ
         })
     if not items:
         return {"ok": False, "added": 0, "skipped": 0}
-    result = insert_words(_user["id"], items)
+    result = await insert_words(_user["id"], items)
     return {"ok": True, **result}
 
 
 @router.get("/roleplay/sessions")
-def roleplay_sessions(_user: dict = Depends(require_user)):
+async def roleplay_sessions(_user: CurrentUserDep):
     """학습노트: 저장된 롤플레잉 결과 목록(최신순)."""
-    return {"sessions": get_roleplay_sessions(_user["id"])}
+    return {"sessions": await get_roleplay_sessions(_user["id"])}
 
 
 @router.delete("/roleplay/sessions/{session_id}")
-def roleplay_session_delete(session_id: int, _user: dict = Depends(require_user)):
-    ok = delete_roleplay_session(_user["id"], session_id)
+async def roleplay_session_delete(session_id: int, _user: CurrentUserDep):
+    ok = await delete_roleplay_session(_user["id"], session_id)
     return {"ok": ok}

@@ -42,14 +42,6 @@ class Settings(BaseSettings):
             return self.database_url.replace("postgres://", "postgresql+asyncpg://", 1)
         return self.database_url
 
-    @property
-    def sync_database_url(self) -> str:
-        if self.database_url.startswith("postgresql+asyncpg://"):
-            return self.database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
-        if self.database_url.startswith("postgres://"):
-            return self.database_url.replace("postgres://", "postgresql://", 1)
-        return self.database_url
-
 
 @lru_cache
 def get_settings() -> Settings:

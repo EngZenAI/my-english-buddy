@@ -1,9 +1,5 @@
 import logging
-from functools import lru_cache
 from typing import Any
-
-from psycopg2.extensions import connection as PsycopgConnection
-from psycopg2.extensions import cursor as PsycopgCursor
 
 logger = logging.getLogger("backend.db.sql")
 
@@ -43,36 +39,3 @@ def enable_sql_logging(*, include_params: bool = False) -> None:
         handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
         logger.addHandler(handler)
     logger.propagate = False
-
-
-class LoggingCursorMixin:
-    def execute(self, query, vars=None):
-        log_sql(query, vars)
-        return super().execute(query, vars)
-
-    def executemany(self, query, vars_list):
-        log_sql(query, vars_list, many=True)
-        return super().executemany(query, vars_list)
-
-
-class LoggingCursor(LoggingCursorMixin, PsycopgCursor):
-    pass
-
-
-@lru_cache
-def _logging_cursor_factory(cursor_factory):
-    return type(
-        "Logging%s" % cursor_factory.__name__,
-        (LoggingCursorMixin, cursor_factory),
-        {},
-    )
-
-
-class LoggingConnection(PsycopgConnection):
-    def cursor(self, *args, **kwargs):
-        cursor_factory = kwargs.get("cursor_factory")
-        if cursor_factory is None:
-            kwargs["cursor_factory"] = LoggingCursor
-        else:
-            kwargs["cursor_factory"] = _logging_cursor_factory(cursor_factory)
-        return super().cursor(*args, **kwargs)

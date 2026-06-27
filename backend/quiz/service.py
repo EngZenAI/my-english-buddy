@@ -13,7 +13,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from backend.config import settings
-from backend.db.legacy import (
+from backend.db.repositories import (
     apply_quiz_review_schedule,
     complete_quiz_session,
     create_quiz_session,
@@ -679,7 +679,7 @@ def _public_question(question: dict[str, Any]) -> QuizQuestion:
     )
 
 
-def generate_assignment(
+async def generate_assignment(
     user_id: str,
     words: list[dict[str, Any]],
     goal: QuizGenerateIn,
@@ -716,7 +716,7 @@ def generate_assignment(
             "코드가 임의 문항을 보충하지 않았습니다."
         )
 
-    session_id = create_quiz_session(user_id, _goal_payload(goal), count)
+    session_id = await create_quiz_session(user_id, _goal_payload(goal), count)
     return QuizGenerateResponse(
         ok=True,
         message=message,
@@ -794,7 +794,7 @@ def _review_schedule_preview(records: list[dict[str, Any]]) -> list[QuizReviewSc
     return preview
 
 
-def grade_assignment(
+async def grade_assignment(
     user_id: str,
     answer_token: str,
     answers: list[dict[str, str]],
@@ -813,7 +813,7 @@ def grade_assignment(
     records: list[dict[str, Any]] = []
     score = 0.0
     type_stats: dict[str, dict[str, float]] = {}
-    saved_words = existing_words_lower(user_id)
+    saved_words = await existing_words_lower(user_id)
 
     for question in payload["questions"]:
         question_id = question["id"]
@@ -936,8 +936,8 @@ def grade_assignment(
         )
 
     total = len(results)
-    save_quiz_question_results(user_id, session_id, records)
-    complete_quiz_session(user_id, session_id, score, total)
+    await save_quiz_question_results(user_id, session_id, records)
+    await complete_quiz_session(user_id, session_id, score, total)
     review_schedule_preview = _review_schedule_preview(records)
 
     normalized_stats = {
@@ -964,11 +964,11 @@ def grade_assignment(
     )
 
 
-def apply_review_schedule(
+async def apply_review_schedule(
     user_id: str,
     session_id: int,
     incorrect_interval: str = "1d",
 ) -> QuizReviewScheduleApplyResponse:
     return QuizReviewScheduleApplyResponse(
-        **apply_quiz_review_schedule(user_id, session_id, incorrect_interval)
+        **await apply_quiz_review_schedule(user_id, session_id, incorrect_interval)
     )
