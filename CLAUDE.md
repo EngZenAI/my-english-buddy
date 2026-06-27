@@ -24,7 +24,8 @@ english-app/
 │   │   └── auth.py          # 인증 (FastAPI-Users: 이메일+구글 OAuth, 비번재설정 등)
 │   ├── services.py          # UI 비의존 순수 로직 (검색 조합, 포맷, gTTS) — 병렬 호출
 │   ├── dictionary.py        # 외부 API: 사전(dictionaryapi.dev) + 번역(Google) + LRU 캐시
-│   ├── database.py          # Postgres 접근 (psycopg2 풀) + 스키마/마이그레이션 + 단어/태그 CRUD
+│   ├── db/                  # SQLAlchemy 2 async 세션/모델/Repository + 스키마 초기화
+│   ├── database.py          # DB 호환 re-export
 │   ├── llm.py               # LangChain/LangGraph: 퀴즈 생성·채점, 롤플레잉, 슬랭 설명
 │   └── auth/                # FastAPI-Users 모델/매니저/의존성 (User, AccessToken, OAuthAccount)
 └── frontend/                # React + Vite + Tailwind (구버전 Gradio는 제거됨)
@@ -119,8 +120,8 @@ cd frontend && npm run dev              # 5173 (여기로 접속; /api·/auth는
 - **성능**: 검색은 사전 조회+번역을 병렬 실행, dictionary.py에 LRU 캐시. 디바운스 150ms +
   프론트 클라이언트 캐시 + 요청 시퀀스(reqSeq)로 stale 응답 무시. 단어 저장여부 확인은 검색
   결과 표시를 막지 않도록 별도(`/api/words/saved`)로 뒤따라 갱신.
-- **DB 연결 풀**: psycopg2 `ThreadedConnectionPool` 사용. (매 요청 새 원격 연결 = TLS 핸드셰이크
-  수백 ms 지연이라 풀로 재사용.)
+- **DB 접근**: SQLAlchemy 2 async 엔진/세션 사용. FastAPI 라우터는 `SessionDep`
+  (`Annotated[AsyncSession, Depends(...)]`)로 요청 단위 세션을 주입받고 repository에 전달한다.
 
 ---
 
@@ -128,8 +129,8 @@ cd frontend && npm run dev              # 5173 (여기로 접속; /api·/auth는
 
 - **백엔드 코드 바꾸면 uvicorn 재시작 필요.** 특히 `init_db()`(스키마/마이그레이션)는 시작 시 1회 실행.
 - **프론트 코드 바꾸면 `npm run build` 다시 해야** 8000에서 반영(또는 dev 서버는 자동).
-- **api.py ↔ database.py 시그니처 동기화 주의.** database.py 함수가 user_id를 받는데 api.py가
-  안 넘기면 런타임 에러. (이번에 한 번 어긋났다 고친 이력 있음.)
+- **api.py ↔ db/repositories.py 시그니처 동기화 주의.** repository 함수는 `AsyncSession`과
+  `user_id`를 받는다. 라우터는 `SessionDep`로 세션을 받고 `_user["id"]`와 함께 넘긴다.
 - **DB 마이그레이션은 init_db 안에서 `ALTER TABLE ... IF EXISTS / 가드 DO 블록`으로 처리.**
   과거 변경 이력: context→tag 컬럼명 변경, phonetic 제거, korean_detail 추가, words/labels에
   user_id 추가 및 유니크 인덱스 전환, next_review 기본값 7일, **`sort_order` INTEGER 추가 + 기존행
@@ -179,7 +180,7 @@ cd frontend && npm run dev              # 5173 (여기로 접속; /api·/auth는
 ## 단어장 버그 수정 — 별도 작업 스펙
 
 실제 사용 중 발견된 버그/개선. 관련 파일: `frontend/src/tabs/SearchTab.jsx`,
-`frontend/src/tabs/WordbookTab.jsx`, `backend/routers/api.py`, `backend/database.py`.
+`frontend/src/tabs/WordbookTab.jsx`, `backend/routers/api.py`, `backend/db/repositories.py`.
 
 1. **태그 편집에 '태그 추가' 추가** (현재는 SearchTab에서만 추가 가능 → 불편).
    - WordbookTab의 태그 편집 모드(`editMode`)에 입력칸+‘추가’ 버튼 → `api.addLabel(name)` 호출.
@@ -290,5 +291,5 @@ cd frontend && npm run dev              # 5173 (여기로 접속; /api·/auth는
 - (완료) 단어장 단어 개별/일괄 편집·삭제·정렬·CSV/XLSX 가져오기.
 
 > 새 세션에서 이어서 개발할 때: 이 문서로 큰 그림을 잡고, 구체적 구현은
-> `backend/database.py`(스키마·user_id 스코프), `backend/routers/api.py`(엔드포인트),
+> `backend/db/repositories.py`(DB 접근·user_id 스코프), `backend/routers/api.py`(엔드포인트),
 > `frontend/src/api.js`(클라이언트), `frontend/src/tabs/*`(화면)를 먼저 읽으면 빠르게 파악됨.

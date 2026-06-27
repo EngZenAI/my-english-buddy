@@ -168,7 +168,6 @@ english-learning-app/
 ├── backend/
 │   ├── requirements.txt
 │   ├── main.py        # FastAPI 엔트리 (REST API + React 정적 서빙)
-│   ├── app.py         # (구) Gradio UI — 미사용, 참고용
 │   ├── services.py    # 검색/포맷/TTS 순수 로직 (UI 비의존)
 │   ├── routers/
 │   │   ├── api.py     # React용 REST 엔드포인트
