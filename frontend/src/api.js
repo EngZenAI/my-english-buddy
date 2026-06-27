@@ -199,12 +199,53 @@ export const api = {
   quizStats: () => jsonFetch("/api/quiz/stats"),
 
   // ── 롤플레잉 ──
-  roleplayStart: () => jsonFetch("/api/roleplay/start", { method: "POST" }),
-  roleplayContinue: (history, message) =>
+  // opts: { level, scenario, tag, situation } — 세션 설정. 매 턴 함께 전달해 일관 유지.
+  roleplayStart: (opts = {}) =>
+    jsonFetch("/api/roleplay/start", {
+      method: "POST",
+      body: JSON.stringify({
+        level: opts.level ?? "intermediate",
+        scenario: opts.scenario ?? "general",
+        tag: opts.tag ?? null,
+        situation: opts.situation ?? "",
+      }),
+    }),
+  roleplayContinue: (history, message, opts = {}) =>
     jsonFetch("/api/roleplay/continue", {
       method: "POST",
-      body: JSON.stringify({ history, message }),
+      body: JSON.stringify({
+        history,
+        message,
+        level: opts.level ?? "intermediate",
+        scenario: opts.scenario ?? "general",
+        tag: opts.tag ?? null,
+        situation: opts.situation ?? "",
+        wrap_up: opts.wrapUp ?? false,
+      }),
     }),
+  // 대화 종료 후 정리: 요약 + 유용 표현 + 유용 어휘 추출
+  roleplaySummary: (history, opts = {}) =>
+    jsonFetch("/api/roleplay/summary", {
+      method: "POST",
+      body: JSON.stringify({
+        history,
+        level: opts.level ?? "intermediate",
+        scenario: opts.scenario ?? "general",
+        tag: opts.tag ?? null,
+        situation: opts.situation ?? "",
+        title: opts.title ?? "",
+      }),
+    }),
+  // 정리 페이지에서 선택한 어휘를 단어장에 저장
+  roleplaySaveWords: (items, tag = null) =>
+    jsonFetch("/api/roleplay/save-words", {
+      method: "POST",
+      body: JSON.stringify({ items, tag }),
+    }),
+  // 학습노트: 저장된 롤플레잉
+  roleplaySessions: () => jsonFetch("/api/roleplay/sessions"),
+  roleplayDeleteSession: (id) =>
+    jsonFetch(`/api/roleplay/sessions/${id}`, { method: "DELETE" }),
 };
 
 export const GOOGLE_LOGIN_URL = `${BACKEND_ORIGIN}/auth/google/login`;

@@ -90,6 +90,7 @@ export default function App() {
   const [tab, setTab] = useState("search");
   const [authCompleteFailed, setAuthCompleteFailed] = useState(false);
   const [quizState, setQuizState] = useState(createInitialQuizState);
+  const [roleplayInstanceKey, setRoleplayInstanceKey] = useState(0);
 
   const { data: meData, isPending: authLoading } = useQuery({
     queryKey: queryKeys.me,
@@ -153,6 +154,7 @@ export default function App() {
     queryClient.removeQueries({ queryKey: ["word-saved"] });
     queryClient.removeQueries({ queryKey: ["label-word-count"] });
     setQuizState(createInitialQuizState());
+    setRoleplayInstanceKey((key) => key + 1);
     goToView("home");
   };
 
@@ -294,12 +296,22 @@ export default function App() {
             ))}
           </div>
 
-          <ActiveTab
-            user={user}
-            onRequireLogin={() => startLogin({ view: "home", tab })}
-            quizState={quizState}
-            setQuizState={setQuizState}
-          />
+          {tab !== "roleplay" && (
+            <ActiveTab
+              user={user}
+              onRequireLogin={() => startLogin({ view: "home", tab })}
+              quizState={quizState}
+              setQuizState={setQuizState}
+            />
+          )}
+
+          <div className={tab === "roleplay" ? "" : "hidden"}>
+            <RoleplayTab
+              key={roleplayInstanceKey}
+              user={user}
+              onRequireLogin={() => startLogin({ view: "home", tab: "roleplay" })}
+            />
+          </div>
         </>
       )}
     </div>

@@ -159,7 +159,9 @@ cd frontend && npm run dev              # 5173 (여기로 접속; /api·/auth는
     `POST /api/words/bulk-update`(일괄편집), `POST /api/words/bulk-delete`(다중삭제),
     `POST /api/words/reorder`(순서저장), `POST /api/words/import/preview`·`/import/commit`(가져오기 2단계).
   - 태그: `GET/POST /api/labels`, `POST /api/labels/rename`, `DELETE /api/labels?name=`, `GET /api/labels/word-count?tag=`.
-  - LLM: `POST /api/slang`, `POST /api/quiz/generate|grade`, `POST /api/roleplay/start|continue`.
+  - LLM/롤플레잉: `POST /api/slang`, `POST /api/quiz/generate|grade`,
+    `POST /api/roleplay/start|continue|summary|save-words`,
+    `GET /api/roleplay/sessions`, `DELETE /api/roleplay/sessions/{id}`.
 - 인증(backend/routers/auth.py): 이메일 로그인/회원가입, 구글 OAuth, 로그아웃, 비번 재설정 등.
 
 ---
@@ -167,12 +169,14 @@ cd frontend && npm run dev              # 5173 (여기로 접속; /api·/auth는
 ## 브랜치/협업 상태
 - 단어장(WordbookTab) 작업은 `feature/wordbook-ux` 브랜치에서 진행됨 → develop에 머지 예정.
 - **퀴즈탭(QuizTab)은 팀원이 다른 브랜치에서 개발 중** → 충돌 방지 위해 건드리지 말 것.
-- **다음 작업 순서: (1) 단어장 버그 수정(아래 "단어장 버그 수정 스펙") → (2) 롤플레잉탭(RoleplayTab).**
-  버그 수정은 새 브랜치(예: `feature/wordbook-fixes`), 롤플레잉은 그 후 `feature/roleplay`.
+- **롤플레잉탭(RoleplayTab)은 `feature/roleplay`에서 1차 완성 상태.**
+  모드·레벨·예시카드 UX, 대화 중 코칭, 대화 마무리/정리, 학습노트 저장·조회·삭제,
+  토큰 보호용 마무리 안내, 탭 이동 시 대화 유지까지 구현됨. 상세는 아래 "롤플레잉탭" 섹션.
+- 단어장 버그 수정 스펙(아래)은 별도 작업 — 새 브랜치(예: `feature/wordbook-fixes`).
 
 ---
 
-## 다음 세션(먼저): 단어장 버그 수정 — 스펙
+## 단어장 버그 수정 — 별도 작업 스펙
 
 실제 사용 중 발견된 버그/개선. 관련 파일: `frontend/src/tabs/SearchTab.jsx`,
 `frontend/src/tabs/WordbookTab.jsx`, `backend/routers/api.py`, `backend/database.py`.
@@ -204,33 +208,79 @@ cd frontend && npm run dev              # 5173 (여기로 접속; /api·/auth는
 
 ---
 
-## 다음 세션(그 후): 롤플레잉탭(RoleplayTab) 재설계 — 스펙
+## 롤플레잉탭(RoleplayTab) — 1차 완성 상태
 
-**목표/컨셉**: 사용자의 영어 *회화* 능력 강화. "원어민 친구/애인과 WhatsApp·카톡으로 채팅하는 느낌"
-— 실시간 말하기가 어려운 상황(카페·가족과 함께 등)에서도 텍스트로 몰입 학습. AI는 단순 핑퐁이
-아니라 **대화 스킬을 갖춘 원어민 + 스피킹테스트 면접관**처럼, 채점항목을 의식하며 사용자의
-아이디어·의견·호응을 끌어내고 다음 질문으로 이어감.
+> 브랜치 `feature/roleplay`. 롤플레잉 1·2·3단계와 학습노트까지 구현 완료.
+> 이제 큰 기능 추가보다 **직접 사용하면서 버그 수정·UX 다듬기·결과 품질 개선**을 하는 단계.
 
-**핵심 요구사항**
-- **레벨 적응**: beginner / intermediate / advanced 선택 → 그 수준에 맞춰 AI 어휘·속도·질문 난이도 조절.
-- **상황극 시나리오**:
-  - OPIc 시험 상황극(자기소개, 롤플레이 등 OPIc 포맷).
-  - **단어장 태그 기반 상황극**(여행/비즈니스/일상 등 사용자가 고른 태그 → 그 맥락의 역할극).
-- **실시간 피드백(대화 중)**: AI는 답만 하지 말고, 사용자 답변에 코칭을 곁들일 것 —
-  너무 쉬운 어휘 → 고급 어휘 제안 / 단조로운 표현 → 원어민다운 표현 제안 / 매끄러운 답변 구조 제안.
-  (피드백이 대화 몰입을 깨지 않게 톤·분량 조절 — 예: 답변 뒤 작은 코칭 블록.)
-- **대화 종료 후 정리**:
-  - 이번 대화에서 쓸 만한 표현/어휘·예문을 정리해 제안.
-  - **단어장 DB에 추가 제안** → 태그는 `어휘`/`예문` 또는 해당 상황 태그(여행·비즈니스 등) 중 선택.
-    수락 시 DB에 추가(기존 `insert_words`/`save_word` 재사용; 새 기본 태그 `어휘`/`예문` 필요 여부 검토).
+**목적(중요)**: 단어 *복습*이 아니라 **실전 원어민 회화 연습**이다. "원어민 친구/애인과
+카톡·WhatsApp으로 채팅하는 느낌"으로, AI가 상황 속 상대역을 맡아 사용자가 영어로 말하게
+만들고 배운 표현을 실제로 써보게 한다. (※ 과거 "복습단어를 대화에 끼워넣어 복습" 컨셉은 폐기됨.)
 
-**구현 메모(시작점)**
-- 기존: `llm.py`의 `start_roleplay`/`continue_roleplay`(LangChain, 카페 직원 역할 고정) + api `roleplay/start|continue`
-  + `frontend/src/tabs/RoleplayTab.jsx`. 이걸 위 스펙으로 확장.
-- 레벨·시나리오·태그를 프롬프트에 주입. 피드백/채점 관점을 시스템 프롬프트에 명시(면접관 루브릭).
-- 종료 후 "표현 추출 → 단어장 추가 제안" 흐름은 단어장 쪽 함수(`get_labels`, `insert_words`) 연동.
-- LLM은 WatsonX(만료 가능) 또는 Ollama. 비용/지연 고려해 호출 최소화(턴마다 1회).
-- 데이터 패칭은 react-query 표준 사용.
+**세 가지 모드(scenario)** — 사용자가 상단에서 모드를 고르고, 예시 카드를 클릭하면 즉시 시작:
+- `opic`: OPIc 설문형 상황극. 고정 예시 카드(예: "환자가 되어 병원에 전화해 예약 미루기")의
+  `situation`이 시스템 프롬프트로 주입되고 AI가 상대역(접수원 등)을 맡는다.
+- `tag`: 사용자 단어장 태그(예: `car_konglish`, `여행`, `뉴스기사`)를 주제로 한 대화. **단어가 있는
+  태그만** 칩으로 노출(`미지정` 제외). 그 태그의 단어를 "써볼 기회를 만들어주는" 용도로 전달(암기
+  점검 아님). 쓸 만한 태그가 없으면(미정리 사용자) 안내 + `general`/`opic` 전환 버튼 노출.
+- `general`: 자유 주제 상황극. 고정 예시 카드(카페 바리스타·경기장 매점 알바·면접 등) + **직접 입력칸**.
+  입력값/카드의 `situation`을 프롬프트에 주입.
+
+**1단계 구현 완료 — 대화 시작 UX**
+- **레벨 적응**: beginner/intermediate/advanced → 어휘·속도·질문 난이도 조절(`ROLEPLAY_LEVEL_GUIDES`).
+- **단일 화면 UX**: 상단 레벨·모드 칩 선택 → 바로 아래 예시 카드 → 그 아래 채팅창(항상 표시).
+  세부 설정 강요 없이 **카드/태그/자유주제 클릭 즉시 대화 시작**. 레벨·모드 변경 시 대화 초기화,
+  진행 중엔 상황 칩 + "다른 상황 고르기".
+- **독립 LLM 프로필**: `FEATURE_MODEL_PROFILES["roleplay"]` = `meta-llama/llama-3-3-70b-instruct`
+  (`temperature 0.7`, `max_tokens 512`, `top_p 0.9`). 슬랭(`default`)·퀴즈(`quiz`)와 완전 분리.
+  `get_llm("roleplay")`로 받아 씀. WatsonX 미프로비저닝 시 Ollama(qwen) 자동 폴백.
+- 예시 카드는 **프론트 코드 상수**(`OPIC_CARDS`/`GENERAL_CARDS`)로 고정 — 즉시 시작·빠름·편집 쉬움.
+
+**데이터/엔드포인트 계약**
+- `POST /api/roleplay/start` body: `{level, scenario, tag, situation}` → `{history: [[user,bot],...]}`.
+- `POST /api/roleplay/continue` body: 위 + `{history, message}`. 엔드포인트는 **stateless** —
+  프론트가 세션 설정(level/scenario/tag/situation)을 **매 턴 함께 전달**해 일관성 유지.
+- 단어 선택: `tag` 모드만 `get_all_words(user_id, tag)`로 단어를 싣고, OPIc/일반은 단어장 비의존.
+- 프론트 `history`는 **객체 메시지 `{role, text}` 리스트**로 관리하고, 백엔드 튜플과는 경계에서 변환
+  (`pairsToMessages`/`messagesToPairs`). 코칭/표현추출까지 포함하기 위해 객체 구조 채택.
+- 관련 파일: `backend/llm.py`(§5 롤플레잉), `backend/routers/api.py`, `frontend/src/api.js`,
+  `frontend/src/tabs/RoleplayTab.jsx`. 데이터 패칭은 react-query 표준.
+
+**2단계 구현 완료 — 대화 중 실시간 코칭**
+- `continue_roleplay`가 `{reply, coaching}`(JSON) 반환. 코칭 모드 시스템 프롬프트로 LLM이
+  학습자 최근 발화에 대한 한국어 팁(더 자연스러운 표현/문법 교정)을 내고, 깨진 JSON·코드펜스까지
+  방어하는 `_parse_coached` 파서로 파싱. 교정은 답변 본문이 아닌 coaching 필드로 분리(몰입 유지).
+- history 항목이 `[user, bot, coaching]` 3-튜플로 확장. 프론트는 봇 버블 아래 💡 코칭 블록(앰버)으로 렌더.
+
+**3단계 구현 완료 — 대화 마무리 + 정리 + 학습노트(DB)**
+- **대화 길이 제어/토큰 보호**: 사용자 발화 5턴부터 "대화가 충분히 진행됐어요. 마무리할까요?"
+  안내 표시, 6턴부터 `continue`에 `wrap_up=true` 전달 → 시스템 프롬프트가 새 주제 없이 자연스럽게
+  마무리하도록 유도. 8턴부터는 추가 입력을 막고 정리 버튼만 남김. 진행 중엔 언제든 수동 종료 가능.
+- **정리 페이지**: `summarize_roleplay`(LLM 1회)가 `{summary, expressions[], vocab[]}` 추출
+  (`_parse_summary` 견고 파서). 요약 + 유용 표현(목록) + 유용 어휘(체크박스+태그 선택 → `insert_words` 재사용 저장).
+  정리 프롬프트는 "다음 유사 상황에서 바로 재사용할 수 있는 표현/어휘" 위주로 고르고,
+  `so on`, `good luck` 같은 약한 filler는 그대로 뽑지 않도록 제한.
+- **결과 저장(학습노트)**: `/api/roleplay/summary` 호출 시 `roleplay_sessions` 테이블에 자동 저장
+  (level/scenario/tag/title/turns/summary/expressions(JSONB)/vocab(JSONB)/created_at).
+  **학습노트 탭(`LearningNotesTab`)** 에서 세션 카드(요약·표현·어휘·메타)로 조회·삭제.
+  삭제 시 항목별 `삭제 중` 스피너와 카드 비활성화 표시.
+- **단어장 저장 보강**: 롤플레잉 어휘를 단어장에 저장할 때 `korean`이 비어 있거나 실패값이면
+  `translate_korean()`으로 Google Translation API 번역을 채워 저장.
+- **상태 유지**: `App.jsx`에서 롤플레잉 탭은 메인 탭 전환 시 언마운트하지 않고 숨김 처리.
+  대화 중 검색/단어장/퀴즈/학습노트로 이동해도 채팅·정리 상태가 유지됨. 로그아웃 시에는 새 인스턴스로 초기화.
+- **신규 엔드포인트**: `POST /api/roleplay/summary`·`/save-words`, `GET /api/roleplay/sessions`,
+  `DELETE /api/roleplay/sessions/{id}`. DB 함수: `save/get/delete_roleplay_session`.
+
+**이제 할 일 — 실사용 기반 QA/개선**
+- 직접 여러 시나리오(OPIc/tag/general)를 사용하면서 대화 흐름이 어색한 카드/프롬프트를 조정.
+- 정리 결과의 "유용한 표현/어휘" 품질을 실제 출력 기준으로 계속 개선(너무 쉬운 표현, 상황과 무관한 단어 제거).
+- 코칭이 너무 잦거나 길어 몰입을 깨는지 확인하고 문구/빈도 조정.
+- 토큰 보호 안내(5턴/6턴/8턴)가 너무 이르거나 늦은지 실제 사용감으로 조정.
+- 모바일 화면에서 채팅창, 마무리 안내, 학습노트 카드가 겹치거나 답답하지 않은지 점검.
+- 저장/삭제/탭 전환/로그아웃 같은 상태 전환 버그를 사용하면서 발견 즉시 수정.
+
+> 환경 이슈 주의: 큰 프론트/백 파일 저장 시 끝부분 잘림(또는 멀티바이트 절단)이 자주 발생함.
+> 저장 후 파일 끝(닫는 `}`/`);`)과 빌드(`npm run build`/`py_compile`)를 꼭 확인할 것.
 
 ## 다음에 할 만한 일 (TODO)
 - 망각곡선 복습 알림(푸시/스케줄).
