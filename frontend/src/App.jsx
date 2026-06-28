@@ -10,6 +10,7 @@ import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
 import FindIdPage from "./pages/FindIdPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
+import MyPage from "./pages/MyPage";
 
 const TABS = [
   { id: "search", label: "🔍 단어 검색", Comp: SearchTab },
@@ -122,6 +123,11 @@ export default function App() {
     saveReturnTarget({ view: "home", tab });
   };
 
+  const goToHomeTab = (nextTab) => {
+    setTab(nextTab);
+    goToView("home");
+  };
+
   const completeLogin = async () => {
     try {
       const { user: nextUser } = await queryClient.fetchQuery({
@@ -151,6 +157,8 @@ export default function App() {
     sessionStorage.removeItem(AUTH_RETURN_KEY);
     queryClient.setQueryData(queryKeys.me, { user: null });
     queryClient.removeQueries({ queryKey: queryKeys.labels });
+    queryClient.removeQueries({ queryKey: ["mypage"] });
+    queryClient.removeQueries({ queryKey: ["account"] });
     queryClient.removeQueries({ queryKey: ["words"] });
     queryClient.removeQueries({ queryKey: ["word-saved"] });
     queryClient.removeQueries({ queryKey: ["label-word-count"] });
@@ -228,6 +236,13 @@ export default function App() {
         </button>
         {user ? (
           <>
+            <button
+              onClick={() => goToView("mypage")}
+              className="h-9 px-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50
+                         text-sm font-semibold"
+            >
+              마이페이지
+            </button>
             <span className="text-sm text-slate-500 max-w-[240px] truncate">
               로그인됨: {user.email}
             </span>
@@ -297,6 +312,15 @@ export default function App() {
       )}
       {view === "find-id" && <FindIdPage onNavigate={goToView} />}
       {view === "forgot-password" && <ForgotPasswordPage onNavigate={goToView} />}
+
+      {!authLoading && view === "mypage" && (
+        <MyPage
+          user={user}
+          onRequireLogin={() => startLogin({ view: "mypage" })}
+          onOAuthStart={() => saveReturnTarget({ view: "mypage" })}
+          onOpenTab={goToHomeTab}
+        />
+      )}
 
       {!authLoading && view === "home" && (
         <>

@@ -26,6 +26,22 @@ const BACKEND_ORIGIN =
 export const api = {
   // ── 인증 상태 ──
   me: () => jsonFetch("/api/me"),
+  myPageOverview: () => jsonFetch("/api/mypage/overview"),
+  myPageLearning: () => jsonFetch("/api/mypage/learning"),
+  myPageActivity: () => jsonFetch("/api/mypage/activity"),
+  accountStatus: () => jsonFetch("/api/account/status"),
+  updateAccountPassword: (currentPassword, newPassword) =>
+    jsonFetch("/api/account/password", {
+      method: "POST",
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+      }),
+    }),
+  disconnectOAuth: (provider) =>
+    jsonFetch(`/api/account/oauth/${encodeURIComponent(provider)}`, {
+      method: "DELETE",
+    }),
 
   login: async (email, password) => {
     const form = new URLSearchParams();

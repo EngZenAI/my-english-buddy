@@ -30,6 +30,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama import ChatOllama
 from langgraph.graph import END, StateGraph
 
+from backend.api_usage import track_llm_usage
+
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", encoding="utf-8-sig")
 logger = logging.getLogger(__name__)
 
@@ -177,6 +179,31 @@ logger.info("[OK] 기본 모델: %s", ACTIVE_MODEL)
 parser = StrOutputParser()
 
 
+def _invoke_tracked_llm(feature: str, operation: str, prompt_value) -> str:
+    model_name = get_active_model_name(feature)
+    try:
+        response = get_llm(feature).invoke(prompt_value)
+    except Exception:
+        track_llm_usage(
+            feature=feature,
+            operation=operation,
+            model_name=model_name,
+            input_value=prompt_value,
+            success=False,
+        )
+        raise
+    text = parser.invoke(response)
+    track_llm_usage(
+        feature=feature,
+        operation=operation,
+        model_name=model_name,
+        input_value=prompt_value,
+        response=response,
+        output_value=text,
+    )
+    return text
+
+
 # ══════════════════════════════════════════════════════════════════════
 # 3. 퀴즈 — 생성 & 채점
 # ══════════════════════════════════════════════════════════════════════
@@ -308,8 +335,8 @@ Respond in Korean using this format:
 🔗 비슷한 표현
 [2~3개]
 """)
-    chain = prompt | llm | parser
-    return chain.invoke({"word": word, "kor_word": kor_word})
+    prompt_value = prompt.invoke({"word": word, "kor_word": kor_word})
+    return _invoke_tracked_llm("slang", "explain", prompt_value)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -508,8 +535,8 @@ def start_roleplay(
         ("system", system),
         ("human", "Start the role-play now: set the scene briefly, then greet me and ask your first question."),
     ])
-    chain = prompt | get_llm("roleplay") | parser
-    return chain.invoke({})
+    prompt_value = prompt.invoke({})
+    return _invoke_tracked_llm("roleplay", "start", prompt_value)
 
 
 def continue_roleplay(
@@ -548,8 +575,6 @@ def continue_roleplay(
         ("placeholder", "{history}"),  # 이전 대화가 여기로 펼쳐진다
         ("human", "{user_msg}"),
     ])
-    chain = prompt | get_llm("roleplay") | parser
-
     # 튜플 history → LangChain 메시지(role, content) 리스트로 변환.
     lc_history = []
     for user, bot in history:
@@ -558,7 +583,8 @@ def continue_roleplay(
         if bot:
             lc_history.append(("assistant", bot))
 
-    raw = chain.invoke({"history": lc_history, "user_msg": user_msg})
+    prompt_value = prompt.invoke({"history": lc_history, "user_msg": user_msg})
+    raw = _invoke_tracked_llm("roleplay", "continue", prompt_value)
     return _parse_coached(raw)
 
 
@@ -650,6 +676,6 @@ def summarize_roleplay(
         return {"summary": "", "expressions": [], "vocab": []}
 
     prompt = ChatPromptTemplate.from_template(_ROLEPLAY_SUMMARY_TEMPLATE)
-    chain = prompt | get_llm("roleplay") | parser
-    raw = chain.invoke({"transcript": transcript})
+    prompt_value = prompt.invoke({"transcript": transcript})
+    raw = _invoke_tracked_llm("roleplay", "summary", prompt_value)
     return _parse_summary(raw)

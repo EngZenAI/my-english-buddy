@@ -12,8 +12,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
-from backend.auth.users import get_current_user_from_cookie
+from backend.api_usage import start_usage_capture, stop_usage_capture
+from backend.auth.password_reset import PasswordResetError, validate_reset_password
+from backend.auth.users import get_current_user_from_cookie, password_helper
 from backend.dictionary import translate_korean
 from backend.db.dependencies import SessionDep
 from backend.db.repositories import (
@@ -24,19 +27,27 @@ from backend.db.repositories import (
     count_words_by_tag,
     delete_label,
     delete_word,
+    disconnect_oauth_account,
     existing_words_lower,
+    get_account_status,
     get_all_words,
+    get_activity_summary,
     get_quiz_stats,
+    get_user_password_hash,
     get_words_for_quiz,
     get_labels,
+    get_mypage_learning,
+    get_mypage_overview,
     get_roleplay_sessions,
     insert_words,
     is_word_saved,
+    record_api_usage_events,
     rename_label,
     reorder_words,
     save_word,
     save_roleplay_session,
     delete_roleplay_session,
+    update_user_password_hash,
     update_word,
 )
 from backend.llm import (
@@ -65,6 +76,11 @@ async def require_user(request: Request, session: SessionDep) -> dict:
 
 
 CurrentUserDep = Annotated[dict, Depends(require_user)]
+
+
+async def persist_usage_capture(token, session: SessionDep, user: dict | None) -> None:
+    events = stop_usage_capture(token)
+    await record_api_usage_events(session, user.get("id") if user else None, events)
 
 
 # ── 스키마 ─────────────────────────────────────────────────
@@ -163,6 +179,11 @@ class SlangIn(BaseModel):
     korean: str = ""
 
 
+class AccountPasswordIn(BaseModel):
+    current_password: str = ""
+    new_password: str
+
+
 # ── 현재 사용자 ─────────────────────────────────────────────
 @router.get("/me")
 async def me(request: Request, session: SessionDep):
@@ -170,22 +191,116 @@ async def me(request: Request, session: SessionDep):
     return {"user": user}
 
 
+@router.get("/mypage/overview")
+async def mypage_overview(session: SessionDep, _user: CurrentUserDep):
+    return await get_mypage_overview(session, _user["id"])
+
+
+@router.get("/mypage/learning")
+async def mypage_learning(session: SessionDep, _user: CurrentUserDep):
+    return await get_mypage_learning(session, _user["id"])
+
+
+@router.get("/mypage/activity")
+async def mypage_activity(session: SessionDep, _user: CurrentUserDep):
+    return await get_activity_summary(session, _user["id"])
+
+
+@router.get("/account/status")
+async def account_status(session: SessionDep, _user: CurrentUserDep):
+    return await get_account_status(session, _user["id"])
+
+
+@router.post("/account/password")
+async def update_account_password(
+    payload: AccountPasswordIn,
+    session: SessionDep,
+    _user: CurrentUserDep,
+):
+    try:
+        new_password = validate_reset_password(payload.new_password)
+    except PasswordResetError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    current_hash = await get_user_password_hash(session, _user["id"])
+    if current_hash:
+        if not payload.current_password:
+            raise HTTPException(status_code=400, detail="현재 비밀번호를 입력해주세요.")
+        verified, _updated_hash = password_helper.verify_and_update(
+            payload.current_password,
+            current_hash,
+        )
+        if not verified:
+            raise HTTPException(status_code=400, detail="현재 비밀번호가 일치하지 않습니다.")
+
+    await update_user_password_hash(
+        session,
+        _user["id"],
+        password_helper.hash(new_password),
+    )
+    return {"ok": True, "has_password": True}
+
+
+@router.delete("/account/oauth/{provider}")
+async def disconnect_account_oauth(
+    provider: str,
+    session: SessionDep,
+    _user: CurrentUserDep,
+):
+    provider = provider.strip().lower()
+    if provider != "google":
+        raise HTTPException(status_code=400, detail="지원하지 않는 연결입니다.")
+
+    status = await get_account_status(session, _user["id"])
+    if not status.get("google_connected"):
+        return {"ok": True, "deleted": 0}
+    if not status.get("has_password"):
+        raise HTTPException(
+            status_code=400,
+            detail="비밀번호를 먼저 설정한 뒤 Google 연결을 해제할 수 있습니다.",
+        )
+
+    deleted = await disconnect_oauth_account(session, _user["id"], provider)
+    return {"ok": True, "deleted": deleted}
+
+
 # ── 검색 (비회원 허용) ──────────────────────────────────────
 @router.get("/search/english")
-def search_english(word: str = ""):
-    return search_from_english(word)
+async def search_english(word: str = "", *, request: Request, session: SessionDep):
+    user = await get_current_user_from_cookie(request, session)
+    usage_token = start_usage_capture()
+    try:
+        return await run_in_threadpool(search_from_english, word)
+    finally:
+        await persist_usage_capture(usage_token, session, user)
 
 
 @router.get("/search/korean")
-def search_korean(word: str = ""):
-    return search_from_korean(word)
+async def search_korean(word: str = "", *, request: Request, session: SessionDep):
+    user = await get_current_user_from_cookie(request, session)
+    usage_token = start_usage_capture()
+    try:
+        return await run_in_threadpool(search_from_korean, word)
+    finally:
+        await persist_usage_capture(usage_token, session, user)
 
 
 # ── TTS (비회원 허용) ───────────────────────────────────────
 @router.get("/tts")
-def tts(word: str = "", lang: str = "en"):
-    audio_b64 = synthesize_tts(word, lang)
-    return {"audio": audio_b64}  # base64 mp3 또는 null
+async def tts(
+    word: str = "",
+    lang: str = "en",
+    *,
+    request: Request,
+    session: SessionDep,
+):
+    user = await get_current_user_from_cookie(request, session)
+    usage_token = start_usage_capture()
+    try:
+        audio_b64 = await run_in_threadpool(synthesize_tts, word, lang)
+        return {"audio": audio_b64}  # base64 mp3 또는 null
+    finally:
+        await persist_usage_capture(usage_token, session, user)
 
 
 # ── 단어 저장여부 (검색 화면 배지용, 공개) ──────────────────
@@ -450,11 +565,21 @@ async def import_commit(payload: ImportCommitIn, session: SessionDep, _user: Cur
 
 # ── 슬랭 / 구어체 설명 — 회원 전용 (LLM 비용) ──────────────
 @router.post("/slang")
-def slang(payload: SlangIn, _user: CurrentUserDep):
+async def slang(payload: SlangIn, session: SessionDep, _user: CurrentUserDep):
     word = payload.word.strip()
     if not word:
         return {"explanation": "단어를 먼저 검색해주세요."}
-    return {"explanation": explain_slang(word, payload.korean.strip())}
+    usage_token = start_usage_capture()
+    try:
+        return {
+            "explanation": await run_in_threadpool(
+                explain_slang,
+                word,
+                payload.korean.strip(),
+            )
+        }
+    finally:
+        await persist_usage_capture(usage_token, session, _user)
 
 
 # ── 퀴즈 — 회원 전용 ───────────────────────────────────────
@@ -470,11 +595,16 @@ async def quiz_generate(payload: QuizGenerateIn, session: SessionDep, _user: Cur
         saved_to=payload.saved_to.strip(),
         limit=max(payload.question_count * 3, payload.question_count),
     )
-    return await generate_assignment(session, _user["id"], words, payload)
+    usage_token = start_usage_capture()
+    try:
+        return await generate_assignment(session, _user["id"], words, payload)
+    finally:
+        await persist_usage_capture(usage_token, session, _user)
 
 
 @router.post("/quiz/grade")
 async def quiz_grade(payload: QuizGradeIn, session: SessionDep, _user: CurrentUserDep):
+    usage_token = start_usage_capture()
     try:
         return await grade_assignment(
             session,
@@ -484,6 +614,8 @@ async def quiz_grade(payload: QuizGradeIn, session: SessionDep, _user: CurrentUs
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        await persist_usage_capture(usage_token, session, _user)
 
 
 @router.post("/quiz/review-schedule/apply")
@@ -542,93 +674,109 @@ def _needs_translation(value: str) -> bool:
 
 @router.post("/roleplay/start")
 async def roleplay_start(payload: RoleplayStartIn, session: SessionDep, _user: CurrentUserDep):
-    words = await _roleplay_words(session, _user["id"], payload.scenario, payload.tag)
-    reply = start_roleplay(
-        level=payload.level,
-        scenario=payload.scenario,
-        tag=payload.tag,
-        situation=payload.situation,
-        words=words,
-    )
-    # 첫 턴: 사용자 발화 없음, 코칭 없음.
-    return {"history": [["", reply, ""]]}
+    usage_token = start_usage_capture()
+    try:
+        words = await _roleplay_words(session, _user["id"], payload.scenario, payload.tag)
+        reply = start_roleplay(
+            level=payload.level,
+            scenario=payload.scenario,
+            tag=payload.tag,
+            situation=payload.situation,
+            words=words,
+        )
+        # 첫 턴: 사용자 발화 없음, 코칭 없음.
+        return {"history": [["", reply, ""]]}
+    finally:
+        await persist_usage_capture(usage_token, session, _user)
 
 
 @router.post("/roleplay/continue")
 async def roleplay_continue(payload: RoleplayContinueIn, session: SessionDep, _user: CurrentUserDep):
-    # LLM 맥락용으로는 (user, bot)만 필요(코칭 제외).
-    context = [(t[0], t[1]) for t in (_norm_turn(h) for h in payload.history)]
-    words = await _roleplay_words(session, _user["id"], payload.scenario, payload.tag)
-    result = continue_roleplay(
-        context,
-        payload.message,
-        level=payload.level,
-        scenario=payload.scenario,
-        tag=payload.tag,
-        situation=payload.situation,
-        words=words,
-        wrap_up=payload.wrap_up,
-    )
-    new_history = [_norm_turn(h) for h in payload.history]
-    new_history.append([payload.message, result["reply"], result["coaching"]])
-    return {"history": new_history}
+    usage_token = start_usage_capture()
+    try:
+        # LLM 맥락용으로는 (user, bot)만 필요(코칭 제외).
+        context = [(t[0], t[1]) for t in (_norm_turn(h) for h in payload.history)]
+        words = await _roleplay_words(session, _user["id"], payload.scenario, payload.tag)
+        result = continue_roleplay(
+            context,
+            payload.message,
+            level=payload.level,
+            scenario=payload.scenario,
+            tag=payload.tag,
+            situation=payload.situation,
+            words=words,
+            wrap_up=payload.wrap_up,
+        )
+        new_history = [_norm_turn(h) for h in payload.history]
+        new_history.append([payload.message, result["reply"], result["coaching"]])
+        return {"history": new_history}
+    finally:
+        await persist_usage_capture(usage_token, session, _user)
 
 
 @router.post("/roleplay/summary")
 async def roleplay_summary(payload: RoleplaySummaryIn, session: SessionDep, _user: CurrentUserDep):
-    """대화 전체에서 요약 + 유용 표현 + 유용 어휘를 추출하고(LLM 1회) 학습노트에 저장한다."""
-    context = [(t[0], t[1]) for t in (_norm_turn(h) for h in payload.history)]
-    result = summarize_roleplay(
-        context,
-        level=payload.level,
-        scenario=payload.scenario,
-        tag=payload.tag,
-        situation=payload.situation,
-    )
-    # 사용자 발화 턴 수 = history에서 user가 있는 항목 수
-    turns = sum(1 for u, _b in context if (u or "").strip())
-    session_id = await save_roleplay_session(
-        session,
-        _user["id"],
-        payload.level,
-        payload.scenario,
-        payload.tag,
-        payload.situation,
-        payload.title,
-        turns,
-        result.get("summary", ""),
-        result.get("expressions", []),
-        result.get("vocab", []),
-    )
-    return {**result, "session_id": session_id}
+    """대화 전체에서 요약 + 유용 표현 + 유용 어휘를 추출하고 저장한다."""
+    usage_token = start_usage_capture()
+    try:
+        context = [(t[0], t[1]) for t in (_norm_turn(h) for h in payload.history)]
+        result = summarize_roleplay(
+            context,
+            level=payload.level,
+            scenario=payload.scenario,
+            tag=payload.tag,
+            situation=payload.situation,
+        )
+        # 사용자 발화 턴 수 = history에서 user가 있는 항목 수
+        turns = sum(1 for u, _b in context if (u or "").strip())
+        session_id = await save_roleplay_session(
+            session,
+            _user["id"],
+            payload.level,
+            payload.scenario,
+            payload.tag,
+            payload.situation,
+            payload.title,
+            turns,
+            result.get("summary", ""),
+            result.get("expressions", []),
+            result.get("vocab", []),
+        )
+        return {**result, "session_id": session_id}
+    finally:
+        await persist_usage_capture(usage_token, session, _user)
 
 
 @router.post("/roleplay/save-words")
 async def roleplay_save_words(payload: RoleplaySaveWordsIn, session: SessionDep, _user: CurrentUserDep):
     """정리 페이지에서 선택한 어휘를 단어장에 저장한다(insert_words 재사용)."""
-    tag = (payload.tag or "미지정").strip() or "미지정"
-    items = []
-    for it in payload.items:
-        word = (it.get("word") or "").strip()
-        if not word:
-            continue
-        korean = (it.get("korean") or "").strip()
-        if _needs_translation(korean):
-            korean = translate_korean(word)
+    usage_token = start_usage_capture()
+    try:
+        tag = (payload.tag or "미지정").strip() or "미지정"
+        items = []
+        for it in payload.items:
+            word = (it.get("word") or "").strip()
+            if not word:
+                continue
+            korean = (it.get("korean") or "").strip()
             if _needs_translation(korean):
-                korean = ""
-        items.append({
-            "word": word,
-            "korean": korean,
-            "korean_detail": (it.get("korean_detail") or "").strip(),
-            "english_def": (it.get("english_def") or "").strip(),
-            "example": (it.get("example") or "").strip(),
-            "tag": tag,
-        })
-    if not items:
-        return {"ok": False, "added": 0, "skipped": 0}
-    result = await insert_words(session, _user["id"], items)
-    return {"ok": True, **result}
+                korean = translate_korean(word)
+                if _needs_translation(korean):
+                    korean = ""
+            items.append({
+                "word": word,
+                "korean": korean,
+                "korean_detail": (it.get("korean_detail") or "").strip(),
+                "english_def": (it.get("english_def") or "").strip(),
+                "example": (it.get("example") or "").strip(),
+                "tag": tag,
+            })
+        if not items:
+            return {"ok": False, "added": 0, "skipped": 0}
+        result = await insert_words(session, _user["id"], items)
+        return {"ok": True, **result}
+    finally:
+        await persist_usage_capture(usage_token, session, _user)
 
 
 @router.get("/roleplay/sessions")

@@ -2,6 +2,10 @@ import { QueryClient } from "@tanstack/react-query";
 
 export const queryKeys = {
   me: ["me"],
+  myPageOverview: ["mypage", "overview"],
+  myPageLearning: ["mypage", "learning"],
+  myPageActivity: ["mypage", "activity"],
+  accountStatus: ["account", "status"],
   labels: ["labels"],
   words: (tag = "") => ["words", tag || ""],
   search: (type, word) => ["search", type, word.trim().toLowerCase()],
