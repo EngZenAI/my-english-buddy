@@ -11,12 +11,12 @@ from fastapi_users.password import PasswordHelper
 from httpx_oauth.clients.google import GoogleOAuth2
 from pwdlib import PasswordHash
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth.dependencies import AccessTokenDatabaseDep, UserDatabaseDep
 from backend.auth.models import AccessToken, User
 from backend.auth.transports import OAuthCookieTransport
 from backend.config import settings
-from backend.database import SessionFactory
 
 logger = logging.getLogger(__name__)
 password_helper = PasswordHelper(PasswordHash.recommended())
@@ -75,36 +75,47 @@ fastapi_users = FastAPIUsers[User, uuid.UUID](get_user_manager, [auth_backend])
 current_active_user = fastapi_users.current_user(active=True)
 
 
-async def get_current_user_from_token(token: str) -> dict[str, str] | None:
-    async with SessionFactory() as session:
-        result = await session.execute(
-            select(User.id, User.email).join(
-                AccessToken, User.id == AccessToken.user_id
-            ).where(
-                AccessToken.token == token,
-                AccessToken.created_at
-                > datetime.now(timezone.utc)
-                - timedelta(seconds=settings.auth_cookie_max_age),
-                User.is_active.is_(True),
-            )
+async def get_current_user_from_token(
+    session: AsyncSession,
+    token: str,
+) -> dict[str, str] | None:
+    result = await session.execute(
+        select(User.id, User.email)
+        .join(AccessToken, User.id == AccessToken.user_id)
+        .where(
+            AccessToken.token == token,
+            AccessToken.created_at
+            > datetime.now(timezone.utc)
+            - timedelta(seconds=settings.auth_cookie_max_age),
+            User.is_active.is_(True),
         )
-        user = result.one_or_none()
+    )
+    user = result.one_or_none()
     return {"id": str(user.id), "email": user.email} if user else None
 
 
-async def get_current_user_id_from_token(token: str) -> str | None:
-    user = await get_current_user_from_token(token)
+async def get_current_user_id_from_token(
+    session: AsyncSession,
+    token: str,
+) -> str | None:
+    user = await get_current_user_from_token(session, token)
     return user["id"] if user else None
 
 
-async def get_current_user_from_cookie(request: Request) -> dict[str, str] | None:
+async def get_current_user_from_cookie(
+    request: Request,
+    session: AsyncSession,
+) -> dict[str, str] | None:
     token = request.cookies.get(settings.auth_cookie_name)
     if not token:
         return None
 
-    return await get_current_user_from_token(token)
+    return await get_current_user_from_token(session, token)
 
 
-async def get_current_user_id_from_cookie(request: Request) -> str | None:
-    user = await get_current_user_from_cookie(request)
+async def get_current_user_id_from_cookie(
+    request: Request,
+    session: AsyncSession,
+) -> str | None:
+    user = await get_current_user_from_cookie(request, session)
     return user["id"] if user else None

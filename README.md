@@ -168,13 +168,12 @@ english-learning-app/
 ├── backend/
 │   ├── requirements.txt
 │   ├── main.py        # FastAPI 엔트리 (REST API + React 정적 서빙)
-│   ├── app.py         # (구) Gradio UI — 미사용, 참고용
 │   ├── services.py    # 검색/포맷/TTS 순수 로직 (UI 비의존)
 │   ├── routers/
 │   │   ├── api.py     # React용 REST 엔드포인트
 │   │   └── auth.py    # 인증 (FastAPI-Users)
+│   ├── db/            # SQLAlchemy 세션/모델/Repository
 │   ├── dictionary.py  # 사전 + 번역 API
-│   ├── database.py    # DB 연결
 │   └── llm.py         # LLM 퀴즈/롤플레잉
 └── frontend/          # React + Vite + Tailwind
     ├── src/
@@ -185,6 +184,8 @@ english-learning-app/
     │   └── pages/         # Login / Signup
     └── dist/          # 빌드 산출물 (백엔드가 서빙)
 ```
+
+백엔드는 시작 시 compact SQL 로그를 콘솔에 출력합니다. 파라미터는 기본적으로 출력하지 않습니다.
 
 ---
 

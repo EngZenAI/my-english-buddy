@@ -17,6 +17,7 @@ from backend.auth.users import (
     oauth_auth_backend,
 )
 from backend.config import settings
+from backend.db.dependencies import SessionDep
 from backend.schemas.auth import (
     PasswordResetConfirm,
     PasswordResetRequest,
@@ -58,9 +59,9 @@ async def logout_json():
 
 
 @router.post("/auth/password-reset/request", include_in_schema=False)
-async def request_password_reset(payload: PasswordResetRequest):
+async def request_password_reset(payload: PasswordResetRequest, session: SessionDep):
     try:
-        delivery = await request_password_reset_service(payload.email)
+        delivery = await request_password_reset_service(session, payload.email)
     except PasswordResetError as exc:
         raise password_reset_http_exception(exc) from exc
 
@@ -71,9 +72,10 @@ async def request_password_reset(payload: PasswordResetRequest):
 
 
 @router.post("/auth/password-reset/confirm", include_in_schema=False)
-async def confirm_password_reset(payload: PasswordResetConfirm):
+async def confirm_password_reset(payload: PasswordResetConfirm, session: SessionDep):
     try:
         await confirm_password_reset_service(
+            session,
             payload.email,
             payload.code,
             payload.password,
@@ -85,9 +87,9 @@ async def confirm_password_reset(payload: PasswordResetConfirm):
 
 
 @router.post("/auth/password-reset/verify", include_in_schema=False)
-async def verify_password_reset_code(payload: PasswordResetVerify):
+async def verify_password_reset_code(payload: PasswordResetVerify, session: SessionDep):
     try:
-        await verify_password_reset_service(payload.email, payload.code)
+        await verify_password_reset_service(session, payload.email, payload.code)
     except PasswordResetError as exc:
         raise password_reset_http_exception(exc) from exc
 

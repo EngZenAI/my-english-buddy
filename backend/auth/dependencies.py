@@ -5,7 +5,7 @@ from fastapi_users.db import SQLAlchemyUserDatabase
 from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyAccessTokenDatabase
 
 from backend.auth.models import AccessToken, OAuthAccount, User
-from backend.database import SessionDep
+from backend.db.dependencies import SessionDep
 
 
 async def get_user_db(session: SessionDep):

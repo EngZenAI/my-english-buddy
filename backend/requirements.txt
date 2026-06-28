@@ -1,11 +1,8 @@
-gradio==5.33.0
 fastapi==0.115.12
 fastapi-users[sqlalchemy,oauth]==14.0.1
 uvicorn[standard]==0.34.3
 asyncpg==0.30.0
 pydantic-settings==2.14.2
-
-psycopg2-binary==2.9.10
 
 python-multipart==0.0.20
 openpyxl==3.1.5

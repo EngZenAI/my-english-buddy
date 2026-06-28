@@ -6,9 +6,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.database import create_db_schema, init_db
+from backend.db.logging import enable_sql_logging
+from backend.db.repositories import init_db
+from backend.db.schema import create_db_schema
 from backend.routers.api import router as api_router
 from backend.routers.auth import router as auth_router
+
+enable_sql_logging()
 
 # 빌드된 React 정적 파일 경로 (frontend/dist)
 FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
@@ -17,7 +21,7 @@ FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await create_db_schema()
-    init_db()
+    await init_db()
     yield
 
 
