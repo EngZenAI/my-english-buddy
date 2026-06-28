@@ -1,10 +1,10 @@
-fastapi==0.115.12
-fastapi-users[sqlalchemy,oauth]==14.0.1
+fastapi==0.136.3
+fastapi-users[sqlalchemy,oauth]==15.0.5
 uvicorn[standard]==0.34.3
 asyncpg==0.30.0
 pydantic-settings==2.14.2
 
-python-multipart==0.0.20
+python-multipart==0.0.32
 openpyxl==3.1.5
 
 langchain==0.3.25
