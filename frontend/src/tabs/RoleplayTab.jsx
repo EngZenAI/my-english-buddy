@@ -133,11 +133,12 @@ export default function RoleplayTab({ user, onRequireLogin }) {
   };
 
   const startMutation = useMutation({
-    mutationFn: ({ situation, isFirstBot }) =>
+    mutationFn: ({ scenario, situation, tag }) =>
       api.roleplayStart({
         level,
+        scenario,
+        tag: tag || null,
         situation,
-        is_first_bot: isFirstBot,
       }),
     onSuccess: (data, variables) => {
       resetConversation();
@@ -146,34 +147,33 @@ export default function RoleplayTab({ user, onRequireLogin }) {
         scenario: variables.scenario,
         tag: variables.tag || "",
         situation: variables.situation,
+        title: variables.title || "",
       });
-      if (data.bot_message) {
-        setMessages([{ role: "bot", text: data.bot_message, coaching: data.coaching || "" }]);
-      }
+      setMessages(pairsToMessages(data.history || []));
     },
   });
 
   const sendMutation = useMutation({
     mutationFn: (text) =>
-      api.roleplayChat({
+      api.roleplayContinue(messagesToPairs(messages), text, {
         level: session.level,
+        scenario: session.scenario,
+        tag: session.tag || null,
         situation: session.situation,
-        user_message: text,
-        history: messagesToPairs(messages),
       }),
     onSuccess: (data) => {
-      setMessages((prev) => [
-        ...prev,
-        { role: "bot", text: data.bot_message, coaching: data.coaching || "" },
-      ]);
+      setMessages(pairsToMessages(data.history || []));
     },
   });
 
   const finishMutation = useMutation({
     mutationFn: () =>
-      api.roleplayFinish({
-        history: messagesToPairs(messages),
-        tag: session.tag || "",
+      api.roleplaySummary(messagesToPairs(messages), {
+        level: session.level,
+        scenario: session.scenario,
+        tag: session.tag || null,
+        situation: session.situation,
+        title: session.title || "",
       }),
     onSuccess: (data) => {
       setSummary({
@@ -189,27 +189,25 @@ export default function RoleplayTab({ user, onRequireLogin }) {
   });
 
   const saveVocabMutation = useMutation({
-    mutationFn: (payload) => api.roleplaySaveVocab(payload),
+    mutationFn: ({ items, tag }) => api.roleplaySaveWords(items, tag),
     onSuccess: (data) => {
-      setSavedCount(data.saved_count || 0);
+      setSavedCount((data.added || 0) + (data.updated || 0));
       setPickedVocab(new Set());
     },
   });
 
-  const startRoleplay = (scenario, situation, tag = "") => {
+  const startRoleplay = (scenario, situation, tag = "", title = "") => {
     if (!user) {
       onRequireLogin();
       return;
     }
-    const isFirstBot = situation.indexOf("FIRST") === -1;
-    startMutation.mutate({ situation, isFirstBot, scenario, tag });
+    startMutation.mutate({ scenario, situation, tag, title });
   };
 
   const handleStartFreeTopic = () => {
     const text = freeTopic.trim();
     if (!text || !user) return;
-    const prompt = `This is a custom café/restaurant or job roleplay. Scenario details: "${text}". Please act your role naturally based on this scenario.`;
-    startRoleplay(text, prompt);
+    startRoleplay("general", text, "", text);
   };
 
   const handleSend = () => {
@@ -238,7 +236,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
         example: v.suggested_example,
         tag: saveTag || "미지정",
       }));
-    saveVocabMutation.mutate({ items });
+    saveVocabMutation.mutate({ items, tag: saveTag || "미지정" });
   };
 
   return (
@@ -287,22 +285,37 @@ export default function RoleplayTab({ user, onRequireLogin }) {
             </div>
           ) : !active ? (
             /* 1. 대화 시작 전 세팅 화면 */
-            <RoleplayCard
-              levels={LEVELS}
-              selectedLevel={level}
-              setSelectedLevel={setLevel}
-              modes={MODES}
-              selectedMode={mode}
-              setSelectedMode={setMode}
-              cards={OPIC_CARDS}
-              onStartRoleplay={startRoleplay}
-              usableTags={usableTags}
-              tagLoading={tagLoading}
-              freeTopic={freeTopic}
-              setFreeTopic={setFreeTopic}
-              onStartFreeTopic={handleStartFreeTopic}
-              user={user}
-            />
+            <>
+              {startMutation.isError && (
+                <Card className="mb-4 border-red-100 bg-red-50/80 text-red-700 rounded-2xl">
+                  <CardContent className="p-4 flex items-start gap-2.5 text-xs font-semibold">
+                    <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                    <div>
+                      <p>대화를 시작하지 못했습니다.</p>
+                      <p className="mt-1 text-red-500 font-medium">
+                        {startMutation.error?.message || "백엔드 또는 LLM 연결 상태를 확인해주세요."}
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+              <RoleplayCard
+                levels={LEVELS}
+                selectedLevel={level}
+                setSelectedLevel={setLevel}
+                modes={MODES}
+                selectedMode={mode}
+                setSelectedMode={setMode}
+                cards={OPIC_CARDS}
+                onStartRoleplay={startRoleplay}
+                usableTags={usableTags}
+                tagLoading={tagLoading}
+                freeTopic={freeTopic}
+                setFreeTopic={setFreeTopic}
+                onStartFreeTopic={handleStartFreeTopic}
+                user={user}
+              />
+            </>
           ) : (
             /* 2. 대화 진행 중 화면 (반응형 2-Column 구성) */
             <div className="flex flex-col gap-6 md:grid md:grid-cols-12 md:gap-6 items-start h-full pb-10">

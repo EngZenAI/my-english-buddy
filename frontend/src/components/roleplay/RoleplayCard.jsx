@@ -126,7 +126,7 @@ export default function RoleplayCard({
               {usableTags.map((tag) => (
                 <button
                   key={tag.name}
-                  onClick={() => onStartRoleplay(tag.name, `tag:${tag.name}`)}
+                  onClick={() => onStartRoleplay("tag", "", tag.name, `#${tag.name}`)}
                   className="rounded-full bg-white hover:bg-brand-50 border border-slate-200 hover:border-brand-200 text-slate-700 hover:text-brand-700 px-4.5 h-9.5 text-xs font-semibold shadow-sm transition-all flex items-center gap-1.5"
                 >
                   <span>🏷️ {tag.name}</span>
@@ -156,7 +156,7 @@ export default function RoleplayCard({
               return (
                 <Card
                   key={card.label}
-                  onClick={() => onStartRoleplay(card.label, card.situation)}
+                  onClick={() => onStartRoleplay("opic", card.situation, "", card.label)}
                   className="relative cursor-pointer overflow-hidden rounded-[24px] border-0 bg-gradient-to-br from-[#5c6bf2] to-[#7f8dfd] text-white hover:scale-[1.01] hover:shadow-lg hover:shadow-indigo-500/10 transition-all duration-300 p-6 flex flex-col justify-between min-h-[140px] h-full"
                 >
                   {/* 카드 데코 일러스트 아이콘 오버레이 */}

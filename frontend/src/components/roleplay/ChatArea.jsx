@@ -35,7 +35,7 @@ export default function ChatArea({
             회화 진행 중 • 레벨: {session?.level === "beginner" ? "입문" : session?.level === "advanced" ? "고급" : "중급"}
           </span>
           <span className="text-sm font-extrabold text-slate-800 dark:text-slate-200 truncate">
-            {session?.scenario || "자유 대화"}
+            {session?.title || session?.scenario || "자유 대화"}
           </span>
         </div>
 
