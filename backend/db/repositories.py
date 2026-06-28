@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import Integer, bindparam, delete, func, insert, select, text, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.postgresql import ARRAY, insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1382,20 +1382,35 @@ async def bulk_delete_words(session: AsyncSession, user_id: str, ids) -> int:
 
 
 async def reorder_words(session: AsyncSession, user_id: str, ordered_ids) -> int:
-    updated = 0
-    for index, raw_id in enumerate(ordered_ids or []):
+    clean_ids: list[int] = []
+    seen: set[int] = set()
+    for raw_id in ordered_ids or []:
         try:
             word_id = int(raw_id)
         except (TypeError, ValueError):
             continue
-        result = await session.execute(
-            update(Word)
-            .where(Word.id == word_id, Word.user_id == _uuid(user_id))
-            .values(sort_order=index)
-        )
-        updated += result.rowcount or 0
+        if word_id in seen:
+            continue
+        seen.add(word_id)
+        clean_ids.append(word_id)
+    if not clean_ids:
+        return 0
+
+    result = await session.execute(
+        text(
+            """WITH ordered AS (
+                   SELECT item.id, item.ordinality - 1 AS sort_order
+                   FROM unnest(:ordered_ids) WITH ORDINALITY AS item(id, ordinality)
+               )
+               UPDATE words AS w
+               SET sort_order = ordered.sort_order
+               FROM ordered
+               WHERE w.id = ordered.id AND w.user_id = :user_id"""
+        ).bindparams(bindparam("ordered_ids", type_=ARRAY(Integer))),
+        {"ordered_ids": clean_ids, "user_id": _uuid(user_id)},
+    )
     await session.commit()
-    return updated
+    return result.rowcount or 0
 
 
 async def get_words_to_review(session: AsyncSession, user_id: str):
