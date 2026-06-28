@@ -1,7 +1,12 @@
 from fastapi import APIRouter, Request
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi_users.router.oauth import generate_state_token
+from fastapi_users.router.oauth import (
+    CSRF_TOKEN_COOKIE_NAME,
+    CSRF_TOKEN_KEY,
+    generate_csrf_token,
+    generate_state_token,
+)
 
 from backend.auth.cookies import clear_auth_cookie
 from backend.auth.password_reset import (
@@ -38,12 +43,23 @@ async def google_oauth_login(request: Request):
         f"oauth:{google_oauth_client.name}.{oauth_auth_backend.name}.callback"
     )
     redirect_uri = str(request.url_for(callback_route_name))
-    state = generate_state_token({}, settings.auth_secret)
+    csrf_token = generate_csrf_token()
+    state = generate_state_token({CSRF_TOKEN_KEY: csrf_token}, settings.auth_secret)
     authorization_url = await google_oauth_client.get_authorization_url(
         redirect_uri,
         state,
     )
-    return RedirectResponse(authorization_url)
+    response = RedirectResponse(authorization_url)
+    response.set_cookie(
+        CSRF_TOKEN_COOKIE_NAME,
+        csrf_token,
+        max_age=3600,
+        path="/",
+        secure=settings.auth_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
+    return response
 
 
 @router.get("/auth/logout", include_in_schema=False)

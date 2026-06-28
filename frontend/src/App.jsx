@@ -89,6 +89,7 @@ export default function App() {
   const [view, setView] = useState(getInitialView);
   const [tab, setTab] = useState("search");
   const [authCompleteFailed, setAuthCompleteFailed] = useState(false);
+  const [authCompleteChecked, setAuthCompleteChecked] = useState(false);
   const [quizState, setQuizState] = useState(createInitialQuizState);
   const [roleplayInstanceKey, setRoleplayInstanceKey] = useState(0);
 
@@ -159,13 +160,39 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (authLoading || getInitialView() !== "auth-complete") return;
-    if (user) {
-      goToReturnTarget();
-    } else {
-      setAuthCompleteFailed(true);
-    }
-  }, [authLoading, user]);
+    if (getInitialView() !== "auth-complete" || authCompleteChecked) return undefined;
+
+    let cancelled = false;
+    const verifyOAuthLogin = async () => {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const result = await queryClient.fetchQuery({
+            queryKey: queryKeys.me,
+            queryFn: api.me,
+            staleTime: 0,
+          });
+          if (cancelled) return;
+          if (result?.user) {
+            goToReturnTarget();
+            return;
+          }
+        } catch {
+          // Retry below. The failure state is shown only after all attempts fail.
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+      }
+      if (!cancelled) {
+        setAuthCompleteChecked(true);
+        setAuthCompleteFailed(true);
+      }
+    };
+
+    verifyOAuthLogin();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authCompleteChecked, queryClient]);
 
   const ActiveTab = TABS.find((t) => t.id === tab)?.Comp || SearchTab;
 
