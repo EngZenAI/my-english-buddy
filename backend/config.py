@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     oauth_success_redirect_url: str = "/auth/complete"
     password_reset_code_lifetime_seconds: int = 10 * 60
     password_reset_debug_code: bool = False
-    smtp_host: str = ""
+    smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
     smtp_username: str = ""
     smtp_password: str = ""

@@ -11,12 +11,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.auth.models import PasswordResetCode, User
 from backend.auth.email import (
     EmailSendError,
+    get_smtp_sender,
     log_password_reset_code,
     send_password_reset_code_email,
 )
 from backend.config import settings
 
 password_helper = PasswordHelper(PasswordHash.recommended())
+RESET_CODE_LENGTH = 8
+RESET_CODE_GROUP_LENGTH = 4
+RESET_CODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 
 class PasswordResetError(Exception):
@@ -43,7 +47,7 @@ class PasswordResetRequiredFieldsMissing(PasswordResetError):
 
 
 class PasswordResetInvalidCodeFormat(PasswordResetError):
-    detail = "6자리 인증 코드를 입력해주세요."
+    detail = "8자리 인증 코드를 입력해주세요."
 
 
 class PasswordResetPasswordTooShort(PasswordResetError):
@@ -68,12 +72,26 @@ class PasswordResetAccountNotFound(PasswordResetError):
 
 def is_reset_delivery_available() -> bool:
     return settings.password_reset_debug_code or bool(
-        settings.smtp_host and settings.smtp_from
+        settings.smtp_host
+        and settings.smtp_username
+        and settings.smtp_password
+        and get_smtp_sender()
     )
 
 
 def normalize_email(email: str) -> str:
     return email.strip().lower()
+
+
+def format_reset_code(code: str) -> str:
+    return "-".join(
+        code[index : index + RESET_CODE_GROUP_LENGTH]
+        for index in range(0, len(code), RESET_CODE_GROUP_LENGTH)
+    )
+
+
+def normalize_reset_code(code: str) -> str:
+    return "".join(char for char in code.strip().upper() if char.isalnum())
 
 
 def hash_reset_code(email: str, code: str) -> str:
@@ -83,10 +101,12 @@ def hash_reset_code(email: str, code: str) -> str:
 
 
 def validate_reset_code(code: str) -> str:
-    code = code.strip()
+    code = normalize_reset_code(code)
     if not code:
         raise PasswordResetRequiredFieldsMissing()
-    if not code.isdigit() or len(code) != 6:
+    if len(code) != RESET_CODE_LENGTH or any(
+        char not in RESET_CODE_ALPHABET for char in code
+    ):
         raise PasswordResetInvalidCodeFormat()
     return code
 
@@ -145,7 +165,7 @@ async def create_reset_code(session: AsyncSession, email: str) -> str | None:
         return None
 
     now = datetime.now(timezone.utc)
-    code = f"{secrets.randbelow(1_000_000):06d}"
+    code = "".join(secrets.choice(RESET_CODE_ALPHABET) for _ in range(RESET_CODE_LENGTH))
     expires_at = now + timedelta(
         seconds=settings.password_reset_code_lifetime_seconds
     )
@@ -171,12 +191,13 @@ async def create_reset_code(session: AsyncSession, email: str) -> str | None:
 
 
 async def deliver_reset_code(email: str, code: str) -> str:
+    formatted_code = format_reset_code(code)
     if settings.password_reset_debug_code:
-        log_password_reset_code(email, code)
+        log_password_reset_code(email, formatted_code)
         return "debug"
 
     try:
-        await send_password_reset_code_email(email, code)
+        await send_password_reset_code_email(email, formatted_code)
     except EmailSendError as exc:
         raise PasswordResetEmailDeliveryFailed() from exc
     return "email"

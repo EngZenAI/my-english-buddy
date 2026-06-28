@@ -54,6 +54,8 @@ GOOGLE_OAUTH_CLIENT_ID=...
 GOOGLE_OAUTH_CLIENT_SECRET=...
 OAUTH_SUCCESS_REDIRECT_URL=/auth/complete   # 구글 로그인 완료 후 프론트 복귀 경로(필수)
 # APP_PUBLIC_URL=http://localhost:8000      # 단일 서버(8000)로 접속할 때만 설정. dev(5173)는 생략
+SMTP_USERNAME=your-gmail@gmail.com
+SMTP_PASSWORD=your-google-app-password      # Google 계정 앱 비밀번호
 ```
 
 > WatsonX 키 없으면 자동으로 Ollama(qwen2.5:7b)로 전환됩니다.
@@ -68,6 +70,8 @@ http://127.0.0.1:8000/auth/google/callback
 ```
 
 브라우저에서 `localhost`로 접속하면 `localhost` URI가, `127.0.0.1`로 접속하면 `127.0.0.1` URI가 필요합니다.
+
+비밀번호 찾기 메일은 Google SMTP 기본값(`smtp.gmail.com:587`, TLS)을 사용합니다. Google 계정에서 2단계 인증을 켠 뒤 앱 비밀번호를 발급해 `SMTP_PASSWORD`에 넣으면 됩니다. 발신자는 기본적으로 `SMTP_USERNAME`을 사용하며, 인증 코드는 `XXXX-XXXX` 형태의 8자리 코드로 발송됩니다.
 
 ### 3. Ollama 모델 다운로드 (WatsonX 없을 때)
 ```bash

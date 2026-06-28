@@ -67,8 +67,10 @@ function CodeStep({ flow }) {
         value={flow.code}
         onChange={(e) => flow.setCode(e.target.value)}
         disabled={flow.verifyingCode || flow.resettingPassword || flow.codeVerified}
-        inputMode="numeric"
-        placeholder="000000"
+        autoCapitalize="characters"
+        spellCheck={false}
+        maxLength={9}
+        placeholder="XXXX-XXXX"
         className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-3
                    focus:outline-none focus:ring-2 focus:ring-brand-200"
       />
@@ -158,7 +160,7 @@ export default function ForgotPasswordPage({ onNavigate }) {
       <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-7 max-w-md mx-auto">
         <h1 className="text-2xl font-bold mb-1.5">비밀번호 찾기</h1>
         <p className="text-sm text-slate-500 mb-4">
-          가입한 이메일로 발송된 10분간 유효한 인증 코드 6자리를 입력해주세요.
+          가입한 이메일로 발송된 10분간 유효한 인증 코드 8자리를 입력해주세요.
         </p>
 
         <EmailStep flow={flow} />

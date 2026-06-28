@@ -3,12 +3,26 @@ import { api } from "../api";
 
 export const CODE_TTL_SECONDS = 10 * 60;
 export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+export const PASSWORD_RESET_CODE_LENGTH = 8;
 const PASSWORD_RESET_UNAVAILABLE_MESSAGE =
   "도메인 등록 후 이메일 인증 코드 발송을 이용할 수 있습니다. 지금은 개발팀에게 문의해주세요.";
 
+function normalizeCode(code) {
+  return code.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, PASSWORD_RESET_CODE_LENGTH);
+}
+
+function formatCode(code) {
+  const normalized = normalizeCode(code);
+  if (normalized.length <= 4) return normalized;
+  return `${normalized.slice(0, 4)}-${normalized.slice(4)}`;
+}
+
 function validateCode(code) {
-  if (!code) return "이메일로 받은 6자리 인증 코드를 입력해주세요.";
-  if (!/^\d{6}$/.test(code)) return "인증 코드는 숫자 6자리입니다.";
+  const normalized = normalizeCode(code);
+  if (!normalized) return "이메일로 받은 8자리 인증 코드를 입력해주세요.";
+  if (normalized.length !== PASSWORD_RESET_CODE_LENGTH) {
+    return "인증 코드는 영문 대문자와 숫자 8자리입니다.";
+  }
   return "";
 }
 
@@ -40,7 +54,7 @@ export function usePasswordReset(onComplete) {
   };
 
   const setSanitizedCode = (value) => {
-    setCode(value.replace(/\D/g, "").slice(0, 6));
+    setCode(formatCode(value));
     setCodeVerified(false);
   };
 
@@ -70,8 +84,8 @@ export function usePasswordReset(onComplete) {
     if (res.ok) {
       setStatus(
         res.delivery === "debug"
-          ? "개발 모드에서는 백엔드 로그에 6자리 인증 코드가 출력됩니다."
-          : "가입된 계정이면 6자리 인증 코드가 발송됩니다."
+          ? "개발 모드에서는 백엔드 로그에 8자리 인증 코드가 출력됩니다."
+          : "가입된 계정이면 8자리 인증 코드가 발송됩니다."
       );
     } else if (
       res.detail === "PASSWORD_RESET_UNAVAILABLE" ||
