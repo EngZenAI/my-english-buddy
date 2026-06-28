@@ -593,6 +593,7 @@ async def roleplay_summary(payload: RoleplaySummaryIn, session: SessionDep, _use
         payload.level,
         payload.scenario,
         payload.tag,
+        payload.situation,
         payload.title,
         turns,
         result.get("summary", ""),

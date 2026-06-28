@@ -64,6 +64,34 @@ async def init_db() -> None:
                 )
                 """,
                 "ALTER TABLE words ADD COLUMN IF NOT EXISTS user_id UUID",
+                """
+                DO $$
+                DECLARE
+                    legacy_user_id UUID;
+                BEGIN
+                    IF (SELECT COUNT(*) FROM users) = 1 THEN
+                        SELECT id INTO legacy_user_id FROM users ORDER BY id LIMIT 1;
+                        UPDATE words SET user_id = legacy_user_id WHERE user_id IS NULL;
+                    ELSE
+                        DELETE FROM words WHERE user_id IS NULL;
+                    END IF;
+                END $$;
+                """,
+                """
+                WITH ranked AS (
+                    SELECT id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY user_id, lower(word)
+                               ORDER BY created_at DESC NULLS LAST, id DESC
+                           ) AS rn
+                    FROM words
+                    WHERE user_id IS NOT NULL
+                )
+                DELETE FROM words w
+                USING ranked r
+                WHERE w.id = r.id AND r.rn > 1
+                """,
+                "ALTER TABLE words ALTER COLUMN user_id SET NOT NULL",
                 "ALTER TABLE words ADD COLUMN IF NOT EXISTS korean_detail TEXT",
                 "ALTER TABLE words ADD COLUMN IF NOT EXISTS sort_order INTEGER",
                 "ALTER TABLE words ALTER COLUMN next_review SET DEFAULT NOW() + INTERVAL '7 days'",
@@ -162,6 +190,7 @@ async def init_db() -> None:
                     level       TEXT,
                     scenario    TEXT,
                     tag         TEXT,
+                    situation   TEXT,
                     title       TEXT,
                     turns       INTEGER DEFAULT 0,
                     summary     TEXT,
@@ -170,6 +199,7 @@ async def init_db() -> None:
                     created_at  TIMESTAMP DEFAULT NOW()
                 )
                 """,
+                "ALTER TABLE roleplay_sessions ADD COLUMN IF NOT EXISTS situation TEXT",
                 """
                 CREATE INDEX IF NOT EXISTS ix_roleplay_sessions_user_created
                     ON roleplay_sessions (user_id, created_at DESC)
@@ -472,15 +502,12 @@ async def complete_quiz_session(
     await session.commit()
 
 
-async def save_quiz_question_results(
-    session: AsyncSession,
+def _quiz_question_result_params(
     user_id: str,
     session_id: int,
     results: list[dict],
-) -> None:
-    if not results:
-        return
-    params = []
+) -> list[dict[str, Any]]:
+    params: list[dict[str, Any]] = []
     for result in results:
         params.append(
             {
@@ -509,6 +536,15 @@ async def save_quiz_question_results(
                 "suggested_tag": result.get("suggested_tag") or "미지정",
             }
         )
+    return params
+
+
+async def _insert_quiz_question_results(
+    session: AsyncSession,
+    params: list[dict[str, Any]],
+) -> None:
+    if not params:
+        return
     await session.execute(
         text(
             """INSERT INTO quiz_question_results
@@ -526,7 +562,49 @@ async def save_quiz_question_results(
         ),
         params,
     )
+
+
+async def save_quiz_question_results(
+    session: AsyncSession,
+    user_id: str,
+    session_id: int,
+    results: list[dict],
+) -> None:
+    params = _quiz_question_result_params(user_id, session_id, results)
+    if not params:
+        return
+    await _insert_quiz_question_results(session, params)
     await session.commit()
+
+
+async def save_results_and_complete_session(
+    session: AsyncSession,
+    user_id: str,
+    session_id: int,
+    results: list[dict],
+    score: float,
+    total: int,
+) -> None:
+    try:
+        params = _quiz_question_result_params(user_id, session_id, results)
+        await _insert_quiz_question_results(session, params)
+        await session.execute(
+            text(
+                """UPDATE quiz_sessions
+                   SET score = :score, total_questions = :total, completed_at = NOW()
+                   WHERE id = :session_id AND user_id = :user_id"""
+            ),
+            {
+                "score": score,
+                "total": total,
+                "session_id": session_id,
+                "user_id": user_id,
+            },
+        )
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
 
 
 async def get_quiz_stats(session: AsyncSession, user_id: str) -> dict:
@@ -1118,6 +1196,7 @@ async def save_roleplay_session(
     level,
     scenario,
     tag,
+    situation,
     title,
     turns,
     summary,
@@ -1127,9 +1206,9 @@ async def save_roleplay_session(
     result = await session.execute(
         text(
             """INSERT INTO roleplay_sessions
-                   (user_id, level, scenario, tag, title, turns,
+                   (user_id, level, scenario, tag, situation, title, turns,
                     summary, expressions, vocab)
-               VALUES (:user_id, :level, :scenario, :tag, :title, :turns,
+               VALUES (:user_id, :level, :scenario, :tag, :situation, :title, :turns,
                        :summary, CAST(:expressions AS jsonb), CAST(:vocab AS jsonb))
                RETURNING id"""
         ),
@@ -1138,6 +1217,7 @@ async def save_roleplay_session(
             "level": level,
             "scenario": scenario,
             "tag": tag,
+            "situation": situation,
             "title": title,
             "turns": turns,
             "summary": summary,
@@ -1152,7 +1232,7 @@ async def save_roleplay_session(
 async def get_roleplay_sessions(session: AsyncSession, user_id):
     result = await session.execute(
         text(
-            """SELECT id, level, scenario, tag, title, turns, summary,
+            """SELECT id, level, scenario, tag, situation, title, turns, summary,
                       expressions, vocab, created_at
                FROM roleplay_sessions
                WHERE user_id = :user_id

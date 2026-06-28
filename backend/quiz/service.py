@@ -16,10 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import settings
 from backend.db.repositories import (
     apply_quiz_review_schedule,
-    complete_quiz_session,
     create_quiz_session,
     existing_words_lower,
-    save_quiz_question_results,
+    save_results_and_complete_session,
 )
 import backend.llm as llm_module
 from backend.quiz.schemas import (
@@ -939,8 +938,14 @@ async def grade_assignment(
         )
 
     total = len(results)
-    await save_quiz_question_results(session, user_id, session_id, records)
-    await complete_quiz_session(session, user_id, session_id, score, total)
+    await save_results_and_complete_session(
+        session,
+        user_id,
+        session_id,
+        records,
+        score,
+        total,
+    )
     review_schedule_preview = _review_schedule_preview(records)
 
     normalized_stats = {
