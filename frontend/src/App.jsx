@@ -12,9 +12,8 @@ import FindIdPage from "./pages/FindIdPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import MyPage from "./pages/MyPage";
 import AppShell from "@/components/layout/AppShell";
-import HomeTabs from "@/components/layout/HomeTabs";
+import ResponsiveNav from "@/components/layout/ResponsiveNav";
 import LoadingPanel from "@/components/layout/LoadingPanel";
-import MainNav from "@/components/layout/MainNav";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -232,96 +231,92 @@ export default function App() {
 
   return (
     <AppShell>
-      <MainNav
+      <ResponsiveNav
+        tabs={TABS}
+        value={tab}
+        onChange={changeTab}
         user={user}
-        onHome={() => goToView("home")}
-        onMyPage={() => goToView("mypage")}
+        view={view}
+        setView={setView}
         onLogin={() => startLogin({ view: "home", tab })}
-        onSignup={() => goToView("signup")}
         onLogout={logout}
       />
 
-      {authLoading && (
-        <LoadingPanel message="인증 상태를 확인하고 있습니다." />
-      )}
+      <main className="flex-1 min-h-0 overflow-y-auto px-4 md:px-8 py-6 pb-24 md:pb-6">
+        {authLoading && (
+          <LoadingPanel message="인증 상태를 확인하고 있습니다." />
+        )}
 
-      {!authLoading && view === "auth-complete" && (
-        authCompleteFailed ? (
-          <div className="py-10">
-            <Card className="mx-auto max-w-md">
-              <CardHeader>
-                <CardTitle>로그인 확인 실패</CardTitle>
-                <CardDescription>
-                  Google 로그인 완료 상태를 확인하지 못했습니다.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Button
-                  type="button"
-                  className="w-full"
-                  onClick={() => startLogin({ view: "home", tab })}
-                >
-                  다시 로그인
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
-        ) : (
-          <LoadingPanel message="로그인 완료 후 이동하고 있습니다." />
-        )
-      )}
+        {!authLoading && view === "auth-complete" && (
+          authCompleteFailed ? (
+            <div className="py-10">
+              <Card className="mx-auto max-w-md">
+                <CardHeader>
+                  <CardTitle>로그인 확인 실패</CardTitle>
+                  <CardDescription>
+                    Google 로그인 완료 상태를 확인하지 못했습니다.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Button
+                    type="button"
+                    className="w-full"
+                    onClick={() => startLogin({ view: "home", tab })}
+                  >
+                    다시 로그인
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+          ) : (
+            <LoadingPanel message="로그인 완료 후 이동하고 있습니다." />
+          )
+        )}
 
-      {view === "login" && (
-        <LoginPage
-          onNavigate={goToView}
-          onAuthenticated={completeLogin}
-          onOAuthStart={startOAuth}
-        />
-      )}
-      {view === "signup" && (
-        <SignupPage onNavigate={goToView} onOAuthStart={startOAuth} />
-      )}
-      {view === "find-id" && <FindIdPage onNavigate={goToView} />}
-      {view === "forgot-password" && <ForgotPasswordPage onNavigate={goToView} />}
-
-      {!authLoading && view === "mypage" && (
-        <MyPage
-          user={user}
-          onRequireLogin={() => startLogin({ view: "mypage" })}
-          onOAuthStart={() => saveReturnTarget({ view: "mypage" })}
-          onOpenTab={goToHomeTab}
-        />
-      )}
-
-      {!authLoading && view === "home" && (
-        <>
-          <h1 className="mb-4 text-2xl font-bold">나만의 영어 학습 앱</h1>
-
-          <HomeTabs
-            tabs={TABS}
-            value={tab}
-            onChange={changeTab}
-            onPrefetch={prefetchTab}
+        {view === "login" && (
+          <LoginPage
+            onNavigate={goToView}
+            onAuthenticated={completeLogin}
+            onOAuthStart={startOAuth}
           />
+        )}
+        {view === "signup" && (
+          <SignupPage onNavigate={goToView} onOAuthStart={startOAuth} />
+        )}
+        {view === "find-id" && <FindIdPage onNavigate={goToView} />}
+        {view === "forgot-password" && <ForgotPasswordPage onNavigate={goToView} />}
 
-          {tab !== "roleplay" && (
-            <ActiveTab
-              user={user}
-              onRequireLogin={() => startLogin({ view: "home", tab })}
-              quizState={quizState}
-              setQuizState={setQuizState}
-            />
-          )}
+        {!authLoading && view === "mypage" && (
+          <MyPage
+            user={user}
+            onRequireLogin={() => startLogin({ view: "mypage" })}
+            onOAuthStart={() => saveReturnTarget({ view: "mypage" })}
+            onOpenTab={goToHomeTab}
+          />
+        )}
 
-          <div className={tab === "roleplay" ? "" : "hidden"}>
-            <RoleplayTab
-              key={roleplayInstanceKey}
-              user={user}
-              onRequireLogin={() => startLogin({ view: "home", tab: "roleplay" })}
-            />
+        {!authLoading && view === "home" && (
+          <div className="h-full">
+            {tab !== "roleplay" && (
+              <ActiveTab
+                user={user}
+                onRequireLogin={() => startLogin({ view: "home", tab })}
+                quizState={quizState}
+                setQuizState={setQuizState}
+              />
+            )}
+
+            <div className={tab === "roleplay" ? "h-full" : "hidden"}>
+              <RoleplayTab
+                key={roleplayInstanceKey}
+                user={user}
+                onRequireLogin={() => startLogin({ view: "home", tab: "roleplay" })}
+              />
+            </div>
           </div>
-        </>
-      )}
+        )}
+      </main>
     </AppShell>
   );
+
 }

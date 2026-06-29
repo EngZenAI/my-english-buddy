@@ -253,7 +253,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
     resetConversation();
   };
 
-  // 대화가 길어지면 마무리를 권장하고, 더 길어지면 정리만 가능하게 막는다.
+  // 토큰 보호: 일정 턴부터 마무리 권장, 더 길어지면 정리만 가능하게 막는다.
   const SOFT_TURN_LIMIT = 5;
   const WRAP_UP_TURN = 6;
   const HARD_TURN_LIMIT = 8;
@@ -578,7 +578,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
                 }`}
               >
                 {reachedHardLimit
-                  ? "이쯤에서 대화를 마무리해요"
+                  ? "토큰 보호를 위해 여기서 마무리해요"
                   : "대화가 충분히 진행됐어요. 마무리할까요?"}
               </p>
               <p
@@ -689,7 +689,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
             disabled={!user || !active || starting || reachedHardLimit}
             placeholder={
               reachedHardLimit
-                ? "대화를 마무리하고 정리해보세요"
+                ? "토큰 보호를 위해 대화를 마무리해주세요"
                 : active
                   ? "영어로 대답해봐요! (엔터로 전송)"
                   : "위에서 상황을 먼저 선택하세요"

@@ -165,9 +165,104 @@ def _translate(text: str, source: str, target: str) -> str:
         return "번역 실패"
 
 
+def _translate_many(texts: list[str], source: str, target: str) -> list[str]:
+    """Google Cloud Translation API batch helper.
+
+    Cached items are reused individually; uncached items are translated in a
+    single HTTP request and then stored back into the per-text cache.
+    """
+    results = [""] * len(texts)
+    missing: list[tuple[int, str, tuple[str, str, str]]] = []
+    seen_missing: dict[tuple[str, str, str], list[int]] = {}
+
+    for index, text in enumerate(texts):
+        value = (text or "").strip()
+        if not value:
+            continue
+        key = (value, source, target)
+        cached = _TR_CACHE.get(key)
+        if cached is not None:
+            results[index] = cached
+            continue
+        seen_missing.setdefault(key, []).append(index)
+        if len(seen_missing[key]) == 1:
+            missing.append((index, value, key))
+
+    if not missing:
+        return results
+
+    try:
+        res = requests.post(
+            "https://translation.googleapis.com/language/translate/v2",
+            params={"key": GOOGLE_API_KEY},
+            json={
+                "q": [text for _, text, _ in missing],
+                "source": source,
+                "target": target,
+                "format": "text",
+            },
+            timeout=5,
+        ).json()
+        if "error" in res:
+            track_external_usage(
+                feature="translate",
+                operation=f"{source}_to_{target}",
+                provider="google_translate",
+                input_value=[text for _, text, _ in missing],
+                output_value=res,
+                units=len(missing),
+                success=False,
+            )
+            print(f"Google API 오류: {res['error']['message']}")
+            for first_index, _text, key in missing:
+                for result_index in seen_missing[key]:
+                    results[result_index] = "번역 실패"
+            return results
+
+        translations = res["data"]["translations"]
+        if len(translations) != len(missing):
+            raise ValueError(
+                f"translation count mismatch: expected {len(missing)}, got {len(translations)}"
+            )
+        for (_first_index, _text, key), item in zip(missing, translations):
+            translated = item["translatedText"]
+            _TR_CACHE.set(key, translated)
+            for result_index in seen_missing[key]:
+                results[result_index] = translated
+
+        track_external_usage(
+            feature="translate",
+            operation=f"{source}_to_{target}",
+            provider="google_translate",
+            input_value=[text for _, text, _ in missing],
+            output_value=results,
+            units=len(missing),
+        )
+        return results
+    except Exception as e:
+        track_external_usage(
+            feature="translate",
+            operation=f"{source}_to_{target}",
+            provider="google_translate",
+            input_value=[text for _, text, _ in missing],
+            units=len(missing),
+            success=False,
+        )
+        print(f"번역 오류: {e}")
+        for _first_index, _text, key in missing:
+            for result_index in seen_missing[key]:
+                results[result_index] = "번역 실패"
+        return results
+
+
 def translate_korean(word: str) -> str:
     """영어 → 한국어"""
     return _translate(word, source="en", target="ko")
+
+
+def translate_many_korean(texts: list[str]) -> list[str]:
+    """여러 영어 문장/단어 → 한국어. Google API 요청을 한 번으로 묶는다."""
+    return _translate_many(texts, source="en", target="ko")
 
 
 def translate_english(word: str) -> str:

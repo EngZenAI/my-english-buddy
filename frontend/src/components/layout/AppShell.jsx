@@ -1,3 +1,7 @@
 export default function AppShell({ children }) {
-  return <div className="mx-auto max-w-3xl px-4 py-5">{children}</div>;
+  return (
+    <div className="relative flex min-h-screen w-full flex-col bg-background md:flex-row overflow-hidden">
+      {children}
+    </div>
+  );
 }

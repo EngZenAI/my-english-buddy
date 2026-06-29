@@ -15,7 +15,12 @@ from concurrent.futures import ThreadPoolExecutor
 from gtts import gTTS
 
 from backend.api_usage import track_external_usage
-from backend.dictionary import search_word, translate_korean, translate_english
+from backend.dictionary import (
+    search_word,
+    translate_english,
+    translate_korean,
+    translate_many_korean,
+)
 
 # 외부 API(HTTP) 병렬 호출용 스레드풀
 _executor = ThreadPoolExecutor(max_workers=8)
@@ -56,8 +61,7 @@ def korean_per_pos(word: str, meanings_list: list, simple_kor: str | None = None
         defs = [m["definition"] for m in meanings_list if m["partOfSpeech"] == pos]
         first_defs.append((pos, defs[0]))
 
-    futures = [_submit_with_context(translate_korean, definition) for _, definition in first_defs]
-    translations = [future.result() for future in futures]
+    translations = translate_many_korean([definition for _, definition in first_defs])
     return "\n".join(
         f"[{pos}] {kor}" for (pos, _), kor in zip(first_defs, translations)
     )

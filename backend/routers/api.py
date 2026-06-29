@@ -10,7 +10,7 @@ import csv
 import io
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
@@ -81,6 +81,17 @@ CurrentUserDep = Annotated[dict, Depends(require_user)]
 async def persist_usage_capture(token, user: dict | None) -> None:
     events = stop_usage_capture(token)
     await record_api_usage_events(user.get("id") if user else None, events)
+
+
+def defer_usage_capture(
+    background_tasks: BackgroundTasks,
+    token,
+    user: dict | None,
+) -> None:
+    events = stop_usage_capture(token)
+    user_id = user.get("id") if user else None
+    if user_id and events:
+        background_tasks.add_task(record_api_usage_events, user_id, events)
 
 
 # ── 스키마 ─────────────────────────────────────────────────
@@ -266,23 +277,35 @@ async def disconnect_account_oauth(
 
 # ── 검색 (비회원 허용) ──────────────────────────────────────
 @router.get("/search/english")
-async def search_english(word: str = "", *, request: Request, session: SessionDep):
+async def search_english(
+    word: str = "",
+    *,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    session: SessionDep,
+):
     user = await get_current_user_from_cookie(request, session)
     usage_token = start_usage_capture()
     try:
         return await run_in_threadpool(search_from_english, word)
     finally:
-        await persist_usage_capture(usage_token, user)
+        defer_usage_capture(background_tasks, usage_token, user)
 
 
 @router.get("/search/korean")
-async def search_korean(word: str = "", *, request: Request, session: SessionDep):
+async def search_korean(
+    word: str = "",
+    *,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    session: SessionDep,
+):
     user = await get_current_user_from_cookie(request, session)
     usage_token = start_usage_capture()
     try:
         return await run_in_threadpool(search_from_korean, word)
     finally:
-        await persist_usage_capture(usage_token, user)
+        defer_usage_capture(background_tasks, usage_token, user)
 
 
 # ── TTS (비회원 허용) ───────────────────────────────────────
@@ -292,6 +315,7 @@ async def tts(
     lang: str = "en",
     *,
     request: Request,
+    background_tasks: BackgroundTasks,
     session: SessionDep,
 ):
     user = await get_current_user_from_cookie(request, session)
@@ -300,7 +324,7 @@ async def tts(
         audio_b64 = await run_in_threadpool(synthesize_tts, word, lang)
         return {"audio": audio_b64}  # base64 mp3 또는 null
     finally:
-        await persist_usage_capture(usage_token, user)
+        defer_usage_capture(background_tasks, usage_token, user)
 
 
 # ── 단어 저장여부 (검색 화면 배지용, 공개) ──────────────────
