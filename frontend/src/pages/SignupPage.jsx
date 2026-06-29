@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import GoogleButton from "../components/GoogleButton";
 import AuthCard from "@/components/auth/AuthCard";
@@ -15,8 +15,18 @@ export default function SignupPage({ onNavigate, onOAuthStart }) {
   const [confirm, setConfirm] = useState("");
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
+  const redirectTimerRef = useRef(null);
+
+  const clearRedirectTimer = () => {
+    if (!redirectTimerRef.current) return;
+    window.clearTimeout(redirectTimerRef.current);
+    redirectTimerRef.current = null;
+  };
+
+  useEffect(() => clearRedirectTimer, []);
 
   const submit = async () => {
+    clearRedirectTimer();
     const trimmedEmail = email.trim();
     if (!trimmedEmail || !password.trim() || !confirm.trim()) {
       setStatus("이메일과 비밀번호를 모두 입력해주세요.");
@@ -37,11 +47,16 @@ export default function SignupPage({ onNavigate, onOAuthStart }) {
 
     setLoading(true);
     setStatus("");
+    let redirectPending = false;
     try {
       const res = await api.register(trimmedEmail, password);
       if (res.ok) {
         setStatus("회원가입이 완료되었습니다. 로그인해주세요.");
-        setTimeout(() => onNavigate("login"), 800);
+        redirectPending = true;
+        redirectTimerRef.current = window.setTimeout(() => {
+          redirectTimerRef.current = null;
+          onNavigate("login");
+        }, 800);
       } else if (res.detail === "REGISTER_USER_ALREADY_EXISTS") {
         setStatus("이미 가입된 이메일입니다.");
       } else {
@@ -50,7 +65,7 @@ export default function SignupPage({ onNavigate, onOAuthStart }) {
     } catch {
       setStatus("회원가입 요청에 실패했습니다. 잠시 후 다시 시도해주세요.");
     } finally {
-      setLoading(false);
+      if (!redirectPending) setLoading(false);
     }
   };
 
@@ -101,6 +116,7 @@ export default function SignupPage({ onNavigate, onOAuthStart }) {
           type="button"
           variant="ghost"
           onClick={() => onNavigate("login")}
+          disabled={loading}
           className="w-full"
         >
           이미 계정이 있으신가요? 로그인
