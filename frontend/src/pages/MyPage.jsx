@@ -4,6 +4,12 @@ import { api, GOOGLE_LOGIN_URL } from "../api";
 import { queryKeys } from "../queryClient";
 import { EmptyState, LoadingSpinner, SkeletonBlock } from "../components/AsyncState";
 import MemberNotice from "../components/MemberNotice";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const TABS = [
   { id: "account", label: "계정 관리" },
@@ -49,33 +55,37 @@ function getErrorDetail(error, fallback) {
 
 function MethodChip({ children }) {
   return (
-    <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
+    <Badge variant="secondary" className="font-medium">
       {children}
-    </span>
+    </Badge>
   );
 }
 
 function StatCard({ label, value, helper }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm shadow-slate-100/60">
-      <p className="text-xs font-medium text-slate-500">{label}</p>
-      <p className="mt-1 text-2xl font-semibold text-slate-900">{value}</p>
-      {helper && <p className="mt-1 text-xs text-slate-400">{helper}</p>}
-    </div>
+    <Card>
+      <CardContent className="p-4">
+        <p className="text-xs font-medium text-muted-foreground">{label}</p>
+        <p className="mt-1 text-2xl font-semibold text-foreground">{value}</p>
+        {helper && <p className="mt-1 text-xs text-muted-foreground">{helper}</p>}
+      </CardContent>
+    </Card>
   );
 }
 
 function QuickAction({ label, description, onClick }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="outline"
       onClick={onClick}
-      className="rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm shadow-slate-100/60
-                 transition hover:border-brand-200 hover:bg-brand-50/50"
+      className="h-auto justify-start p-4 text-left"
     >
-      <span className="text-sm font-semibold text-slate-900">{label}</span>
-      <span className="mt-1 block text-xs text-slate-500">{description}</span>
-    </button>
+      <span>
+        <span className="block text-sm font-semibold">{label}</span>
+        <span className="mt-1 block text-xs text-muted-foreground">{description}</span>
+      </span>
+    </Button>
   );
 }
 
@@ -406,52 +416,48 @@ function AccountPanel({ user, onOAuthStart }) {
 
         <form onSubmit={submitPassword} className="mt-4 grid gap-3 md:max-w-md">
           {hasPassword && (
-            <div>
-              <label className="mb-1 block text-sm text-slate-600">현재 비밀번호</label>
-              <input
+            <div className="space-y-1.5">
+              <Label htmlFor="current-password">현재 비밀번호</Label>
+              <Input
+                id="current-password"
                 type="password"
                 value={currentPassword}
                 onChange={(event) => setCurrentPassword(event.target.value)}
                 disabled={passwordMutation.isPending}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm
-                           focus:outline-none focus:ring-2 focus:ring-brand-200"
               />
             </div>
           )}
-          <div>
-            <label className="mb-1 block text-sm text-slate-600">새 비밀번호</label>
-            <input
+          <div className="space-y-1.5">
+            <Label htmlFor="new-password">새 비밀번호</Label>
+            <Input
+              id="new-password"
               type="password"
               value={newPassword}
               onChange={(event) => setNewPassword(event.target.value)}
               disabled={passwordMutation.isPending}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm
-                         focus:outline-none focus:ring-2 focus:ring-brand-200"
             />
           </div>
-          <div>
-            <label className="mb-1 block text-sm text-slate-600">새 비밀번호 확인</label>
-            <input
+          <div className="space-y-1.5">
+            <Label htmlFor="confirm-password">새 비밀번호 확인</Label>
+            <Input
+              id="confirm-password"
               type="password"
               value={confirmPassword}
               onChange={(event) => setConfirmPassword(event.target.value)}
               disabled={passwordMutation.isPending}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm
-                         focus:outline-none focus:ring-2 focus:ring-brand-200"
             />
           </div>
-          <button
+          <Button
             type="submit"
             disabled={passwordMutation.isPending}
-            className="mt-1 h-10 rounded-lg bg-brand-600 px-4 text-sm font-semibold text-white
-                       hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-70"
+            className="mt-1"
           >
             {passwordMutation.isPending
               ? "저장 중"
               : hasPassword
                 ? "비밀번호 변경"
                 : "비밀번호 설정"}
-          </button>
+          </Button>
         </form>
       </section>
 
@@ -464,24 +470,20 @@ function AccountPanel({ user, onOAuthStart }) {
             </p>
           </div>
           {googleConnected ? (
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={() => disconnectMutation.mutate()}
               disabled={!canDisconnectGoogle || disconnectMutation.isPending}
-              className="h-10 rounded-lg border border-slate-300 px-4 text-sm font-semibold text-slate-700
-                         hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {disconnectMutation.isPending ? "해제 중" : "연결 해제"}
-            </button>
+            </Button>
           ) : (
-            <a
-              href={GOOGLE_LOGIN_URL}
-              onClick={onOAuthStart}
-              className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-300 px-4
-                         text-sm font-semibold text-slate-700 no-underline hover:bg-slate-50"
-            >
-              Google 연결
-            </a>
+            <Button asChild variant="outline">
+              <a href={GOOGLE_LOGIN_URL} onClick={onOAuthStart}>
+                Google 연결
+              </a>
+            </Button>
           )}
         </div>
         <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
@@ -494,7 +496,7 @@ function AccountPanel({ user, onOAuthStart }) {
       </section>
 
       {status && (
-        <p className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+        <p className="rounded-lg border bg-background px-4 py-3 text-sm text-muted-foreground">
           {status}
         </p>
       )}
@@ -540,22 +542,18 @@ export default function MyPage({ user, onRequireLogin, onOpenTab, onOAuthStart }
         <p className="mt-1 text-sm text-slate-500">{user.email}</p>
       </div>
 
-      <div className="mb-4 flex gap-1 border-b border-slate-200">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-4">
+        <TabsList className="h-auto w-full justify-start overflow-x-auto rounded-lg bg-muted p-1">
         {TABS.map((tab) => (
-          <button
+          <TabsTrigger
             key={tab.id}
-            type="button"
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
-              activeTab === tab.id
-                ? "border-brand-600 text-brand-600"
-                : "border-transparent text-slate-500 hover:text-slate-700"
-            }`}
+            value={tab.id}
           >
             {tab.label}
-          </button>
+          </TabsTrigger>
         ))}
-      </div>
+        </TabsList>
+      </Tabs>
 
       {overviewQuery.error && activeTab === "overview" && (
         <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">

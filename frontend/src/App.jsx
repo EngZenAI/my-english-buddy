@@ -11,12 +11,24 @@ import SignupPage from "./pages/SignupPage";
 import FindIdPage from "./pages/FindIdPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import MyPage from "./pages/MyPage";
+import AppShell from "@/components/layout/AppShell";
+import HomeTabs from "@/components/layout/HomeTabs";
+import LoadingPanel from "@/components/layout/LoadingPanel";
+import MainNav from "@/components/layout/MainNav";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
 const TABS = [
-  { id: "search", label: "🔍 단어 검색", Comp: SearchTab },
-  { id: "wordbook", label: "📖 단어장", Comp: WordbookTab },
-  { id: "quiz", label: "✏️ 퀴즈", Comp: QuizTab },
-  { id: "roleplay", label: "💬 롤플레잉", Comp: RoleplayTab },
+  { id: "search", label: "단어 검색", Comp: SearchTab },
+  { id: "wordbook", label: "단어장", Comp: WordbookTab },
+  { id: "quiz", label: "퀴즈", Comp: QuizTab },
+  { id: "roleplay", label: "롤플레잉", Comp: RoleplayTab },
 ];
 
 const AUTH_RETURN_KEY = "englishBuddy.authReturn";
@@ -71,18 +83,6 @@ function popReturnTarget() {
   } catch {
     return null;
   }
-}
-
-function LoadingPanel({ message }) {
-  return (
-    <div className="py-16 flex flex-col items-center justify-center gap-3 text-slate-500">
-      <span
-        aria-hidden="true"
-        className="h-8 w-8 rounded-full border-4 border-brand-100 border-t-brand-600 animate-spin"
-      />
-      <p className="text-sm">{message}</p>
-    </div>
-  );
 }
 
 export default function App() {
@@ -223,56 +223,23 @@ export default function App() {
     [queryClient, user]
   );
 
+  const prefetchTab = (tabId) => tabQueryPrefetch[tabId]?.();
+
+  const changeTab = (nextTab) => {
+    tabQueryPrefetch[nextTab]?.();
+    setTab(nextTab);
+  };
+
   return (
-    <div className="max-w-3xl mx-auto px-4 py-5">
-      {/* Navbar */}
-      <div className="flex items-center justify-end gap-2 pb-3 flex-wrap">
-        <button
-          onClick={() => goToView("home")}
-          className="h-9 px-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50
-                     text-sm font-semibold"
-        >
-          홈
-        </button>
-        {user ? (
-          <>
-            <button
-              onClick={() => goToView("mypage")}
-              className="h-9 px-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50
-                         text-sm font-semibold"
-            >
-              마이페이지
-            </button>
-            <span className="text-sm text-slate-500 max-w-[240px] truncate">
-              로그인됨: {user.email}
-            </span>
-            <button
-              onClick={logout}
-              className="h-9 px-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50
-                         text-sm font-semibold"
-            >
-              로그아웃
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              onClick={() => startLogin({ view: "home", tab })}
-              className="h-9 px-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50
-                         text-sm font-semibold"
-            >
-              로그인
-            </button>
-            <button
-              onClick={() => goToView("signup")}
-              className="h-9 px-3 rounded-lg bg-brand-600 text-white hover:bg-brand-700
-                         text-sm font-semibold"
-            >
-              회원가입
-            </button>
-          </>
-        )}
-      </div>
+    <AppShell>
+      <MainNav
+        user={user}
+        onHome={() => goToView("home")}
+        onMyPage={() => goToView("mypage")}
+        onLogin={() => startLogin({ view: "home", tab })}
+        onSignup={() => goToView("signup")}
+        onLogout={logout}
+      />
 
       {authLoading && (
         <LoadingPanel message="인증 상태를 확인하고 있습니다." />
@@ -281,19 +248,23 @@ export default function App() {
       {!authLoading && view === "auth-complete" && (
         authCompleteFailed ? (
           <div className="py-10">
-            <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-7 max-w-md mx-auto">
-              <h1 className="text-2xl font-bold mb-1.5">로그인 확인 실패</h1>
-              <p className="text-sm text-slate-500 mb-4">
-                Google 로그인 완료 상태를 확인하지 못했습니다.
-              </p>
-              <button
-                onClick={() => startLogin({ view: "home", tab })}
-                className="w-full h-10 rounded-lg bg-brand-600 text-white font-semibold
-                           hover:bg-brand-700"
-              >
-                다시 로그인
-              </button>
-            </div>
+            <Card className="mx-auto max-w-md">
+              <CardHeader>
+                <CardTitle>로그인 확인 실패</CardTitle>
+                <CardDescription>
+                  Google 로그인 완료 상태를 확인하지 못했습니다.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button
+                  type="button"
+                  className="w-full"
+                  onClick={() => startLogin({ view: "home", tab })}
+                >
+                  다시 로그인
+                </Button>
+              </CardContent>
+            </Card>
           </div>
         ) : (
           <LoadingPanel message="로그인 완료 후 이동하고 있습니다." />
@@ -324,28 +295,14 @@ export default function App() {
 
       {!authLoading && view === "home" && (
         <>
-          <h1 className="text-2xl font-bold mb-4">📚 나만의 영어 학습 앱</h1>
+          <h1 className="mb-4 text-2xl font-bold">나만의 영어 학습 앱</h1>
 
-          {/* 탭 헤더 */}
-          <div className="flex gap-1 border-b border-slate-200 mb-4">
-            {TABS.map((t) => (
-              <button
-                key={t.id}
-                onMouseEnter={tabQueryPrefetch[t.id]}
-                onFocus={tabQueryPrefetch[t.id]}
-                onClick={() => {
-                  tabQueryPrefetch[t.id]?.();
-                  setTab(t.id);
-                }}
-                className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors
-                  ${tab === t.id
-                    ? "border-brand-600 text-brand-600"
-                    : "border-transparent text-slate-500 hover:text-slate-700"}`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
+          <HomeTabs
+            tabs={TABS}
+            value={tab}
+            onChange={changeTab}
+            onPrefetch={prefetchTab}
+          />
 
           {tab !== "roleplay" && (
             <ActiveTab
@@ -365,6 +322,6 @@ export default function App() {
           </div>
         </>
       )}
-    </div>
+    </AppShell>
   );
 }

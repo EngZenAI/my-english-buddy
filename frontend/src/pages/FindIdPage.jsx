@@ -1,4 +1,9 @@
 import { useState } from "react";
+import AuthCard from "@/components/auth/AuthCard";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 const REMEMBERED_LOGIN_ID_KEY = "englishBuddy.loginId";
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -22,46 +27,44 @@ export default function FindIdPage({ onNavigate }) {
   };
 
   return (
-    <div className="py-10">
-      <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-7 max-w-md mx-auto">
-        <h1 className="text-2xl font-bold mb-1.5">아이디 찾기</h1>
-        <p className="text-sm text-slate-500 mb-4">
-          이 앱의 로그인 ID는 가입한 이메일 주소입니다.
-        </p>
-
+    <AuthCard title="아이디 찾기" description="이 앱의 로그인 ID는 가입한 이메일 주소입니다.">
+      <div className="space-y-4">
         {rememberedEmail && (
-          <div className="rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 text-sm text-slate-700 mb-4">
+          <Alert className="border-brand-100 bg-brand-50 text-slate-700">
             기억된 로그인 ID: <span className="font-semibold">{rememberedEmail}</span>
-          </div>
+          </Alert>
         )}
 
-        <label className="block text-sm text-slate-600 mb-1">가입 이메일</label>
-        <input
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
-          placeholder="you@example.com"
-          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-4
-                     focus:outline-none focus:ring-2 focus:ring-brand-200"
-        />
+        <div className="space-y-1.5">
+          <Label htmlFor="find-id-email">가입 이메일</Label>
+          <Input
+            id="find-id-email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+            placeholder="you@example.com"
+          />
+        </div>
 
-        <button
+        <Button
+          type="button"
           onClick={submit}
-          className="w-full h-10 rounded-lg bg-brand-600 text-white font-semibold
-                     hover:bg-brand-700 mb-3"
+          className="w-full"
         >
           로그인 ID 확인
-        </button>
+        </Button>
 
-        {status && <p className="text-sm text-slate-500 mt-3">{status}</p>}
+        {status && <p className="text-sm text-muted-foreground">{status}</p>}
 
-        <button
+        <Button
+          type="button"
+          variant="ghost"
           onClick={() => onNavigate("login")}
-          className="w-full text-sm text-slate-500 hover:text-slate-700 mt-4"
+          className="w-full"
         >
           로그인으로 돌아가기
-        </button>
+        </Button>
       </div>
-    </div>
+    </AuthCard>
   );
 }

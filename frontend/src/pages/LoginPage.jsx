@@ -1,18 +1,15 @@
 import { useState } from "react";
 import { api } from "../api";
 import GoogleButton from "../components/GoogleButton";
+import AuthCard from "@/components/auth/AuthCard";
+import Spinner from "@/components/common/Spinner";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 const REMEMBERED_LOGIN_ID_KEY = "englishBuddy.loginId";
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-function Spinner() {
-  return (
-    <span
-      aria-hidden="true"
-      className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin"
-    />
-  );
-}
 
 export default function LoginPage({ onNavigate, onAuthenticated, onOAuthStart }) {
   const rememberedEmail = localStorage.getItem(REMEMBERED_LOGIN_ID_KEY) || "";
@@ -71,79 +68,72 @@ export default function LoginPage({ onNavigate, onAuthenticated, onOAuthStart })
   };
 
   return (
-    <div className="py-10">
-      <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-7 max-w-md mx-auto">
-        <h1 className="text-2xl font-bold mb-1.5">로그인</h1>
-        <p className="text-sm text-slate-500 mb-4">
-          저장한 단어장과 복습 흐름을 이어갑니다.
-        </p>
-
-        <label className="block text-sm text-slate-600 mb-1">이메일</label>
-        <input
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          disabled={loading}
-          placeholder="you@example.com"
-          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-3
-                     focus:outline-none focus:ring-2 focus:ring-brand-200"
-        />
-        <label className="block text-sm text-slate-600 mb-1">비밀번호</label>
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          disabled={loading}
-          onKeyDown={(e) => e.key === "Enter" && !loading && submit()}
-          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-4
-                     focus:outline-none focus:ring-2 focus:ring-brand-200"
-        />
-        <label className="flex items-center gap-2 text-sm text-slate-600 mb-4">
-          <input
-            type="checkbox"
+    <AuthCard title="로그인" description="저장한 단어장과 복습 흐름을 이어갑니다.">
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="login-email">이메일</Label>
+          <Input
+            id="login-email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={loading}
+            placeholder="you@example.com"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="login-password">비밀번호</Label>
+          <Input
+            id="login-password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            disabled={loading}
+            onKeyDown={(e) => e.key === "Enter" && !loading && submit()}
+          />
+        </div>
+        <Label className="flex items-center gap-2 text-muted-foreground">
+          <Checkbox
             checked={rememberLoginId}
-            onChange={(e) => setRememberLoginId(e.target.checked)}
-            className="h-4 w-4 rounded border-slate-300"
+            onCheckedChange={(checked) => setRememberLoginId(checked === true)}
           />
           로그인 ID 기억하기
-        </label>
+        </Label>
 
-        <button
-          onClick={submit}
-          disabled={loading}
-          className="w-full h-10 rounded-lg bg-brand-600 text-white font-semibold
-                     hover:bg-brand-700 disabled:opacity-70 disabled:cursor-not-allowed mb-3
-                     inline-flex items-center justify-center gap-2"
-        >
+        <Button type="button" onClick={submit} disabled={loading} className="w-full">
           {loading && <Spinner />}
           {loading ? "로그인 중" : "로그인"}
-        </button>
+        </Button>
         <GoogleButton label="Google로 로그인" onStart={onOAuthStart} disabled={loading} />
 
         <div className="flex items-center justify-center gap-3 mt-4 text-sm">
-          <button
+          <Button
+            type="button"
+            variant="link"
             onClick={() => onNavigate("find-id")}
-            className="text-slate-500 hover:text-slate-700"
           >
             아이디 찾기
-          </button>
-          <span className="text-slate-300">|</span>
-          <button
+          </Button>
+          <span className="text-border">|</span>
+          <Button
+            type="button"
+            variant="link"
             onClick={() => onNavigate("forgot-password")}
-            className="text-slate-500 hover:text-slate-700"
           >
             비밀번호 찾기
-          </button>
+          </Button>
         </div>
 
-        {status && <p className="text-sm text-slate-500 mt-3">{status}</p>}
+        {status && <p className="text-sm text-muted-foreground">{status}</p>}
 
-        <button
+        <Button
+          type="button"
+          variant="ghost"
           onClick={() => onNavigate("signup")}
-          className="w-full text-sm text-slate-500 hover:text-slate-700 mt-4"
+          className="w-full"
         >
           계정이 없으신가요? 회원가입
-        </button>
+        </Button>
       </div>
-    </div>
+    </AuthCard>
   );
 }
