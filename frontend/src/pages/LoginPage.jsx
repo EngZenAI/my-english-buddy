@@ -5,8 +5,8 @@ import AuthCard from "@/components/auth/AuthCard";
 import Spinner from "@/components/common/Spinner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 
 const REMEMBERED_LOGIN_ID_KEY = "englishBuddy.loginId";
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -68,10 +68,25 @@ export default function LoginPage({ onNavigate, onAuthenticated, onOAuthStart })
   };
 
   return (
-    <AuthCard title="로그인" description="저장한 단어장과 복습 흐름을 이어갑니다.">
-      <div className="space-y-3">
-        <div className="space-y-1.5">
-          <Label htmlFor="login-email">이메일</Label>
+    <AuthCard
+      eyebrow="Welcome back"
+      title="로그인"
+      description="저장한 단어장과 복습 흐름을 이어갑니다."
+      footer={
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => onNavigate("signup")}
+          disabled={loading}
+          className="w-full"
+        >
+          계정이 없으신가요? 회원가입
+        </Button>
+      }
+    >
+      <div className="space-y-4">
+        <Field>
+          <FieldLabel htmlFor="login-email">이메일</FieldLabel>
           <Input
             id="login-email"
             value={email}
@@ -79,9 +94,9 @@ export default function LoginPage({ onNavigate, onAuthenticated, onOAuthStart })
             disabled={loading}
             placeholder="you@example.com"
           />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="login-password">비밀번호</Label>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="login-password">비밀번호</FieldLabel>
           <Input
             id="login-password"
             type="password"
@@ -90,14 +105,14 @@ export default function LoginPage({ onNavigate, onAuthenticated, onOAuthStart })
             disabled={loading}
             onKeyDown={(e) => e.key === "Enter" && !loading && submit()}
           />
-        </div>
-        <Label className="flex items-center gap-2 text-muted-foreground">
+        </Field>
+        <FieldLabel className="flex items-center gap-2 text-muted-foreground">
           <Checkbox
             checked={rememberLoginId}
             onCheckedChange={(checked) => setRememberLoginId(checked === true)}
           />
           로그인 ID 기억하기
-        </Label>
+        </FieldLabel>
 
         <Button type="button" onClick={submit} disabled={loading} className="w-full">
           {loading && <Spinner />}
@@ -123,16 +138,7 @@ export default function LoginPage({ onNavigate, onAuthenticated, onOAuthStart })
           </Button>
         </div>
 
-        {status && <p className="text-sm text-muted-foreground">{status}</p>}
-
-        <Button
-          type="button"
-          variant="ghost"
-          onClick={() => onNavigate("signup")}
-          className="w-full"
-        >
-          계정이 없으신가요? 회원가입
-        </Button>
+        {status && <FieldDescription>{status}</FieldDescription>}
       </div>
     </AuthCard>
   );

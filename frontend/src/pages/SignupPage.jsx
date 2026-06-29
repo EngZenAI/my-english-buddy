@@ -4,8 +4,8 @@ import GoogleButton from "../components/GoogleButton";
 import AuthCard from "@/components/auth/AuthCard";
 import Spinner from "@/components/common/Spinner";
 import { Button } from "@/components/ui/button";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -70,48 +70,11 @@ export default function SignupPage({ onNavigate, onOAuthStart }) {
   };
 
   return (
-    <AuthCard title="회원가입" description="이메일과 비밀번호로 학습 계정을 만듭니다.">
-      <div className="space-y-3">
-        <div className="space-y-1.5">
-          <Label htmlFor="signup-email">이메일</Label>
-          <Input
-            id="signup-email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            disabled={loading}
-            placeholder="you@example.com"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="signup-password">비밀번호</Label>
-          <Input
-            id="signup-password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            disabled={loading}
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="signup-confirm">비밀번호 확인</Label>
-          <Input
-            id="signup-confirm"
-            type="password"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            disabled={loading}
-            onKeyDown={(e) => e.key === "Enter" && !loading && submit()}
-          />
-        </div>
-
-        <Button type="button" onClick={submit} disabled={loading} className="w-full">
-          {loading && <Spinner />}
-          {loading ? "처리 중" : "계정 만들기"}
-        </Button>
-        <GoogleButton label="Google로 회원가입" onStart={onOAuthStart} disabled={loading} />
-
-        {status && <p className="text-sm text-muted-foreground">{status}</p>}
-
+    <AuthCard
+      eyebrow="Create account"
+      title="회원가입"
+      description="이메일과 비밀번호로 학습 계정을 만듭니다."
+      footer={
         <Button
           type="button"
           variant="ghost"
@@ -121,6 +84,49 @@ export default function SignupPage({ onNavigate, onOAuthStart }) {
         >
           이미 계정이 있으신가요? 로그인
         </Button>
+      }
+    >
+      <div className="space-y-4">
+        <Field>
+          <FieldLabel htmlFor="signup-email">이메일</FieldLabel>
+          <Input
+            id="signup-email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={loading}
+            placeholder="you@example.com"
+          />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="signup-password">비밀번호</FieldLabel>
+          <Input
+            id="signup-password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            disabled={loading}
+          />
+          <FieldDescription>8자 이상으로 입력해주세요.</FieldDescription>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="signup-confirm">비밀번호 확인</FieldLabel>
+          <Input
+            id="signup-confirm"
+            type="password"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            disabled={loading}
+            onKeyDown={(e) => e.key === "Enter" && !loading && submit()}
+          />
+        </Field>
+
+        <Button type="button" onClick={submit} disabled={loading} className="w-full">
+          {loading && <Spinner />}
+          {loading ? "처리 중" : "계정 만들기"}
+        </Button>
+        <GoogleButton label="Google로 회원가입" onStart={onOAuthStart} disabled={loading} />
+
+        {status && <FieldDescription>{status}</FieldDescription>}
       </div>
     </AuthCard>
   );
