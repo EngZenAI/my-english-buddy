@@ -37,16 +37,20 @@ export default function SignupPage({ onNavigate, onOAuthStart }) {
 
     setLoading(true);
     setStatus("");
-    const res = await api.register(trimmedEmail, password);
-    setLoading(false);
-
-    if (res.ok) {
-      setStatus("회원가입이 완료되었습니다. 로그인해주세요.");
-      setTimeout(() => onNavigate("login"), 800);
-    } else if (res.detail === "REGISTER_USER_ALREADY_EXISTS") {
-      setStatus("이미 가입된 이메일입니다.");
-    } else {
-      setStatus("회원가입에 실패했습니다. 입력값을 확인해주세요.");
+    try {
+      const res = await api.register(trimmedEmail, password);
+      if (res.ok) {
+        setStatus("회원가입이 완료되었습니다. 로그인해주세요.");
+        setTimeout(() => onNavigate("login"), 800);
+      } else if (res.detail === "REGISTER_USER_ALREADY_EXISTS") {
+        setStatus("이미 가입된 이메일입니다.");
+      } else {
+        setStatus("회원가입에 실패했습니다. 입력값을 확인해주세요.");
+      }
+    } catch {
+      setStatus("회원가입 요청에 실패했습니다. 잠시 후 다시 시도해주세요.");
+    } finally {
+      setLoading(false);
     }
   };
 
