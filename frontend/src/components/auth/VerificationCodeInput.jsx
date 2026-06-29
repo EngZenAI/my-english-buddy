@@ -23,7 +23,7 @@ export default function VerificationCodeInput({
       <input
         id={id}
         value={code}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => onChange(normalizeCode(event.target.value))}
         disabled={disabled}
         autoCapitalize="characters"
         autoComplete="one-time-code"
