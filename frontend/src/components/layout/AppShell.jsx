@@ -1,6 +1,6 @@
 export default function AppShell({ children }) {
   return (
-    <div className="relative flex min-h-screen w-full flex-col bg-background md:flex-row overflow-hidden">
+    <div className="relative flex h-screen w-full flex-col overflow-hidden bg-background md:flex-row">
       {children}
     </div>
   );
