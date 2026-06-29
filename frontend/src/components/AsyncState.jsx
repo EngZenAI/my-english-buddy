@@ -1,6 +1,8 @@
+import { Skeleton } from "@/components/ui/skeleton";
+
 export function LoadingSpinner({
   label = "불러오는 중",
-  className = "text-slate-500",
+  className = "text-muted-foreground",
   spinnerClassName = "border-slate-200 border-t-brand-600",
 }) {
   return (
@@ -15,15 +17,15 @@ export function LoadingSpinner({
 }
 
 export function SkeletonBlock({ className = "" }) {
-  return <div className={`animate-pulse rounded-md bg-slate-100 ${className}`} />;
+  return <Skeleton className={className} />;
 }
 
 export function EmptyState({ title, description }) {
   return (
-    <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center">
-      <p className="text-sm font-semibold text-slate-600">{title}</p>
+    <div className="rounded-lg border border-dashed bg-muted/50 px-4 py-8 text-center">
+      <p className="text-sm font-semibold text-foreground">{title}</p>
       {description && (
-        <p className="mt-1 text-sm text-slate-400">{description}</p>
+        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
       )}
     </div>
   );

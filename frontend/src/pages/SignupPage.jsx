@@ -1,17 +1,13 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import GoogleButton from "../components/GoogleButton";
+import AuthCard from "@/components/auth/AuthCard";
+import Spinner from "@/components/common/Spinner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-function Spinner() {
-  return (
-    <span
-      aria-hidden="true"
-      className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin"
-    />
-  );
-}
 
 export default function SignupPage({ onNavigate, onOAuthStart }) {
   const [email, setEmail] = useState("");
@@ -19,8 +15,18 @@ export default function SignupPage({ onNavigate, onOAuthStart }) {
   const [confirm, setConfirm] = useState("");
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
+  const redirectTimerRef = useRef(null);
+
+  const clearRedirectTimer = () => {
+    if (!redirectTimerRef.current) return;
+    window.clearTimeout(redirectTimerRef.current);
+    redirectTimerRef.current = null;
+  };
+
+  useEffect(() => clearRedirectTimer, []);
 
   const submit = async () => {
+    clearRedirectTimer();
     const trimmedEmail = email.trim();
     if (!trimmedEmail || !password.trim() || !confirm.trim()) {
       setStatus("이메일과 비밀번호를 모두 입력해주세요.");
@@ -41,77 +47,81 @@ export default function SignupPage({ onNavigate, onOAuthStart }) {
 
     setLoading(true);
     setStatus("");
-    const res = await api.register(trimmedEmail, password);
-    setLoading(false);
-
-    if (res.ok) {
-      setStatus("회원가입이 완료되었습니다. 로그인해주세요.");
-      setTimeout(() => onNavigate("login"), 800);
-    } else if (res.detail === "REGISTER_USER_ALREADY_EXISTS") {
-      setStatus("이미 가입된 이메일입니다.");
-    } else {
-      setStatus("회원가입에 실패했습니다. 입력값을 확인해주세요.");
+    let redirectPending = false;
+    try {
+      const res = await api.register(trimmedEmail, password);
+      if (res.ok) {
+        setStatus("회원가입이 완료되었습니다. 로그인해주세요.");
+        redirectPending = true;
+        redirectTimerRef.current = window.setTimeout(() => {
+          redirectTimerRef.current = null;
+          onNavigate("login");
+        }, 800);
+      } else if (res.detail === "REGISTER_USER_ALREADY_EXISTS") {
+        setStatus("이미 가입된 이메일입니다.");
+      } else {
+        setStatus("회원가입에 실패했습니다. 입력값을 확인해주세요.");
+      }
+    } catch {
+      setStatus("회원가입 요청에 실패했습니다. 잠시 후 다시 시도해주세요.");
+    } finally {
+      if (!redirectPending) setLoading(false);
     }
   };
 
   return (
-    <div className="py-10">
-      <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-7 max-w-md mx-auto">
-        <h1 className="text-2xl font-bold mb-1.5">회원가입</h1>
-        <p className="text-sm text-slate-500 mb-4">
-          이메일과 비밀번호로 학습 계정을 만듭니다.
-        </p>
+    <AuthCard title="회원가입" description="이메일과 비밀번호로 학습 계정을 만듭니다.">
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="signup-email">이메일</Label>
+          <Input
+            id="signup-email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={loading}
+            placeholder="you@example.com"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="signup-password">비밀번호</Label>
+          <Input
+            id="signup-password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            disabled={loading}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="signup-confirm">비밀번호 확인</Label>
+          <Input
+            id="signup-confirm"
+            type="password"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            disabled={loading}
+            onKeyDown={(e) => e.key === "Enter" && !loading && submit()}
+          />
+        </div>
 
-        <label className="block text-sm text-slate-600 mb-1">이메일</label>
-        <input
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          disabled={loading}
-          placeholder="you@example.com"
-          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-3
-                     focus:outline-none focus:ring-2 focus:ring-brand-200"
-        />
-        <label className="block text-sm text-slate-600 mb-1">비밀번호</label>
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          disabled={loading}
-          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-3
-                     focus:outline-none focus:ring-2 focus:ring-brand-200"
-        />
-        <label className="block text-sm text-slate-600 mb-1">비밀번호 확인</label>
-        <input
-          type="password"
-          value={confirm}
-          onChange={(e) => setConfirm(e.target.value)}
-          disabled={loading}
-          onKeyDown={(e) => e.key === "Enter" && !loading && submit()}
-          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-4
-                     focus:outline-none focus:ring-2 focus:ring-brand-200"
-        />
-
-        <button
-          onClick={submit}
-          disabled={loading}
-          className="w-full h-10 rounded-lg bg-brand-600 text-white font-semibold
-                     hover:bg-brand-700 disabled:opacity-70 disabled:cursor-not-allowed mb-3
-                     inline-flex items-center justify-center gap-2"
-        >
+        <Button type="button" onClick={submit} disabled={loading} className="w-full">
           {loading && <Spinner />}
           {loading ? "처리 중" : "계정 만들기"}
-        </button>
+        </Button>
         <GoogleButton label="Google로 회원가입" onStart={onOAuthStart} disabled={loading} />
 
-        {status && <p className="text-sm text-slate-500 mt-3">{status}</p>}
+        {status && <p className="text-sm text-muted-foreground">{status}</p>}
 
-        <button
+        <Button
+          type="button"
+          variant="ghost"
           onClick={() => onNavigate("login")}
-          className="w-full text-sm text-slate-500 hover:text-slate-700 mt-4"
+          disabled={loading}
+          className="w-full"
         >
           이미 계정이 있으신가요? 로그인
-        </button>
+        </Button>
       </div>
-    </div>
+    </AuthCard>
   );
 }
