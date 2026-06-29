@@ -46,15 +46,16 @@ export default function ResponsiveNav({
       <aside className="hidden md:flex flex-col justify-between w-64 h-screen border-r bg-card p-5 shrink-0 select-none">
         <div className="flex flex-col gap-6">
           {/* 로고 영역 */}
-          <div 
+          <button
+            type="button"
             onClick={() => setView("home")}
-            className="flex items-center gap-2 px-2 cursor-pointer"
+            className="flex items-center gap-2 px-2 cursor-pointer text-left"
           >
             <Compass className="h-6 w-6 text-[#5c6bf2] stroke-[2.5]" />
             <span className="font-extrabold text-lg text-slate-800 dark:text-slate-100 tracking-tight">
               English Buddy
             </span>
-          </div>
+          </button>
 
           {/* 탭 목록 */}
           <nav className="flex flex-col gap-1.5">
@@ -88,9 +89,10 @@ export default function ResponsiveNav({
         <div className="border-t pt-4 flex flex-col gap-2">
           {user ? (
             <div className="flex flex-col gap-3">
-              <div 
+              <button
+                type="button"
                 onClick={() => setView("mypage")}
-                className={`flex items-center gap-3 p-2 rounded-xl cursor-pointer transition-colors ${
+                className={`flex w-full items-center gap-3 p-2 rounded-xl cursor-pointer text-left transition-colors ${
                   view === "mypage" 
                     ? "bg-[#eff2fe] dark:bg-indigo-950/20" 
                     : "hover:bg-slate-50 dark:hover:bg-slate-900/50"
@@ -107,7 +109,7 @@ export default function ResponsiveNav({
                     {user.email}
                   </span>
                 </div>
-              </div>
+              </button>
               <Button
                 type="button"
                 variant="ghost"

@@ -18,6 +18,7 @@ export default function BottomNav({ tabs, value, onChange }) {
           <button
             key={tab.id}
             type="button"
+            aria-label={tab.label}
             onClick={() => onChange(tab.id)}
             className={`flex items-center gap-2 py-2 px-4 rounded-full transition-all duration-300 ${
               isActive

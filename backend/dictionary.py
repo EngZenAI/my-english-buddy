@@ -220,6 +220,10 @@ def _translate_many(texts: list[str], source: str, target: str) -> list[str]:
             return results
 
         translations = res["data"]["translations"]
+        if len(translations) != len(missing):
+            raise ValueError(
+                f"translation count mismatch: expected {len(missing)}, got {len(translations)}"
+            )
         for (_first_index, _text, key), item in zip(missing, translations):
             translated = item["translatedText"]
             _TR_CACHE.set(key, translated)

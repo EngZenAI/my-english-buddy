@@ -15,6 +15,7 @@ import { Progress } from "@/components/ui/progress";
 import { EmptyState, LoadingSpinner } from "@/components/AsyncState";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 const TYPE_LABELS = {
   meaning_choice: "뜻/단어",

@@ -48,7 +48,10 @@ export default function QuizScreen({
   onGrade,
   gradeLoading,
 }) {
-  const answeredCount = Object.keys(answers).length;
+  const answeredCount = Object.values(answers).filter(
+    (answer) =>
+      Boolean(answer?.choice_id) || Boolean((answer?.text_answer || "").trim())
+  ).length;
   const progressPercent = questions.length > 0 ? Math.round((answeredCount / questions.length) * 100) : 0;
 
   return (
