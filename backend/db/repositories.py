@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth.models import OAuthAccount, User
 from backend.db.models import Label, QuizHistory, Word
-from backend.db.session import engine
+from backend.db.session import SessionFactory, engine
 
 logger = logging.getLogger(__name__)
 DEFAULT_LABELS = ["미지정", "여행", "비즈니스", "일상", "IT·코딩", "학업"]
@@ -736,7 +736,6 @@ async def get_quiz_stats(session: AsyncSession, user_id: str) -> dict:
 
 
 async def record_api_usage_events(
-    session: AsyncSession,
     user_id: str | None,
     events: list[dict[str, Any]],
 ) -> None:
@@ -763,22 +762,21 @@ async def record_api_usage_events(
         )
 
     try:
-        await session.execute(
-            text(
-                """INSERT INTO api_usage_events
-                       (user_id, feature, operation, provider, model, units,
-                        input_chars, output_chars, input_tokens, output_tokens,
-                        total_tokens, success)
-                   VALUES
-                       (:user_id, :feature, :operation, :provider, :model, :units,
-                        :input_chars, :output_chars, :input_tokens, :output_tokens,
-                        :total_tokens, :success)"""
-            ),
-            rows,
-        )
-        await session.commit()
+        async with SessionFactory.begin() as session:
+            await session.execute(
+                text(
+                    """INSERT INTO api_usage_events
+                           (user_id, feature, operation, provider, model, units,
+                            input_chars, output_chars, input_tokens, output_tokens,
+                            total_tokens, success)
+                       VALUES
+                           (:user_id, :feature, :operation, :provider, :model, :units,
+                            :input_chars, :output_chars, :input_tokens, :output_tokens,
+                            :total_tokens, :success)"""
+                ),
+                rows,
+            )
     except Exception as exc:
-        await session.rollback()
         logger.warning("Failed to record API usage events: %s", exc)
 
 

@@ -78,9 +78,9 @@ async def require_user(request: Request, session: SessionDep) -> dict:
 CurrentUserDep = Annotated[dict, Depends(require_user)]
 
 
-async def persist_usage_capture(token, session: SessionDep, user: dict | None) -> None:
+async def persist_usage_capture(token, user: dict | None) -> None:
     events = stop_usage_capture(token)
-    await record_api_usage_events(session, user.get("id") if user else None, events)
+    await record_api_usage_events(user.get("id") if user else None, events)
 
 
 # ── 스키마 ─────────────────────────────────────────────────
@@ -272,7 +272,7 @@ async def search_english(word: str = "", *, request: Request, session: SessionDe
     try:
         return await run_in_threadpool(search_from_english, word)
     finally:
-        await persist_usage_capture(usage_token, session, user)
+        await persist_usage_capture(usage_token, user)
 
 
 @router.get("/search/korean")
@@ -282,7 +282,7 @@ async def search_korean(word: str = "", *, request: Request, session: SessionDep
     try:
         return await run_in_threadpool(search_from_korean, word)
     finally:
-        await persist_usage_capture(usage_token, session, user)
+        await persist_usage_capture(usage_token, user)
 
 
 # ── TTS (비회원 허용) ───────────────────────────────────────
@@ -300,7 +300,7 @@ async def tts(
         audio_b64 = await run_in_threadpool(synthesize_tts, word, lang)
         return {"audio": audio_b64}  # base64 mp3 또는 null
     finally:
-        await persist_usage_capture(usage_token, session, user)
+        await persist_usage_capture(usage_token, user)
 
 
 # ── 단어 저장여부 (검색 화면 배지용, 공개) ──────────────────
@@ -579,7 +579,7 @@ async def slang(payload: SlangIn, session: SessionDep, _user: CurrentUserDep):
             )
         }
     finally:
-        await persist_usage_capture(usage_token, session, _user)
+        await persist_usage_capture(usage_token, _user)
 
 
 # ── 퀴즈 — 회원 전용 ───────────────────────────────────────
@@ -599,7 +599,7 @@ async def quiz_generate(payload: QuizGenerateIn, session: SessionDep, _user: Cur
     try:
         return await generate_assignment(session, _user["id"], words, payload)
     finally:
-        await persist_usage_capture(usage_token, session, _user)
+        await persist_usage_capture(usage_token, _user)
 
 
 @router.post("/quiz/grade")
@@ -615,7 +615,7 @@ async def quiz_grade(payload: QuizGradeIn, session: SessionDep, _user: CurrentUs
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
-        await persist_usage_capture(usage_token, session, _user)
+        await persist_usage_capture(usage_token, _user)
 
 
 @router.post("/quiz/review-schedule/apply")
@@ -677,7 +677,8 @@ async def roleplay_start(payload: RoleplayStartIn, session: SessionDep, _user: C
     usage_token = start_usage_capture()
     try:
         words = await _roleplay_words(session, _user["id"], payload.scenario, payload.tag)
-        reply = start_roleplay(
+        reply = await run_in_threadpool(
+            start_roleplay,
             level=payload.level,
             scenario=payload.scenario,
             tag=payload.tag,
@@ -687,7 +688,7 @@ async def roleplay_start(payload: RoleplayStartIn, session: SessionDep, _user: C
         # 첫 턴: 사용자 발화 없음, 코칭 없음.
         return {"history": [["", reply, ""]]}
     finally:
-        await persist_usage_capture(usage_token, session, _user)
+        await persist_usage_capture(usage_token, _user)
 
 
 @router.post("/roleplay/continue")
@@ -697,7 +698,8 @@ async def roleplay_continue(payload: RoleplayContinueIn, session: SessionDep, _u
         # LLM 맥락용으로는 (user, bot)만 필요(코칭 제외).
         context = [(t[0], t[1]) for t in (_norm_turn(h) for h in payload.history)]
         words = await _roleplay_words(session, _user["id"], payload.scenario, payload.tag)
-        result = continue_roleplay(
+        result = await run_in_threadpool(
+            continue_roleplay,
             context,
             payload.message,
             level=payload.level,
@@ -711,7 +713,7 @@ async def roleplay_continue(payload: RoleplayContinueIn, session: SessionDep, _u
         new_history.append([payload.message, result["reply"], result["coaching"]])
         return {"history": new_history}
     finally:
-        await persist_usage_capture(usage_token, session, _user)
+        await persist_usage_capture(usage_token, _user)
 
 
 @router.post("/roleplay/summary")
@@ -720,7 +722,8 @@ async def roleplay_summary(payload: RoleplaySummaryIn, session: SessionDep, _use
     usage_token = start_usage_capture()
     try:
         context = [(t[0], t[1]) for t in (_norm_turn(h) for h in payload.history)]
-        result = summarize_roleplay(
+        result = await run_in_threadpool(
+            summarize_roleplay,
             context,
             level=payload.level,
             scenario=payload.scenario,
@@ -744,7 +747,7 @@ async def roleplay_summary(payload: RoleplaySummaryIn, session: SessionDep, _use
         )
         return {**result, "session_id": session_id}
     finally:
-        await persist_usage_capture(usage_token, session, _user)
+        await persist_usage_capture(usage_token, _user)
 
 
 @router.post("/roleplay/save-words")
@@ -760,7 +763,7 @@ async def roleplay_save_words(payload: RoleplaySaveWordsIn, session: SessionDep,
                 continue
             korean = (it.get("korean") or "").strip()
             if _needs_translation(korean):
-                korean = translate_korean(word)
+                korean = await run_in_threadpool(translate_korean, word)
                 if _needs_translation(korean):
                     korean = ""
             items.append({
@@ -776,7 +779,7 @@ async def roleplay_save_words(payload: RoleplaySaveWordsIn, session: SessionDep,
         result = await insert_words(session, _user["id"], items)
         return {"ok": True, **result}
     finally:
-        await persist_usage_capture(usage_token, session, _user)
+        await persist_usage_capture(usage_token, _user)
 
 
 @router.get("/roleplay/sessions")
