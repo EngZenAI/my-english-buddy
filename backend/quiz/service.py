@@ -13,6 +13,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.api_usage import extract_token_usage, track_llm_usage
 from backend.config import settings
 from backend.db.repositories import (
     apply_quiz_review_schedule,
@@ -474,61 +475,34 @@ def _quiz_llm():
     return get_llm("quiz") if get_llm else quiz_llm
 
 
-def _usage_value(usage: Any, *keys: str) -> int | None:
-    for key in keys:
-        if isinstance(usage, dict) and usage.get(key) is not None:
-            try:
-                return int(usage.get(key))
-            except (TypeError, ValueError):
-                return None
-        value = getattr(usage, key, None)
-        if value is not None:
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                return None
-    return None
-
-
-def _token_usage(response: Any) -> dict[str, int | None]:
-    usage = getattr(response, "usage_metadata", None)
-    metadata = getattr(response, "response_metadata", None) or {}
-    if not usage and isinstance(metadata, dict):
-        usage = metadata.get("token_usage") or metadata.get("usage")
-    input_tokens = _usage_value(
-        usage,
-        "input_tokens",
-        "prompt_tokens",
-        "input_token_count",
-        "prompt_eval_count",
-    )
-    output_tokens = _usage_value(
-        usage,
-        "output_tokens",
-        "completion_tokens",
-        "generated_token_count",
-        "eval_count",
-    )
-    total_tokens = _usage_value(usage, "total_tokens")
-    if total_tokens is None and input_tokens is not None and output_tokens is not None:
-        total_tokens = input_tokens + output_tokens
-    return {
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "total_tokens": total_tokens,
-    }
-
-
 def _invoke_quiz_llm(operation: str, prompt_value: Any) -> Any:
     started = time.perf_counter()
-    response = _quiz_llm().invoke(prompt_value)
+    model_name = _active_model_name()
+    try:
+        response = _quiz_llm().invoke(prompt_value)
+    except Exception:
+        track_llm_usage(
+            feature="quiz",
+            operation=operation,
+            model_name=model_name,
+            input_value=prompt_value,
+            success=False,
+        )
+        raise
     elapsed_ms = round((time.perf_counter() - started) * 1000)
-    usage = _token_usage(response)
+    usage = extract_token_usage(response)
+    track_llm_usage(
+        feature="quiz",
+        operation=operation,
+        model_name=model_name,
+        input_value=prompt_value,
+        response=response,
+    )
     logger.info(
         "llm_request_completed feature=quiz operation=%s model=%s "
         "input_tokens=%s output_tokens=%s total_tokens=%s duration_ms=%s",
         operation,
-        _active_model_name(),
+        model_name,
         usage["input_tokens"],
         usage["output_tokens"],
         usage["total_tokens"],

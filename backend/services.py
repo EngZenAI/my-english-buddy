@@ -7,16 +7,23 @@
 """
 
 import base64
+import contextvars
 import io
 import re
 from concurrent.futures import ThreadPoolExecutor
 
 from gtts import gTTS
 
+from backend.api_usage import track_external_usage
 from backend.dictionary import search_word, translate_korean, translate_english
 
 # 외부 API(HTTP) 병렬 호출용 스레드풀
 _executor = ThreadPoolExecutor(max_workers=8)
+
+
+def _submit_with_context(fn, *args):
+    context = contextvars.copy_context()
+    return _executor.submit(context.run, fn, *args)
 
 
 # ── 언어 감지 ──────────────────────────────────────────────
@@ -49,7 +56,8 @@ def korean_per_pos(word: str, meanings_list: list, simple_kor: str | None = None
         defs = [m["definition"] for m in meanings_list if m["partOfSpeech"] == pos]
         first_defs.append((pos, defs[0]))
 
-    translations = list(_executor.map(lambda pd: translate_korean(pd[1]), first_defs))
+    futures = [_submit_with_context(translate_korean, definition) for _, definition in first_defs]
+    translations = [future.result() for future in futures]
     return "\n".join(
         f"[{pos}] {kor}" for (pos, _), kor in zip(first_defs, translations)
     )
@@ -74,8 +82,8 @@ def search_from_english(word: str) -> dict:
         return _empty_result()
 
     # 사전 조회와 단순 번역은 서로 독립적 → 병렬 실행
-    fut_data = _executor.submit(search_word, word.lower())
-    fut_kor = _executor.submit(translate_korean, word)
+    fut_data = _submit_with_context(search_word, word.lower())
+    fut_kor = _submit_with_context(translate_korean, word)
     data = fut_data.result()
     simple_kor = fut_kor.result()
 
@@ -127,6 +135,23 @@ def synthesize_tts(word: str, lang: str = "en") -> str | None:
         buf = io.BytesIO()
         tts.write_to_fp(buf)
         buf.seek(0)
-        return base64.b64encode(buf.read()).decode()
+        audio = base64.b64encode(buf.read()).decode()
+        track_external_usage(
+            feature="tts",
+            operation="synthesize",
+            provider="gtts",
+            model=lang,
+            input_value=word,
+            output_value=audio,
+        )
+        return audio
     except Exception:
+        track_external_usage(
+            feature="tts",
+            operation="synthesize",
+            provider="gtts",
+            model=lang,
+            input_value=word,
+            success=False,
+        )
         return None

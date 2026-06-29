@@ -5,6 +5,8 @@ from collections import OrderedDict
 import requests
 from dotenv import load_dotenv
 
+from backend.api_usage import track_external_usage
+
 load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_TRANSLATE_API_KEY")
 
@@ -52,6 +54,13 @@ def search_word(word: str) -> dict:
             f"https://api.dictionaryapi.dev/api/v2/entries/en/{key}",
             timeout=5,
         ).json()
+        track_external_usage(
+            feature="dictionary",
+            operation="lookup",
+            provider="free_dictionary_api",
+            input_value=key,
+            output_value=res,
+        )
 
         if isinstance(res, dict) and res.get("title") == "No Definitions Found":
             result = {
@@ -96,6 +105,13 @@ def search_word(word: str) -> dict:
         return result
     except Exception as e:
         # 네트워크 오류 등 일시적 실패는 캐시하지 않음
+        track_external_usage(
+            feature="dictionary",
+            operation="lookup",
+            provider="free_dictionary_api",
+            input_value=key,
+            success=False,
+        )
         print(f"Dictionary API 오류: {e}")
         return {"meanings": [], "english_def": "", "example": "", "phonetic": "", "audio_url": ""}
 
@@ -117,12 +133,34 @@ def _translate(text: str, source: str, target: str) -> str:
             timeout=5,
         ).json()
         if "error" in res:
+            track_external_usage(
+                feature="translate",
+                operation=f"{source}_to_{target}",
+                provider="google_translate",
+                input_value=text,
+                output_value=res,
+                success=False,
+            )
             print(f"Google API 오류: {res['error']['message']}")
             return "번역 실패"
         translated = res["data"]["translations"][0]["translatedText"]
+        track_external_usage(
+            feature="translate",
+            operation=f"{source}_to_{target}",
+            provider="google_translate",
+            input_value=text,
+            output_value=translated,
+        )
         _TR_CACHE.set(key, translated)
         return translated
     except Exception as e:
+        track_external_usage(
+            feature="translate",
+            operation=f"{source}_to_{target}",
+            provider="google_translate",
+            input_value=text,
+            success=False,
+        )
         print(f"번역 오류: {e}")
         return "번역 실패"
 

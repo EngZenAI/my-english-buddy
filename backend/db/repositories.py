@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -8,9 +9,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.auth.models import OAuthAccount, User
 from backend.db.models import Label, QuizHistory, Word
-from backend.db.session import engine
+from backend.db.session import SessionFactory, engine
 
+logger = logging.getLogger(__name__)
 DEFAULT_LABELS = ["미지정", "여행", "비즈니스", "일상", "IT·코딩", "학업"]
 MAX_LABELS = 20
 
@@ -203,6 +206,28 @@ async def init_db() -> None:
                 """
                 CREATE INDEX IF NOT EXISTS ix_roleplay_sessions_user_created
                     ON roleplay_sessions (user_id, created_at DESC)
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS api_usage_events (
+                    id            SERIAL PRIMARY KEY,
+                    user_id       UUID,
+                    feature       TEXT NOT NULL,
+                    operation     TEXT NOT NULL,
+                    provider      TEXT,
+                    model         TEXT,
+                    units         INTEGER DEFAULT 1,
+                    input_chars   INTEGER DEFAULT 0,
+                    output_chars  INTEGER DEFAULT 0,
+                    input_tokens  INTEGER,
+                    output_tokens INTEGER,
+                    total_tokens  INTEGER,
+                    success       BOOLEAN DEFAULT TRUE,
+                    created_at    TIMESTAMP DEFAULT NOW()
+                )
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS ix_api_usage_events_user_created
+                    ON api_usage_events (user_id, created_at DESC)
                 """,
             ),
         )
@@ -707,6 +732,345 @@ async def get_quiz_stats(session: AsyncSession, user_id: str) -> dict:
         "word_stats": word_stats,
         "type_stats": type_stats,
         "recent_incorrect": recent_incorrect,
+    }
+
+
+async def record_api_usage_events(
+    user_id: str | None,
+    events: list[dict[str, Any]],
+) -> None:
+    if not user_id or not events:
+        return
+
+    rows = []
+    for event in events:
+        rows.append(
+            {
+                "user_id": user_id,
+                "feature": event.get("feature") or "unknown",
+                "operation": event.get("operation") or "unknown",
+                "provider": event.get("provider") or "",
+                "model": event.get("model") or "",
+                "units": max(1, int(event.get("units") or 1)),
+                "input_chars": max(0, int(event.get("input_chars") or 0)),
+                "output_chars": max(0, int(event.get("output_chars") or 0)),
+                "input_tokens": event.get("input_tokens"),
+                "output_tokens": event.get("output_tokens"),
+                "total_tokens": event.get("total_tokens"),
+                "success": bool(event.get("success", True)),
+            }
+        )
+
+    try:
+        async with SessionFactory.begin() as session:
+            await session.execute(
+                text(
+                    """INSERT INTO api_usage_events
+                           (user_id, feature, operation, provider, model, units,
+                            input_chars, output_chars, input_tokens, output_tokens,
+                            total_tokens, success)
+                       VALUES
+                           (:user_id, :feature, :operation, :provider, :model, :units,
+                            :input_chars, :output_chars, :input_tokens, :output_tokens,
+                            :total_tokens, :success)"""
+                ),
+                rows,
+            )
+    except Exception as exc:
+        logger.warning("Failed to record API usage events: %s", exc)
+
+
+FEATURE_LABELS = {
+    "dictionary": "사전 검색",
+    "translate": "번역",
+    "tts": "발음 듣기",
+    "slang": "슬랭 설명",
+    "quiz": "AI 퀴즈",
+    "roleplay": "롤플레잉",
+}
+
+OPERATION_LABELS = {
+    ("dictionary", "lookup"): "사전 검색",
+    ("translate", "en_to_ko"): "영한 번역",
+    ("translate", "ko_to_en"): "한영 번역",
+    ("tts", "synthesize"): "발음 듣기",
+    ("slang", "explain"): "슬랭 설명",
+    ("quiz", "generate_quiz"): "AI 퀴즈 생성",
+    ("quiz", "grade_subjective"): "주관식 채점",
+    ("roleplay", "start"): "롤플레잉 시작",
+    ("roleplay", "continue"): "롤플레잉 대화",
+    ("roleplay", "summary"): "롤플레잉 정리",
+}
+
+
+def _feature_label(feature: str) -> str:
+    return FEATURE_LABELS.get(feature or "", feature or "기타")
+
+
+def _operation_label(feature: str, operation: str) -> str:
+    return OPERATION_LABELS.get(
+        (feature or "", operation or ""),
+        _feature_label(feature),
+    )
+
+
+async def get_activity_summary(session: AsyncSession, user_id: str) -> dict:
+    result = await session.execute(
+        text(
+            """SELECT
+                   COALESCE(SUM(units) FILTER (WHERE created_at::date = CURRENT_DATE), 0)::int
+                       AS today_count,
+                   COALESCE(SUM(units) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days'), 0)::int
+                       AS week_count,
+                   COALESCE(SUM(units) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days'), 0)::int
+                       AS month_count,
+                   MAX(created_at) AS last_used_at
+               FROM api_usage_events
+               WHERE user_id = :user_id"""
+        ),
+        {"user_id": user_id},
+    )
+    summary = dict(result.mappings().first() or {})
+
+    result = await session.execute(
+        text(
+            """SELECT feature,
+                      COUNT(*)::int AS count,
+                      COALESCE(SUM(units), 0)::int AS total_count,
+                      MAX(created_at) AS last_used_at
+               FROM api_usage_events
+               WHERE user_id = :user_id
+                     AND created_at >= NOW() - INTERVAL '30 days'
+               GROUP BY feature
+               ORDER BY total_count DESC, last_used_at DESC"""
+        ),
+        {"user_id": user_id},
+    )
+    by_feature = [
+        {**item, "label": _feature_label(item.get("feature") or "")}
+        for item in _rows(result)
+    ]
+
+    result = await session.execute(
+        text(
+            """SELECT feature, operation, units AS count, created_at
+               FROM api_usage_events
+               WHERE user_id = :user_id
+               ORDER BY created_at DESC, id DESC
+               LIMIT 10"""
+        ),
+        {"user_id": user_id},
+    )
+
+    return {
+        "summary": {
+            "today_count": int(summary.get("today_count") or 0),
+            "week_count": int(summary.get("week_count") or 0),
+            "month_count": int(summary.get("month_count") or 0),
+            "last_used_at": summary.get("last_used_at"),
+        },
+        "by_feature": by_feature,
+        "recent": [
+            {
+                **item,
+                "label": _operation_label(
+                    item.get("feature") or "",
+                    item.get("operation") or "",
+                ),
+            }
+            for item in _rows(result)
+        ],
+    }
+
+
+async def get_account_status(session: AsyncSession, user_id: str) -> dict:
+    user_uuid = _uuid(user_id)
+    user_result = await session.execute(
+        select(
+            User.email,
+            User.hashed_password,
+            User.is_active,
+            User.is_verified,
+        ).where(User.id == user_uuid)
+    )
+    user = dict(user_result.mappings().first() or {})
+    has_password = bool((user.get("hashed_password") or "").strip())
+
+    oauth_result = await session.execute(
+        select(
+            OAuthAccount.oauth_name,
+            OAuthAccount.account_email,
+        )
+        .where(OAuthAccount.user_id == user_uuid)
+        .order_by(OAuthAccount.oauth_name.asc(), OAuthAccount.account_email.asc())
+    )
+    oauth_accounts = [
+        {
+            "provider": item.get("oauth_name") or "unknown",
+            "email": item.get("account_email") or "",
+            "connected": True,
+        }
+        for item in _rows(oauth_result)
+    ]
+    providers = {item["provider"] for item in oauth_accounts}
+    login_methods = []
+    if has_password:
+        login_methods.append("password")
+    login_methods.extend(sorted(providers))
+
+    google_connected = "google" in providers
+    return {
+        "email": user.get("email") or "",
+        "is_active": bool(user.get("is_active", True)),
+        "is_verified": bool(user.get("is_verified", False)),
+        "has_password": has_password,
+        "login_methods": login_methods,
+        "oauth_accounts": oauth_accounts,
+        "google_connected": google_connected,
+        "can_disconnect_google": bool(google_connected and has_password),
+    }
+
+
+async def get_user_password_hash(session: AsyncSession, user_id: str) -> str:
+    result = await session.execute(
+        select(User.hashed_password).where(User.id == _uuid(user_id))
+    )
+    return result.scalar_one_or_none() or ""
+
+
+async def update_user_password_hash(
+    session: AsyncSession,
+    user_id: str,
+    hashed_password: str,
+) -> None:
+    result = await session.execute(
+        update(User)
+        .where(User.id == _uuid(user_id))
+        .values(hashed_password=hashed_password)
+    )
+    if result.rowcount != 1:
+        await session.rollback()
+        raise ValueError("Account not found")
+    await session.commit()
+
+
+async def disconnect_oauth_account(
+    session: AsyncSession,
+    user_id: str,
+    provider: str,
+) -> int:
+    result = await session.execute(
+        delete(OAuthAccount).where(
+            OAuthAccount.user_id == _uuid(user_id),
+            OAuthAccount.oauth_name == provider,
+        )
+    )
+    await session.commit()
+    return int(result.rowcount or 0)
+
+
+async def get_mypage_overview(session: AsyncSession, user_id: str) -> dict:
+    user_uuid = _uuid(user_id)
+    result = await session.execute(
+        select(
+            func.count(Word.id).label("word_count"),
+            func.count(Word.id)
+            .filter(Word.next_review <= func.now())
+            .label("due_review_count"),
+        ).where(Word.user_id == user_uuid)
+    )
+    word_summary = dict(result.mappings().first() or {})
+
+    result = await session.execute(
+        text(
+            """SELECT
+                   COALESCE(SUM(units) FILTER (WHERE created_at::date = CURRENT_DATE), 0)::int
+                       AS today_activity_count,
+                   COALESCE(SUM(units) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days'), 0)::int
+                       AS month_activity_count
+               FROM api_usage_events
+               WHERE user_id = :user_id"""
+        ),
+        {"user_id": user_id},
+    )
+    activity_summary = dict(result.mappings().first() or {})
+
+    result = await session.execute(
+        text(
+            """SELECT COUNT(*)::int AS roleplay_session_count
+               FROM roleplay_sessions
+               WHERE user_id = :user_id"""
+        ),
+        {"user_id": user_id},
+    )
+    roleplay_summary = dict(result.mappings().first() or {})
+
+    return {
+        "word_count": int(word_summary.get("word_count") or 0),
+        "due_review_count": int(word_summary.get("due_review_count") or 0),
+        "today_activity_count": int(activity_summary.get("today_activity_count") or 0),
+        "month_activity_count": int(activity_summary.get("month_activity_count") or 0),
+        "roleplay_session_count": int(
+            roleplay_summary.get("roleplay_session_count") or 0
+        ),
+    }
+
+
+async def get_mypage_learning(session: AsyncSession, user_id: str) -> dict:
+    user_uuid = _uuid(user_id)
+    result = await session.execute(
+        select(
+            func.count(Word.id).label("word_count"),
+            func.count(Word.id)
+            .filter(Word.next_review <= func.now())
+            .label("due_review_count"),
+        ).where(Word.user_id == user_uuid)
+    )
+    word_summary = dict(result.mappings().first() or {})
+
+    labels = await get_labels(session, user_id)
+    quiz_stats = await get_quiz_stats(session, user_id)
+    quiz_summary = quiz_stats.get("summary", {})
+    weak_words = [
+        item
+        for item in quiz_stats.get("word_stats", [])
+        if int(item.get("incorrect_count") or 0) > 0
+        or float(item.get("accuracy") or 0) < 0.8
+    ][:5]
+
+    result = await session.execute(
+        text(
+            """SELECT COUNT(*)::int AS roleplay_session_count
+               FROM roleplay_sessions
+               WHERE user_id = :user_id"""
+        ),
+        {"user_id": user_id},
+    )
+    roleplay_summary = dict(result.mappings().first() or {})
+
+    result = await session.execute(
+        text(
+            """SELECT id, level, scenario, tag, situation, title, turns, summary,
+                      expressions, vocab, created_at
+               FROM roleplay_sessions
+               WHERE user_id = :user_id
+               ORDER BY created_at DESC, id DESC
+               LIMIT 3"""
+        ),
+        {"user_id": user_id},
+    )
+
+    return {
+        "word_count": int(word_summary.get("word_count") or 0),
+        "label_count": len(labels),
+        "due_review_count": int(word_summary.get("due_review_count") or 0),
+        "quiz_attempt_count": int(quiz_summary.get("attempt_count") or 0),
+        "quiz_accuracy": float(quiz_summary.get("accuracy") or 0),
+        "roleplay_session_count": int(
+            roleplay_summary.get("roleplay_session_count") or 0
+        ),
+        "weak_words": weak_words,
+        "recent_roleplay_sessions": _rows(result),
     }
 
 
