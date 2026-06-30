@@ -6,6 +6,7 @@ import SearchTab from "./tabs/SearchTab";
 import WordbookTab from "./tabs/WordbookTab";
 import QuizTab from "./tabs/QuizTab";
 import RoleplayTab from "./tabs/RoleplayTab";
+import ArticleLearningTab from "./tabs/ArticleLearningTab";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
 import FindIdPage from "./pages/FindIdPage";
@@ -26,6 +27,7 @@ import {
 const TABS = [
   { id: "search", label: "단어 검색", Comp: SearchTab },
   { id: "wordbook", label: "단어장", Comp: WordbookTab },
+  { id: "articles", label: "기사 학습", Comp: ArticleLearningTab },
   { id: "quiz", label: "퀴즈", Comp: QuizTab },
   { id: "roleplay", label: "롤플레잉", Comp: RoleplayTab },
 ];
@@ -161,6 +163,7 @@ export default function App() {
     queryClient.removeQueries({ queryKey: ["words"] });
     queryClient.removeQueries({ queryKey: ["word-saved"] });
     queryClient.removeQueries({ queryKey: ["label-word-count"] });
+    queryClient.removeQueries({ queryKey: ["articles"] });
     setQuizState(createInitialQuizState());
     setRoleplayInstanceKey((key) => key + 1);
     goToView("home");

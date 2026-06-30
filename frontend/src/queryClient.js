@@ -12,6 +12,19 @@ export const queryKeys = {
   wordSaved: (userId, word) => ["word-saved", userId, word.trim().toLowerCase()],
   labelWordCount: (userId, label) => ["label-word-count", userId, label],
   roleplaySessions: ["roleplay-sessions"],
+  articleCatalog: (topic = "", level = "", q = "", page = 1) => [
+    "articles",
+    "catalog",
+    topic,
+    level,
+    q.trim().toLowerCase(),
+    page,
+  ],
+  articleSources: ["articles", "sources"],
+  articleAdminStatus: ["articles", "admin-status"],
+  articleAdminList: ["articles", "admin-list"],
+  articleSession: (id) => ["articles", "session", id],
+  articleSessions: ["articles", "sessions"],
 };
 
 export const queryClient = new QueryClient({

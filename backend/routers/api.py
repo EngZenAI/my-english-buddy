@@ -15,6 +15,15 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from backend.api_usage import start_usage_capture, stop_usage_capture
+from backend.articles.chunking import estimate_tokens, split_article_text
+from backend.articles.extractor import extract_article_text
+from backend.articles.retrieval import select_relevant_chunks
+from backend.articles.sources import fallback_image_for, match_supported_source
+from backend.articles.tutor import (
+    answer_article_question,
+    complete_article,
+    generate_article_study,
+)
 from backend.auth.password_reset import PasswordResetError, validate_reset_password
 from backend.auth.users import get_current_user_from_cookie, password_helper
 from backend.dictionary import translate_korean
@@ -26,16 +35,23 @@ from backend.db.repositories import (
     bulk_update_words,
     count_words_by_tag,
     delete_label,
+    delete_article_session,
     delete_word,
     disconnect_oauth_account,
     existing_words_lower,
     get_account_status,
     get_all_words,
+    get_article_session,
+    get_article_sessions,
+    get_article_catalog_item,
     get_activity_summary,
     get_quiz_stats,
     get_user_password_hash,
     get_words_for_quiz,
     get_labels,
+    list_admin_articles,
+    list_article_sources,
+    list_published_articles,
     get_mypage_learning,
     get_mypage_overview,
     get_roleplay_sessions,
@@ -46,7 +62,12 @@ from backend.db.repositories import (
     reorder_words,
     save_word,
     save_roleplay_session,
+    create_article_session,
     delete_roleplay_session,
+    publish_article,
+    update_article_completion,
+    update_article_study,
+    upsert_article_with_chunks,
     update_user_password_hash,
     update_word,
 )
@@ -195,6 +216,33 @@ class AccountPasswordIn(BaseModel):
     new_password: str
 
 
+class ArticleAdminIngestIn(BaseModel):
+    url: str
+    title: str = ""
+    source: str = ""
+    description: str = ""
+    content: str = ""
+    image_url: str = ""
+    published_at: str = ""
+    topic: str = ""
+    level: str = ""
+    estimated_minutes: int = 0
+    publish: bool = False
+
+
+class ArticleAskIn(BaseModel):
+    question: str
+
+
+class ArticleSaveWordsIn(BaseModel):
+    items: list
+    tag: str | None = "뉴스"
+
+
+class ArticlePublishIn(BaseModel):
+    is_published: bool = True
+
+
 # ── 현재 사용자 ─────────────────────────────────────────────
 @router.get("/me")
 async def me(request: Request, session: SessionDep):
@@ -325,6 +373,292 @@ async def tts(
         return {"audio": audio_b64}  # base64 mp3 또는 null
     finally:
         defer_usage_capture(background_tasks, usage_token, user)
+
+
+# ── 기사 학습 ───────────────────────────────────────────────
+def _require_article_admin(user: dict) -> None:
+    if user.get("is_superuser"):
+        return
+    raise HTTPException(status_code=403, detail="기사 운영자 권한이 필요합니다.")
+
+
+def _fallback_article_text(payload: ArticleAdminIngestIn, metadata: dict) -> str:
+    parts = [
+        payload.title or metadata.get("title", ""),
+        payload.description or metadata.get("description", ""),
+        payload.content,
+    ]
+    return "\n\n".join([p.strip() for p in parts if p and p.strip()])
+
+
+def _level_from_text(text: str) -> str:
+    words = len((text or "").split())
+    if words < 450:
+        return "easy"
+    if words > 1100:
+        return "hard"
+    return "medium"
+
+
+def _minutes_from_text(text: str) -> int:
+    words = len((text or "").split())
+    return max(3, min(20, round(words / 150) + 3))
+
+
+@router.get("/article-sources")
+async def article_sources(session: SessionDep):
+    return {"sources": await list_article_sources(session)}
+
+
+@router.get("/article-admin/status")
+async def article_admin_status(_user: CurrentUserDep):
+    return {
+        "is_admin": bool(_user.get("is_superuser")),
+        "admin_configured": True,
+    }
+
+
+@router.get("/articles")
+async def article_catalog(
+    topic: str = "",
+    level: str = "",
+    q: str = "",
+    page: int = 1,
+    *,
+    session: SessionDep,
+):
+    return await list_published_articles(
+        session,
+        topic=topic.strip(),
+        level=level.strip(),
+        q=q.strip(),
+        page=page,
+    )
+
+
+@router.get("/articles/{article_id}")
+async def article_detail(article_id: int, session: SessionDep):
+    data = await get_article_catalog_item(session, article_id, include_unpublished=False)
+    if not data:
+        raise HTTPException(status_code=404, detail="공개된 기사를 찾을 수 없습니다.")
+    return data
+
+
+@router.post("/articles/{article_id}/sessions")
+async def article_session_create(article_id: int, session: SessionDep, _user: CurrentUserDep):
+    article = await get_article_catalog_item(session, article_id, include_unpublished=False)
+    if not article:
+        raise HTTPException(status_code=404, detail="공개된 기사를 찾을 수 없습니다.")
+    session_id = await create_article_session(session, _user["id"], article_id)
+    return {"ok": True, "session_id": session_id, "article_id": article_id}
+
+
+@router.get("/admin/articles")
+async def article_admin_list(
+    page: int = 1,
+    *,
+    session: SessionDep,
+    _user: CurrentUserDep,
+):
+    _require_article_admin(_user)
+    return await list_admin_articles(session, page=page)
+
+
+@router.post("/admin/articles/ingest")
+async def article_admin_ingest(
+    payload: ArticleAdminIngestIn,
+    session: SessionDep,
+    _user: CurrentUserDep,
+):
+    _require_article_admin(_user)
+    url = payload.url.strip()
+    source = match_supported_source(url)
+    if not source:
+        raise HTTPException(status_code=400, detail="지원하지 않는 기사 소스입니다.")
+
+    extraction = await run_in_threadpool(extract_article_text, url)
+    metadata = extraction.get("metadata") or {}
+    text = extraction.get("text") or ""
+    status = extraction.get("status") or "failed"
+    if len(text.strip()) < 300:
+        text = _fallback_article_text(payload, metadata)
+        status = f"{status}:fallback_snippet"
+    chunks_text = split_article_text(text)
+    if not chunks_text:
+        raise HTTPException(status_code=422, detail="학습할 기사 본문을 찾지 못했습니다.")
+
+    topic = (payload.topic or source.default_topic or "world").strip().lower()
+    image_url = (
+        payload.image_url.strip()
+        or (metadata.get("image_url") or "").strip()
+        or source.fallback_image_url
+        or fallback_image_for(topic)
+    )
+    article_payload = {
+        **payload.model_dump(),
+        "source_key": source.key,
+        "source": payload.source.strip() or source.name,
+        "title": payload.title.strip() or metadata.get("title") or url,
+        "description": payload.description.strip() or metadata.get("description") or "",
+        "image_url": image_url,
+        "published_at": payload.published_at or metadata.get("published_at") or "",
+        "topic": topic,
+        "level": payload.level.strip() or _level_from_text(text),
+        "estimated_minutes": payload.estimated_minutes or _minutes_from_text(text),
+    }
+    chunks = [
+        {"chunk_index": idx, "text": chunk, "token_count": estimate_tokens(chunk)}
+        for idx, chunk in enumerate(chunks_text)
+    ]
+    can_publish = payload.publish and status.startswith("extracted")
+    article_id = await upsert_article_with_chunks(
+        session,
+        article_payload,
+        chunks,
+        extracted_text=text[:20000],
+        extraction_status=status,
+        publish=can_publish,
+    )
+    return {
+        "ok": True,
+        "article_id": article_id,
+        "published": can_publish,
+        "extraction_status": status,
+        "chunk_count": len(chunks),
+    }
+
+
+@router.patch("/admin/articles/{article_id}/publish")
+async def article_admin_publish(
+    article_id: int,
+    payload: ArticlePublishIn,
+    session: SessionDep,
+    _user: CurrentUserDep,
+):
+    _require_article_admin(_user)
+    ok = await publish_article(session, article_id, payload.is_published)
+    return {"ok": ok, "is_published": payload.is_published}
+
+
+@router.get("/article-sessions")
+async def article_sessions(session: SessionDep, _user: CurrentUserDep):
+    return {"sessions": await get_article_sessions(session, _user["id"])}
+
+
+@router.get("/article-sessions/{session_id}")
+async def article_session_detail(session_id: int, session: SessionDep, _user: CurrentUserDep):
+    data = await get_article_session(session, _user["id"], session_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="기사 학습 세션을 찾을 수 없습니다.")
+    return data
+
+
+@router.post("/article-sessions/{session_id}/study")
+async def article_study(session_id: int, session: SessionDep, _user: CurrentUserDep):
+    usage_token = start_usage_capture()
+    try:
+        data = await get_article_session(session, _user["id"], session_id)
+        if not data:
+            raise HTTPException(status_code=404, detail="기사 학습 세션을 찾을 수 없습니다.")
+        study = await run_in_threadpool(
+            generate_article_study,
+            data.get("title") or "",
+            data.get("source") or "",
+            data.get("chunks") or [],
+        )
+        await update_article_study(session, _user["id"], session_id, study)
+        return {"ok": True, "study": study, "chunks": data.get("chunks") or []}
+    finally:
+        await persist_usage_capture(usage_token, _user)
+
+
+@router.post("/article-sessions/{session_id}/ask")
+async def article_ask(
+    session_id: int,
+    payload: ArticleAskIn,
+    session: SessionDep,
+    _user: CurrentUserDep,
+):
+    question = payload.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="질문을 입력해주세요.")
+    usage_token = start_usage_capture()
+    try:
+        data = await get_article_session(session, _user["id"], session_id)
+        if not data:
+            raise HTTPException(status_code=404, detail="기사 학습 세션을 찾을 수 없습니다.")
+        chunks = select_relevant_chunks(data.get("chunks") or [], question)
+        answer = await run_in_threadpool(answer_article_question, question, chunks)
+        return {"ok": True, "answer": answer, "evidence": chunks}
+    finally:
+        await persist_usage_capture(usage_token, _user)
+
+
+@router.post("/article-sessions/{session_id}/complete")
+async def article_complete(session_id: int, session: SessionDep, _user: CurrentUserDep):
+    usage_token = start_usage_capture()
+    try:
+        data = await get_article_session(session, _user["id"], session_id)
+        if not data:
+            raise HTTPException(status_code=404, detail="기사 학습 세션을 찾을 수 없습니다.")
+        completion = await run_in_threadpool(
+            complete_article,
+            data.get("title") or "",
+            data.get("chunks") or [],
+        )
+        await update_article_completion(session, _user["id"], session_id, completion)
+        return {"ok": True, "completion": completion}
+    finally:
+        await persist_usage_capture(usage_token, _user)
+
+
+@router.delete("/article-sessions/{session_id}")
+async def article_session_delete(session_id: int, session: SessionDep, _user: CurrentUserDep):
+    ok = await delete_article_session(session, _user["id"], session_id)
+    return {"ok": ok}
+
+
+@router.post("/article-sessions/{session_id}/save-words")
+async def article_save_words(
+    session_id: int,
+    payload: ArticleSaveWordsIn,
+    session: SessionDep,
+    _user: CurrentUserDep,
+):
+    usage_token = start_usage_capture()
+    try:
+        if not await get_article_session(session, _user["id"], session_id):
+            raise HTTPException(status_code=404, detail="기사 학습 세션을 찾을 수 없습니다.")
+        tag = (payload.tag or "뉴스").strip() or "뉴스"
+        labels = await get_labels(session, _user["id"])
+        if tag not in labels:
+            labels, ok = await add_label(session, _user["id"], tag)
+            if not ok and tag not in labels:
+                tag = "미지정"
+        items = []
+        for it in payload.items:
+            word = (it.get("word") or "").strip()
+            if not word:
+                continue
+            korean = (it.get("korean") or "").strip()
+            if _needs_translation(korean):
+                korean = await run_in_threadpool(translate_korean, word)
+                if _needs_translation(korean):
+                    korean = ""
+            items.append({
+                "word": word,
+                "korean": korean,
+                "korean_detail": (it.get("korean_detail") or "").strip(),
+                "english_def": (it.get("english_def") or "").strip(),
+                "example": (it.get("example") or "").strip(),
+                "tag": tag,
+            })
+        if not items:
+            return {"ok": False, "added": 0, "updated": 0, "skipped": 0}
+        result = await insert_words(session, _user["id"], items)
+        return {"ok": True, **result, "tag": tag}
+    finally:
+        await persist_usage_capture(usage_token, _user)
 
 
 # ── 단어 저장여부 (검색 화면 배지용, 공개) ──────────────────

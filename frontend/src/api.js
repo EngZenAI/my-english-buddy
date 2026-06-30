@@ -262,6 +262,50 @@ export const api = {
   roleplaySessions: () => jsonFetch("/api/roleplay/sessions"),
   roleplayDeleteSession: (id) =>
     jsonFetch(`/api/roleplay/sessions/${id}`, { method: "DELETE" }),
+
+  // ── 기사 학습 ──
+  articleCatalog: ({ topic = "", level = "", q = "", page = 1 } = {}) => {
+    const params = new URLSearchParams();
+    if (topic) params.set("topic", topic);
+    if (level) params.set("level", level);
+    if (q) params.set("q", q);
+    params.set("page", String(page));
+    return jsonFetch(`/api/articles?${params.toString()}`);
+  },
+  articleSources: () => jsonFetch("/api/article-sources"),
+  articleAdminStatus: () => jsonFetch("/api/article-admin/status"),
+  articleAdminList: () => jsonFetch("/api/admin/articles"),
+  articleDetail: (id) => jsonFetch(`/api/articles/${id}`),
+  articleCreateSession: (articleId) =>
+    jsonFetch(`/api/articles/${articleId}/sessions`, { method: "POST" }),
+  articleSession: (id) => jsonFetch(`/api/article-sessions/${id}`),
+  articleSessions: () => jsonFetch("/api/article-sessions"),
+  articleStudy: (id) =>
+    jsonFetch(`/api/article-sessions/${id}/study`, { method: "POST" }),
+  articleAsk: (id, question) =>
+    jsonFetch(`/api/article-sessions/${id}/ask`, {
+      method: "POST",
+      body: JSON.stringify({ question }),
+    }),
+  articleComplete: (id) =>
+    jsonFetch(`/api/article-sessions/${id}/complete`, { method: "POST" }),
+  articleSaveWords: (sessionId, items, tag = "뉴스") =>
+    jsonFetch(`/api/article-sessions/${sessionId}/save-words`, {
+      method: "POST",
+      body: JSON.stringify({ items, tag }),
+    }),
+  articleDeleteSession: (id) =>
+    jsonFetch(`/api/article-sessions/${id}`, { method: "DELETE" }),
+  articleAdminIngest: (payload) =>
+    jsonFetch("/api/admin/articles/ingest", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  articleAdminPublish: (id, isPublished = true) =>
+    jsonFetch(`/api/admin/articles/${id}/publish`, {
+      method: "PATCH",
+      body: JSON.stringify({ is_published: isPublished }),
+    }),
 };
 
 export const GOOGLE_LOGIN_URL = `${BACKEND_ORIGIN}/auth/google/login`;
