@@ -21,6 +21,8 @@ import json
 import logging
 import os
 import re
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, TypedDict
 
@@ -34,6 +36,19 @@ from backend.api_usage import track_llm_usage
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", encoding="utf-8-sig")
 logger = logging.getLogger(__name__)
+
+
+class LLMConcurrencyLimitError(RuntimeError):
+    """Raised when the app-level LLM concurrency guard is saturated."""
+
+
+ROLEPLAY_LLM_MAX_CONCURRENT = max(
+    1,
+    int(os.getenv("ROLEPLAY_LLM_MAX_CONCURRENT", "8") or "8"),
+)
+_feature_semaphores = {
+    "roleplay": threading.BoundedSemaphore(ROLEPLAY_LLM_MAX_CONCURRENT),
+}
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -186,10 +201,30 @@ logger.info("[OK] 기본 모델: %s", ACTIVE_MODEL)
 parser = StrOutputParser()
 
 
+@contextmanager
+def _llm_concurrency_slot(feature: str):
+    """Limit expensive provider calls before they reach the upstream model."""
+    semaphore = _feature_semaphores.get(feature)
+    if not semaphore:
+        yield
+        return
+
+    acquired = semaphore.acquire(blocking=False)
+    if not acquired:
+        raise LLMConcurrencyLimitError(
+            f"{feature} LLM 요청이 많아 잠시 대기 중입니다. 방금 전 요청이 끝난 뒤 다시 시도해주세요."
+        )
+    try:
+        yield
+    finally:
+        semaphore.release()
+
+
 def _invoke_tracked_llm(feature: str, operation: str, prompt_value) -> str:
     model_name = get_active_model_name(feature)
     try:
-        response = get_llm(feature).invoke(prompt_value)
+        with _llm_concurrency_slot(feature):
+            response = get_llm(feature).invoke(prompt_value)
     except Exception:
         track_llm_usage(
             feature=feature,
@@ -252,13 +287,14 @@ def _stream_tracked_llm(feature: str, operation: str, prompt_value) -> Iterator[
     chunks: list[str] = []
     response_chunks: list = []
     try:
-        for chunk in get_llm(feature).stream(prompt_value):
-            response_chunks.append(chunk)
-            text = _chunk_to_text(chunk)
-            if not text:
-                continue
-            chunks.append(text)
-            yield text
+        with _llm_concurrency_slot(feature):
+            for chunk in get_llm(feature).stream(prompt_value):
+                response_chunks.append(chunk)
+                text = _chunk_to_text(chunk)
+                if not text:
+                    continue
+                chunks.append(text)
+                yield text
     except Exception:
         output = "".join(chunks)
         track_llm_usage(

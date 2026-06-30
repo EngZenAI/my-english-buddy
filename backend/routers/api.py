@@ -10,6 +10,7 @@ import csv
 import io
 import json
 import logging
+import threading
 import uuid
 from typing import Annotated
 
@@ -87,6 +88,7 @@ from backend.roleplay_tts import (
     synthesize_roleplay_tts,
 )
 from backend.llm import (
+    LLMConcurrencyLimitError,
     coach_roleplay_turn,
     continue_roleplay,
     explain_slang,
@@ -105,6 +107,11 @@ from backend.services import (
 router = APIRouter(prefix="/api", tags=["api"])
 logger = logging.getLogger(__name__)
 ROLEPLAY_TTS_MAX_CHARS = 400
+ROLEPLAY_BUSY_MESSAGE = "이전 롤플레잉 AI 응답이 아직 끝나지 않았어요. 완료 후 다시 시도해주세요."
+ROLEPLAY_LIMIT_MESSAGE = "AI 롤플레잉 요청이 많아 잠시 대기 중입니다. 방금 전 요청이 끝난 뒤 다시 시도해주세요."
+
+_roleplay_lock_guard = threading.Lock()
+_roleplay_user_locks: dict[str, threading.Lock] = {}
 
 ARTICLE_REFRESH_JOB_LIMIT = 20
 
@@ -1142,8 +1149,38 @@ def _needs_translation(value: str) -> bool:
     return not text or text in {"번역 실패", "translation failed"}
 
 
+def _roleplay_lock_for(user_id: str) -> threading.Lock:
+    with _roleplay_lock_guard:
+        lock = _roleplay_user_locks.get(user_id)
+        if lock is None:
+            lock = threading.Lock()
+            _roleplay_user_locks[user_id] = lock
+        return lock
+
+
+def _acquire_roleplay_request_lock(user_id: str) -> threading.Lock:
+    lock = _roleplay_lock_for(str(user_id))
+    if not lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail=ROLEPLAY_BUSY_MESSAGE)
+    return lock
+
+
+def _release_roleplay_request_lock(lock: threading.Lock | None) -> None:
+    if not lock:
+        return
+    try:
+        lock.release()
+    except RuntimeError:
+        logger.warning("Roleplay request lock was already released")
+
+
+def _raise_roleplay_limit_error(exc: LLMConcurrencyLimitError) -> None:
+    raise HTTPException(status_code=429, detail=ROLEPLAY_LIMIT_MESSAGE) from exc
+
+
 @router.post("/roleplay/start")
 async def roleplay_start(payload: RoleplayStartIn, session: SessionDep, _user: CurrentUserDep):
+    request_lock = _acquire_roleplay_request_lock(_user["id"])
     usage_token = start_usage_capture()
     try:
         words = await _roleplay_words(session, _user["id"], payload.scenario, payload.tag)
@@ -1157,12 +1194,16 @@ async def roleplay_start(payload: RoleplayStartIn, session: SessionDep, _user: C
         )
         # 첫 턴: 사용자 발화 없음, 코칭 없음.
         return {"history": [["", reply, ""]]}
+    except LLMConcurrencyLimitError as exc:
+        _raise_roleplay_limit_error(exc)
     finally:
         await safe_persist_usage_capture(usage_token, _user)
+        _release_roleplay_request_lock(request_lock)
 
 
 @router.post("/roleplay/continue")
 async def roleplay_continue(payload: RoleplayContinueIn, session: SessionDep, _user: CurrentUserDep):
+    request_lock = _acquire_roleplay_request_lock(_user["id"])
     usage_token = start_usage_capture()
     try:
         # LLM 맥락용으로는 (user, bot)만 필요(코칭 제외).
@@ -1182,19 +1223,28 @@ async def roleplay_continue(payload: RoleplayContinueIn, session: SessionDep, _u
         new_history = [_norm_turn(h) for h in payload.history]
         new_history.append([payload.message, result["reply"], result["coaching"]])
         return {"history": new_history}
+    except LLMConcurrencyLimitError as exc:
+        _raise_roleplay_limit_error(exc)
     finally:
         await safe_persist_usage_capture(usage_token, _user)
+        _release_roleplay_request_lock(request_lock)
 
 
 @router.post("/roleplay/continue/stream")
 async def roleplay_continue_stream(
     payload: RoleplayContinueIn,
+    request: Request,
     session: SessionDep,
     _user: CurrentUserDep,
 ):
-    # LLM 맥락용으로는 (user, bot)만 필요(코칭 제외).
-    context = [(t[0], t[1]) for t in (_norm_turn(h) for h in payload.history)]
-    words = await _roleplay_words(session, _user["id"], payload.scenario, payload.tag)
+    request_lock = _acquire_roleplay_request_lock(_user["id"])
+    try:
+        # LLM 맥락용으로는 (user, bot)만 필요(코칭 제외).
+        context = [(t[0], t[1]) for t in (_norm_turn(h) for h in payload.history)]
+        words = await _roleplay_words(session, _user["id"], payload.scenario, payload.tag)
+    except Exception:
+        _release_roleplay_request_lock(request_lock)
+        raise
 
     async def events():
         usage_token = start_usage_capture()
@@ -1216,11 +1266,16 @@ async def roleplay_continue_stream(
 
         try:
             while True:
+                if await request.is_disconnected():
+                    return
                 chunk = await run_in_threadpool(next, iterator, sentinel)
                 if chunk is sentinel:
                     break
                 reply_parts.append(chunk)
                 yield _line({"type": "delta", "text": chunk})
+
+                if await request.is_disconnected():
+                    return
 
             reply = "".join(reply_parts).strip()
             coaching = await run_in_threadpool(
@@ -1239,11 +1294,17 @@ async def roleplay_continue_stream(
             new_history = [_norm_turn(h) for h in payload.history]
             new_history.append([payload.message, reply, coaching])
             yield _line({"type": "done", "history": new_history})
+        except LLMConcurrencyLimitError:
+            yield _line({"type": "error", "message": ROLEPLAY_LIMIT_MESSAGE})
         except Exception:
             logger.exception("Roleplay streaming failed")
             yield _line({"type": "error", "message": "AI 답변을 생성하지 못했어요. 잠시 후 다시 시도해주세요."})
         finally:
+            close = getattr(iterator, "close", None)
+            if callable(close):
+                close()
             await safe_persist_usage_capture(usage_token, _user)
+            _release_roleplay_request_lock(request_lock)
 
     return StreamingResponse(
         events(),
@@ -1255,6 +1316,7 @@ async def roleplay_continue_stream(
 @router.post("/roleplay/summary")
 async def roleplay_summary(payload: RoleplaySummaryIn, session: SessionDep, _user: CurrentUserDep):
     """대화 전체에서 요약 + 유용 표현 + 유용 어휘를 추출하고 저장한다."""
+    request_lock = _acquire_roleplay_request_lock(_user["id"])
     usage_token = start_usage_capture()
     try:
         context = [(t[0], t[1]) for t in (_norm_turn(h) for h in payload.history)]
@@ -1282,8 +1344,11 @@ async def roleplay_summary(payload: RoleplaySummaryIn, session: SessionDep, _use
             result.get("vocab", []),
         )
         return {**result, "session_id": session_id}
+    except LLMConcurrencyLimitError as exc:
+        _raise_roleplay_limit_error(exc)
     finally:
         await safe_persist_usage_capture(usage_token, _user)
+        _release_roleplay_request_lock(request_lock)
 
 
 @router.post("/roleplay/save-words")
