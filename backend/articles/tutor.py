@@ -29,17 +29,17 @@ def _json_from_text(raw: str, fallback: Any):
 _STUDY_PROMPT = ChatPromptTemplate.from_template(
     """
 You are an English reading tutor for Korean learners.
-Create paragraph-by-paragraph study material from this English article.
+Create short study material from the article title and lead excerpt.
 
 Rules:
-- Do not add facts that are not in the article.
+- Do not add facts that are not in the provided title/excerpt.
 - Keep explanations in Korean, but keep useful English expressions in English.
 - Extract practical vocabulary/expressions suitable for saving to a wordbook.
 - Return only JSON.
 
 Article title: {title}
 Source: {source}
-Chunks JSON:
+Excerpt chunks JSON:
 {chunks_json}
 
 JSON shape:
@@ -51,7 +51,7 @@ JSON shape:
     {{
       "chunk_id": 1,
       "chunk_index": 0,
-      "explanation_ko": "문단 핵심 해설",
+      "explanation_ko": "리드문 핵심 해설",
       "key_expressions": [
         {{
           "word": "expression",
@@ -72,7 +72,7 @@ JSON shape:
 _COMPLETE_PROMPT = ChatPromptTemplate.from_template(
     """
 You are finishing an English article lesson for a Korean learner.
-Use only the article chunks below.
+Use only the article title and lead excerpt below.
 Return concise JSON.
 
 Title: {title}
@@ -107,7 +107,7 @@ JSON shape:
 _ASK_PROMPT = ChatPromptTemplate.from_template(
     """
 You answer questions about one English article for a Korean learner.
-Use only the evidence chunks. If the answer is not supported, say so.
+Use only the title and lead excerpt. If the answer is not supported, say so.
 Return only JSON.
 
 Question: {question}
@@ -125,20 +125,43 @@ JSON shape:
 )
 
 
-def generate_article_study(title: str, source: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:
-    compact_chunks = [
+def _lead_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not chunks:
+        return []
+    chunk = chunks[0] or {}
+    text = ""
+    for candidate in (
+        chunk.get("lead"),
+        chunk.get("lead_text"),
+        chunk.get("description"),
+        chunk.get("content_snippet"),
+        chunk.get("text"),
+    ):
+        candidate_text = str(candidate or "").strip()
+        if candidate_text:
+            text = candidate_text
+            break
+    if not text:
+        return []
+    return [
         {
-            "chunk_id": c["id"],
-            "chunk_index": c["chunk_index"],
-            "text": c["text"][:1400],
+            "chunk_id": chunk.get("id") or 1,
+            "chunk_index": chunk.get("chunk_index") or 0,
+            "text": text[:1400],
         }
-        for c in chunks[:10]
     ]
+
+
+def _lead_chunks_json(chunks: list[dict[str, Any]]) -> str:
+    return json.dumps(_lead_chunks(chunks), ensure_ascii=False)
+
+
+def generate_article_study(title: str, source: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:
     prompt = _STUDY_PROMPT.invoke(
         {
             "title": title or "",
             "source": source or "",
-            "chunks_json": json.dumps(compact_chunks, ensure_ascii=False),
+            "chunks_json": _lead_chunks_json(chunks),
         }
     )
     raw = _invoke_tracked_llm("article", "study", prompt)
@@ -150,14 +173,10 @@ def generate_article_study(title: str, source: str, chunks: list[dict[str, Any]]
 
 
 def complete_article(title: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:
-    compact_chunks = [
-        {"chunk_id": c["id"], "chunk_index": c["chunk_index"], "text": c["text"][:1400]}
-        for c in chunks[:12]
-    ]
     prompt = _COMPLETE_PROMPT.invoke(
         {
             "title": title or "",
-            "chunks_json": json.dumps(compact_chunks, ensure_ascii=False),
+            "chunks_json": _lead_chunks_json(chunks),
         }
     )
     raw = _invoke_tracked_llm("article", "complete", prompt)
@@ -170,14 +189,10 @@ def complete_article(title: str, chunks: list[dict[str, Any]]) -> dict[str, Any]
 
 
 def answer_article_question(question: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:
-    compact_chunks = [
-        {"chunk_id": c["id"], "chunk_index": c["chunk_index"], "text": c["text"][:1400]}
-        for c in chunks
-    ]
     prompt = _ASK_PROMPT.invoke(
         {
             "question": question,
-            "chunks_json": json.dumps(compact_chunks, ensure_ascii=False),
+            "chunks_json": _lead_chunks_json(chunks),
         }
     )
     raw = _invoke_tracked_llm("article", "ask", prompt)

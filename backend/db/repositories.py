@@ -215,11 +215,17 @@ async def init_db() -> None:
                     domains            JSONB DEFAULT '[]'::jsonb,
                     default_topic      TEXT,
                     fallback_image_url TEXT,
+                    feed_url           TEXT,
+                    site_url           TEXT,
+                    license_status     TEXT DEFAULT 'pending',
                     is_active          BOOLEAN DEFAULT TRUE,
                     created_at         TIMESTAMP DEFAULT NOW(),
                     updated_at         TIMESTAMP DEFAULT NOW()
                 )
                 """,
+                "ALTER TABLE article_sources ADD COLUMN IF NOT EXISTS feed_url TEXT",
+                "ALTER TABLE article_sources ADD COLUMN IF NOT EXISTS site_url TEXT",
+                "ALTER TABLE article_sources ADD COLUMN IF NOT EXISTS license_status TEXT DEFAULT 'pending'",
                 """
                 CREATE TABLE IF NOT EXISTS articles (
                     id                SERIAL PRIMARY KEY,
@@ -237,6 +243,9 @@ async def init_db() -> None:
                     content_snippet   TEXT,
                     extracted_text    TEXT,
                     extraction_status TEXT,
+                    feed_entry_id     TEXT,
+                    license_status    TEXT DEFAULT 'pending',
+                    collection_method TEXT DEFAULT 'manual',
                     created_at        TIMESTAMP DEFAULT NOW(),
                     updated_at        TIMESTAMP DEFAULT NOW()
                 )
@@ -246,6 +255,9 @@ async def init_db() -> None:
                 "ALTER TABLE articles ADD COLUMN IF NOT EXISTS level TEXT",
                 "ALTER TABLE articles ADD COLUMN IF NOT EXISTS estimated_minutes INTEGER DEFAULT 5",
                 "ALTER TABLE articles ADD COLUMN IF NOT EXISTS is_published BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE articles ADD COLUMN IF NOT EXISTS feed_entry_id TEXT",
+                "ALTER TABLE articles ADD COLUMN IF NOT EXISTS license_status TEXT DEFAULT 'pending'",
+                "ALTER TABLE articles ADD COLUMN IF NOT EXISTS collection_method TEXT DEFAULT 'manual'",
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS ux_articles_url
                     ON articles (url)
@@ -294,6 +306,30 @@ async def init_db() -> None:
                     ON article_sessions (article_id)
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS article_refresh_jobs (
+                    job_id            TEXT PRIMARY KEY,
+                    status            TEXT NOT NULL,
+                    ok                BOOLEAN DEFAULT FALSE,
+                    source_key        TEXT,
+                    total_sources     INTEGER DEFAULT 0,
+                    completed_sources INTEGER DEFAULT 0,
+                    current_source    TEXT,
+                    saved             INTEGER DEFAULT 0,
+                    skipped           INTEGER DEFAULT 0,
+                    results           JSONB DEFAULT '[]'::jsonb,
+                    error             TEXT,
+                    message           TEXT,
+                    created_at        TIMESTAMP DEFAULT NOW(),
+                    started_at        TIMESTAMP,
+                    finished_at       TIMESTAMP,
+                    updated_at        TIMESTAMP DEFAULT NOW()
+                )
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS ix_article_refresh_jobs_status_created
+                    ON article_refresh_jobs (status, created_at DESC)
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS api_usage_events (
                     id            SERIAL PRIMARY KEY,
                     user_id       UUID,
@@ -338,14 +374,20 @@ async def init_db() -> None:
             await conn.execute(
                 text(
                     """INSERT INTO article_sources
-                           (key, name, domains, default_topic, fallback_image_url, is_active, updated_at)
+                           (key, name, domains, default_topic, fallback_image_url,
+                            feed_url, site_url, license_status, is_active, updated_at)
                        VALUES (:key, :name, CAST(:domains AS jsonb), :default_topic,
-                               :fallback_image_url, TRUE, NOW())
+                               :fallback_image_url, :feed_url, :site_url,
+                               :license_status, :is_active, NOW())
                        ON CONFLICT (key) DO UPDATE SET
                            name = EXCLUDED.name,
                            domains = EXCLUDED.domains,
                            default_topic = EXCLUDED.default_topic,
                            fallback_image_url = EXCLUDED.fallback_image_url,
+                           feed_url = EXCLUDED.feed_url,
+                           site_url = EXCLUDED.site_url,
+                           license_status = EXCLUDED.license_status,
+                           is_active = EXCLUDED.is_active,
                            updated_at = NOW()"""
                 ),
                 {
@@ -353,6 +395,67 @@ async def init_db() -> None:
                     "domains": json.dumps(source["domains"], ensure_ascii=False),
                 },
             )
+        active_source_keys = [source["key"] for source in source_payloads()]
+        if active_source_keys:
+            await conn.execute(
+                text(
+                    """UPDATE article_sources
+                       SET is_active = FALSE,
+                           updated_at = NOW()
+                       WHERE key NOT IN :active_source_keys"""
+                ).bindparams(bindparam("active_source_keys", expanding=True)),
+                {"active_source_keys": active_source_keys},
+            )
+        await conn.execute(
+            text(
+                """UPDATE articles a
+                   SET license_status = src.license_status,
+                       updated_at = a.updated_at
+                   FROM article_sources src
+                   WHERE a.source_key = src.key
+                     AND (a.license_status IS NULL OR a.license_status = 'pending')"""
+            )
+        )
+        await conn.execute(
+            text(
+                """UPDATE articles
+                   SET image_url = '',
+                       updated_at = updated_at
+                   WHERE collection_method = 'rss'
+                     AND (
+                         image_url LIKE 'https://images.unsplash.com/%'
+                         OR lower(image_url) LIKE '%/logo%'
+                         OR lower(image_url) LIKE '%logo_%'
+                     )"""
+            )
+        )
+        await conn.execute(
+            text(
+                """UPDATE articles
+                   SET image_url = regexp_replace(image_url, '/standard/[0-9]{2,4}/', '/standard/976/'),
+                       updated_at = updated_at
+                   WHERE image_url LIKE 'https://ichef.bbci.co.uk/%'
+                     AND image_url LIKE '%/standard/%'"""
+            )
+        )
+        await conn.execute(
+            text(
+                """UPDATE articles
+                   SET image_url = regexp_replace(image_url, 'width=[0-9]+', 'width=1000'),
+                       updated_at = updated_at
+                   WHERE image_url LIKE 'https://i.guim.co.uk/%'
+                     AND image_url LIKE '%width=%'"""
+            )
+        )
+        await conn.execute(
+            text(
+                """UPDATE articles
+                   SET is_published = FALSE,
+                       updated_at = updated_at
+                   WHERE collection_method = 'rss'
+                     AND lower(url) LIKE '%/null%'"""
+            )
+        )
 
 
 async def is_word_saved(session: AsyncSession, user_id: str, word: str) -> bool:
@@ -892,7 +995,7 @@ FEATURE_LABELS = {
     "slang": "슬랭 설명",
     "quiz": "AI 퀴즈",
     "roleplay": "롤플레잉",
-    "article": "기사 학습",
+    "article": "뉴스 리딩",
 }
 
 OPERATION_LABELS = {
@@ -906,9 +1009,9 @@ OPERATION_LABELS = {
     ("roleplay", "start"): "롤플레잉 시작",
     ("roleplay", "continue"): "롤플레잉 대화",
     ("roleplay", "summary"): "롤플레잉 정리",
-    ("article", "study"): "기사 문단 학습",
-    ("article", "ask"): "기사 질문 답변",
-    ("article", "complete"): "기사 학습 정리",
+    ("article", "study"): "뉴스 리딩",
+    ("article", "ask"): "뉴스 리딩 질문",
+    ("article", "complete"): "뉴스 리딩 정리",
 }
 
 
@@ -1775,10 +1878,12 @@ async def upsert_article_with_chunks(
             """INSERT INTO articles
                    (source_key, source, title, url, image_url, published_at, topic,
                     level, estimated_minutes, is_published, description, content_snippet,
-                    extracted_text, extraction_status, updated_at)
+                    extracted_text, extraction_status, feed_entry_id, license_status,
+                    collection_method, updated_at)
                VALUES (:source_key, :source, :title, :url, :image_url, :published_at, :topic,
                        :level, :estimated_minutes, :is_published, :description,
-                       :content_snippet, :extracted_text, :extraction_status, NOW())
+                       :content_snippet, :extracted_text, :extraction_status,
+                       :feed_entry_id, :license_status, :collection_method, NOW())
                ON CONFLICT (url) DO UPDATE SET
                    source_key = EXCLUDED.source_key,
                    source = EXCLUDED.source,
@@ -1796,6 +1901,9 @@ async def upsert_article_with_chunks(
                    content_snippet = EXCLUDED.content_snippet,
                    extracted_text = EXCLUDED.extracted_text,
                    extraction_status = EXCLUDED.extraction_status,
+                   feed_entry_id = EXCLUDED.feed_entry_id,
+                   license_status = EXCLUDED.license_status,
+                   collection_method = EXCLUDED.collection_method,
                    updated_at = NOW()
                RETURNING id"""
         ),
@@ -1815,6 +1923,9 @@ async def upsert_article_with_chunks(
             "content_snippet": (article.get("content") or article.get("content_snippet") or "").strip(),
             "extracted_text": extracted_text or "",
             "extraction_status": extraction_status or "",
+            "feed_entry_id": (article.get("feed_entry_id") or "").strip(),
+            "license_status": (article.get("license_status") or "pending").strip(),
+            "collection_method": (article.get("collection_method") or "manual").strip(),
         },
     )
     article_id = int(result.scalar_one())
@@ -1847,13 +1958,40 @@ async def upsert_article_with_chunks(
 async def list_article_sources(session: AsyncSession) -> list[dict]:
     result = await session.execute(
         text(
-            """SELECT key, name, domains, default_topic, fallback_image_url, is_active
+            """SELECT key, name, domains, default_topic, fallback_image_url,
+                      feed_url, site_url, license_status, is_active
                FROM article_sources
                WHERE is_active = TRUE
                ORDER BY name ASC"""
         )
     )
     return _rows(result)
+
+
+async def upsert_feed_articles(
+    session: AsyncSession,
+    entries: list[dict],
+    publish: bool = True,
+) -> dict:
+    saved = skipped = 0
+    article_ids: list[int] = []
+    for entry in entries:
+        lead = (entry.get("content_snippet") or entry.get("description") or "").strip()
+        if not lead:
+            skipped += 1
+            continue
+        chunks = [{"chunk_index": 0, "text": lead, "token_count": max(1, len(lead) // 4)}]
+        article_id = await upsert_article_with_chunks(
+            session,
+            entry,
+            chunks,
+            extracted_text="",
+            extraction_status="rss_lead",
+            publish=publish,
+        )
+        article_ids.append(article_id)
+        saved += 1
+    return {"saved": saved, "skipped": skipped, "article_ids": article_ids}
 
 
 async def list_published_articles(
@@ -1863,11 +2001,25 @@ async def list_published_articles(
     q: str = "",
     page: int = 1,
     page_size: int = 12,
+    per_topic_limit: int = 1,
 ) -> dict:
     page = max(1, int(page or 1))
     page_size = max(1, min(int(page_size or 12), 30))
-    clauses = ["is_published = TRUE"]
-    params: dict[str, Any] = {"limit": page_size, "offset": (page - 1) * page_size}
+    per_topic_limit = max(1, min(int(per_topic_limit or 1), 5))
+    clauses = [
+        "is_published = TRUE",
+        """EXISTS (
+            SELECT 1 FROM article_sources src
+            WHERE src.key = articles.source_key
+              AND src.is_active = TRUE
+              AND src.license_status = 'approved'
+        )""",
+    ]
+    params: dict[str, Any] = {
+        "limit": page_size,
+        "offset": (page - 1) * page_size,
+        "per_topic_limit": per_topic_limit,
+    }
     if topic:
         clauses.append("topic = :topic")
         params["topic"] = topic
@@ -1880,11 +2032,24 @@ async def list_published_articles(
     where_sql = " AND ".join(clauses)
     result = await session.execute(
         text(
-            f"""SELECT id, source_key, source, title, url, image_url, published_at,
+            f"""WITH ranked AS (
+                   SELECT id, source_key, source, title, url, image_url, published_at,
+                          topic, level, estimated_minutes, description, extraction_status,
+                          feed_entry_id, license_status, collection_method, created_at, updated_at,
+                          ROW_NUMBER() OVER (
+                              PARTITION BY
+                                  source_key,
+                                  COALESCE(NULLIF(topic, ''), 'uncategorized')
+                              ORDER BY published_at DESC NULLS LAST, updated_at DESC, id DESC
+                          ) AS topic_rank
+                   FROM articles
+                   WHERE {where_sql}
+               )
+               SELECT id, source_key, source, title, url, image_url, published_at,
                       topic, level, estimated_minutes, description, extraction_status,
-                      created_at, updated_at
-               FROM articles
-               WHERE {where_sql}
+                      feed_entry_id, license_status, collection_method, created_at, updated_at
+               FROM ranked
+               WHERE topic_rank <= :per_topic_limit
                ORDER BY published_at DESC NULLS LAST, updated_at DESC, id DESC
                LIMIT :limit OFFSET :offset"""
         ),
@@ -1892,7 +2057,19 @@ async def list_published_articles(
     )
     rows = _rows(result)
     count_result = await session.execute(
-        text(f"SELECT COUNT(*)::int FROM articles WHERE {where_sql}"),
+        text(
+            f"""WITH ranked AS (
+                   SELECT ROW_NUMBER() OVER (
+                              PARTITION BY
+                                  source_key,
+                                  COALESCE(NULLIF(topic, ''), 'uncategorized')
+                              ORDER BY published_at DESC NULLS LAST, updated_at DESC, id DESC
+                          ) AS topic_rank
+                   FROM articles
+                   WHERE {where_sql}
+               )
+               SELECT COUNT(*)::int FROM ranked WHERE topic_rank <= :per_topic_limit"""
+        ),
         {k: v for k, v in params.items() if k not in {"limit", "offset"}},
     )
     return {"articles": rows, "page": page, "page_size": page_size, "total": int(count_result.scalar_one())}
@@ -1909,7 +2086,8 @@ async def list_admin_articles(
         text(
             """SELECT id, source_key, source, title, url, image_url, published_at,
                       topic, level, estimated_minutes, is_published, description,
-                      extraction_status, created_at, updated_at
+                      extraction_status, feed_entry_id, license_status, collection_method,
+                      created_at, updated_at
                FROM articles
                ORDER BY updated_at DESC, id DESC
                LIMIT :limit OFFSET :offset"""
@@ -1926,6 +2104,138 @@ async def list_admin_articles(
     }
 
 
+def _iso_or_none(value) -> str | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is not None and value.utcoffset() == timedelta(0):
+            return value.replace(tzinfo=None).isoformat(timespec="seconds") + "Z"
+        return value.isoformat(timespec="seconds")
+    return str(value)
+
+
+def _article_refresh_job(row) -> dict | None:
+    if not row:
+        return None
+    data = dict(row)
+    data["results"] = data.get("results") or []
+    for key in ("created_at", "started_at", "finished_at", "updated_at"):
+        data[key] = _iso_or_none(data.get(key))
+    return data
+
+
+async def create_article_refresh_job(session: AsyncSession, job: dict) -> dict:
+    result = await session.execute(
+        text(
+            """INSERT INTO article_refresh_jobs
+                   (job_id, status, ok, source_key, total_sources, completed_sources,
+                    current_source, saved, skipped, results, error, message)
+               VALUES
+                   (:job_id, :status, :ok, :source_key, :total_sources, :completed_sources,
+                    :current_source, :saved, :skipped, CAST(:results AS jsonb), :error, :message)
+               RETURNING job_id, status, ok, source_key, total_sources, completed_sources,
+                         current_source, saved, skipped, results, error, message,
+                         created_at, started_at, finished_at, updated_at"""
+        ),
+        {
+            "job_id": job.get("job_id"),
+            "status": job.get("status") or "queued",
+            "ok": bool(job.get("ok", False)),
+            "source_key": job.get("source_key") or "",
+            "total_sources": int(job.get("total_sources") or 0),
+            "completed_sources": int(job.get("completed_sources") or 0),
+            "current_source": job.get("current_source") or "",
+            "saved": int(job.get("saved") or 0),
+            "skipped": int(job.get("skipped") or 0),
+            "results": json.dumps(job.get("results") or [], ensure_ascii=False),
+            "error": job.get("error") or "",
+            "message": job.get("message") or "",
+        },
+    )
+    await session.commit()
+    return _article_refresh_job(result.mappings().first()) or {}
+
+
+async def get_article_refresh_job(session: AsyncSession, job_id: str) -> dict | None:
+    result = await session.execute(
+        text(
+            """SELECT job_id, status, ok, source_key, total_sources, completed_sources,
+                      current_source, saved, skipped, results, error, message,
+                      created_at, started_at, finished_at, updated_at
+               FROM article_refresh_jobs
+               WHERE job_id = :job_id"""
+        ),
+        {"job_id": job_id},
+    )
+    return _article_refresh_job(result.mappings().first())
+
+
+async def update_article_refresh_job(session: AsyncSession, job_id: str, **values) -> dict | None:
+    allowed = {
+        "status",
+        "ok",
+        "source_key",
+        "total_sources",
+        "completed_sources",
+        "current_source",
+        "saved",
+        "skipped",
+        "results",
+        "error",
+        "message",
+        "started_at",
+        "finished_at",
+    }
+    updates = {key: value for key, value in values.items() if key in allowed}
+    if not updates:
+        return await get_article_refresh_job(session, job_id)
+
+    assignments = []
+    params: dict[str, Any] = {"job_id": job_id}
+    for key, value in updates.items():
+        if key == "results":
+            assignments.append("results = CAST(:results AS jsonb)")
+            params[key] = json.dumps(value or [], ensure_ascii=False)
+        elif key in {"started_at", "finished_at"}:
+            assignments.append(f"{key} = NOW()")
+        else:
+            assignments.append(f"{key} = :{key}")
+            params[key] = value
+    assignments.append("updated_at = NOW()")
+
+    result = await session.execute(
+        text(
+            f"""UPDATE article_refresh_jobs
+                SET {', '.join(assignments)}
+                WHERE job_id = :job_id
+                RETURNING job_id, status, ok, source_key, total_sources, completed_sources,
+                          current_source, saved, skipped, results, error, message,
+                          created_at, started_at, finished_at, updated_at"""
+        ),
+        params,
+    )
+    await session.commit()
+    return _article_refresh_job(result.mappings().first())
+
+
+async def trim_article_refresh_jobs(session: AsyncSession, keep_count: int) -> None:
+    await session.execute(
+        text(
+            """WITH removable AS (
+                   SELECT job_id
+                   FROM article_refresh_jobs
+                   WHERE status IN ('completed', 'failed')
+                   ORDER BY created_at DESC, job_id DESC
+                   OFFSET :keep_count
+               )
+               DELETE FROM article_refresh_jobs
+               WHERE job_id IN (SELECT job_id FROM removable)"""
+        ),
+        {"keep_count": max(0, int(keep_count or 0))},
+    )
+    await session.commit()
+
+
 async def get_article_catalog_item(
     session: AsyncSession,
     article_id: int,
@@ -1934,11 +2244,20 @@ async def get_article_catalog_item(
     clauses = ["id = :article_id"]
     if not include_unpublished:
         clauses.append("is_published = TRUE")
+        clauses.append(
+            """EXISTS (
+                SELECT 1 FROM article_sources src
+                WHERE src.key = articles.source_key
+                  AND src.is_active = TRUE
+                  AND src.license_status = 'approved'
+            )"""
+        )
     result = await session.execute(
         text(
             f"""SELECT id, source_key, source, title, url, image_url, published_at,
                       topic, level, estimated_minutes, is_published, description,
-                      content_snippet, extraction_status, created_at, updated_at
+                      content_snippet, extraction_status, feed_entry_id, license_status,
+                      collection_method, created_at, updated_at
                FROM articles
                WHERE {' AND '.join(clauses)}"""
         ),
@@ -2010,10 +2329,19 @@ async def get_article_session(session: AsyncSession, user_id: str, session_id: i
                       s.study_json, s.completion_json, s.created_at, s.updated_at,
                       a.source_key, a.source, a.title, a.url, a.image_url, a.published_at,
                       a.topic, a.level, a.estimated_minutes, a.description,
-                      a.content_snippet, a.extraction_status
+                      a.content_snippet, a.extraction_status, a.feed_entry_id,
+                      a.license_status, a.collection_method
                FROM article_sessions s
                JOIN articles a ON a.id = s.article_id
-               WHERE s.user_id = :user_id AND s.id = :session_id AND a.is_published = TRUE"""
+               WHERE s.user_id = :user_id
+                 AND s.id = :session_id
+                 AND a.is_published = TRUE
+                 AND EXISTS (
+                     SELECT 1 FROM article_sources src
+                     WHERE src.key = a.source_key
+                       AND src.is_active = TRUE
+                       AND src.license_status = 'approved'
+                 )"""
         ),
         {"user_id": user_id, "session_id": session_id},
     )
@@ -2032,10 +2360,18 @@ async def get_article_sessions(session: AsyncSession, user_id: str) -> list[dict
                       s.study_json, s.completion_json, s.created_at, s.updated_at,
                       a.source_key, a.source, a.title, a.url, a.image_url, a.published_at,
                       a.topic, a.level, a.estimated_minutes, a.description,
-                      a.extraction_status
+                      a.extraction_status, a.feed_entry_id, a.license_status,
+                      a.collection_method
                FROM article_sessions s
                JOIN articles a ON a.id = s.article_id
-               WHERE s.user_id = :user_id AND a.is_published = TRUE
+               WHERE s.user_id = :user_id
+                 AND a.is_published = TRUE
+                 AND EXISTS (
+                     SELECT 1 FROM article_sources src
+                     WHERE src.key = a.source_key
+                       AND src.is_active = TRUE
+                       AND src.license_status = 'approved'
+                 )
                ORDER BY s.created_at DESC, s.id DESC
                LIMIT 50"""
         ),

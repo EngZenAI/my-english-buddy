@@ -27,7 +27,7 @@ import {
 const TABS = [
   { id: "search", label: "단어 검색", Comp: SearchTab },
   { id: "wordbook", label: "단어장", Comp: WordbookTab },
-  { id: "articles", label: "기사 학습", Comp: ArticleLearningTab },
+  { id: "articles", label: "뉴스 리딩", Comp: ArticleLearningTab },
   { id: "quiz", label: "퀴즈", Comp: QuizTab },
   { id: "roleplay", label: "롤플레잉", Comp: RoleplayTab },
 ];
