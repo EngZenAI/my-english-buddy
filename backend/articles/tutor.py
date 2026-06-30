@@ -29,17 +29,17 @@ def _json_from_text(raw: str, fallback: Any):
 _STUDY_PROMPT = ChatPromptTemplate.from_template(
     """
 You are an English reading tutor for Korean learners.
-Create paragraph-by-paragraph study material from this English article.
+Create short study material from the article title and lead excerpt.
 
 Rules:
-- Do not add facts that are not in the article.
+- Do not add facts that are not in the provided title/excerpt.
 - Keep explanations in Korean, but keep useful English expressions in English.
 - Extract practical vocabulary/expressions suitable for saving to a wordbook.
 - Return only JSON.
 
 Article title: {title}
 Source: {source}
-Chunks JSON:
+Excerpt chunks JSON:
 {chunks_json}
 
 JSON shape:
@@ -51,7 +51,7 @@ JSON shape:
     {{
       "chunk_id": 1,
       "chunk_index": 0,
-      "explanation_ko": "문단 핵심 해설",
+      "explanation_ko": "리드문 핵심 해설",
       "key_expressions": [
         {{
           "word": "expression",
@@ -72,7 +72,7 @@ JSON shape:
 _COMPLETE_PROMPT = ChatPromptTemplate.from_template(
     """
 You are finishing an English article lesson for a Korean learner.
-Use only the article chunks below.
+Use only the article title and lead excerpt below.
 Return concise JSON.
 
 Title: {title}
@@ -107,7 +107,7 @@ JSON shape:
 _ASK_PROMPT = ChatPromptTemplate.from_template(
     """
 You answer questions about one English article for a Korean learner.
-Use only the evidence chunks. If the answer is not supported, say so.
+Use only the title and lead excerpt. If the answer is not supported, say so.
 Return only JSON.
 
 Question: {question}

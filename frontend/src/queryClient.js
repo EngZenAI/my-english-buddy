@@ -23,6 +23,7 @@ export const queryKeys = {
   articleSources: ["articles", "sources"],
   articleAdminStatus: ["articles", "admin-status"],
   articleAdminList: ["articles", "admin-list"],
+  articleRefreshJob: (jobId) => ["articles", "refresh-job", jobId],
   articleSession: (id) => ["articles", "session", id],
   articleSessions: ["articles", "sessions"],
 };

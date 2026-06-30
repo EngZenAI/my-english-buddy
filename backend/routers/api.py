@@ -8,6 +8,8 @@
 
 import csv
 import io
+import uuid
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
@@ -15,10 +17,9 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from backend.api_usage import start_usage_capture, stop_usage_capture
-from backend.articles.chunking import estimate_tokens, split_article_text
-from backend.articles.extractor import extract_article_text
+from backend.articles.feeds import fetch_feed_entries
 from backend.articles.retrieval import select_relevant_chunks
-from backend.articles.sources import fallback_image_for, match_supported_source
+from backend.articles.sources import SUPPORTED_SOURCES
 from backend.articles.tutor import (
     answer_article_question,
     complete_article,
@@ -67,10 +68,11 @@ from backend.db.repositories import (
     publish_article,
     update_article_completion,
     update_article_study,
-    upsert_article_with_chunks,
+    upsert_feed_articles,
     update_user_password_hash,
     update_word,
 )
+from backend.db.session import SessionFactory
 from backend.llm import (
     continue_roleplay,
     explain_slang,
@@ -86,6 +88,9 @@ from backend.services import (
 )
 
 router = APIRouter(prefix="/api", tags=["api"])
+
+ARTICLE_REFRESH_JOBS: dict[str, dict] = {}
+ARTICLE_REFRESH_JOB_LIMIT = 20
 
 
 async def require_user(request: Request, session: SessionDep) -> dict:
@@ -216,18 +221,10 @@ class AccountPasswordIn(BaseModel):
     new_password: str
 
 
-class ArticleAdminIngestIn(BaseModel):
-    url: str
-    title: str = ""
-    source: str = ""
-    description: str = ""
-    content: str = ""
-    image_url: str = ""
-    published_at: str = ""
-    topic: str = ""
-    level: str = ""
-    estimated_minutes: int = 0
-    publish: bool = False
+class ArticleFeedRefreshIn(BaseModel):
+    source_key: str = ""
+    publish: bool = True
+    max_items: int = Field(default=1, ge=1, le=3)
 
 
 class ArticleAskIn(BaseModel):
@@ -241,6 +238,125 @@ class ArticleSaveWordsIn(BaseModel):
 
 class ArticlePublishIn(BaseModel):
     is_published: bool = True
+
+
+def _utc_now_iso() -> str:
+    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+
+def _trim_article_refresh_jobs() -> None:
+    if len(ARTICLE_REFRESH_JOBS) <= ARTICLE_REFRESH_JOB_LIMIT:
+        return
+    ordered = sorted(
+        ARTICLE_REFRESH_JOBS.items(),
+        key=lambda item: item[1].get("created_at") or "",
+    )
+    for job_id, _job in ordered[: max(0, len(ARTICLE_REFRESH_JOBS) - ARTICLE_REFRESH_JOB_LIMIT)]:
+        ARTICLE_REFRESH_JOBS.pop(job_id, None)
+
+
+def _refresh_job_snapshot(job_id: str) -> dict:
+    job = ARTICLE_REFRESH_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="업데이트 작업을 찾을 수 없습니다.")
+    return {
+        **job,
+        "results": [dict(item) for item in job.get("results", [])],
+    }
+
+
+async def _run_article_feed_refresh_job(
+    job_id: str,
+    source_keys: list[str],
+    publish: bool,
+    max_items: int,
+) -> None:
+    source_by_key = {source.key: source for source in SUPPORTED_SOURCES}
+    sources = [source_by_key[key] for key in source_keys if key in source_by_key]
+    job = ARTICLE_REFRESH_JOBS.get(job_id)
+    if not job:
+        return
+
+    job.update(
+        {
+            "status": "running",
+            "started_at": _utc_now_iso(),
+            "current_source": "",
+            "message": "콘텐츠 업데이트를 시작했습니다.",
+        }
+    )
+    total_saved = 0
+    total_skipped = 0
+
+    try:
+        async with SessionFactory() as job_session:
+            for source in sources:
+                job.update(
+                    {
+                        "current_source": source.name,
+                        "message": f"{source.name} 뉴스를 가져오는 중입니다.",
+                    }
+                )
+                try:
+                    entries = await run_in_threadpool(fetch_feed_entries, source, 8, max_items)
+                    result = await upsert_feed_articles(job_session, entries, publish=publish)
+                    saved = int(result.get("saved") or 0)
+                    skipped = int(result.get("skipped") or 0)
+                    total_saved += saved
+                    total_skipped += skipped
+                    job["results"].append(
+                        {
+                            "source_key": source.key,
+                            "source": source.name,
+                            "ok": True,
+                            "fetched": len(entries),
+                            "saved": saved,
+                            "skipped": skipped,
+                            "error": "",
+                        }
+                    )
+                except Exception as exc:
+                    await job_session.rollback()
+                    job["results"].append(
+                        {
+                            "source_key": source.key,
+                            "source": source.name,
+                            "ok": False,
+                            "fetched": 0,
+                            "saved": 0,
+                            "skipped": 0,
+                            "error": str(exc),
+                        }
+                    )
+                finally:
+                    job["completed_sources"] = min(
+                        int(job.get("completed_sources") or 0) + 1,
+                        int(job.get("total_sources") or len(sources)),
+                    )
+                    job["saved"] = total_saved
+                    job["skipped"] = total_skipped
+
+        has_success = any(item.get("ok") for item in job.get("results", []))
+        job.update(
+            {
+                "status": "completed" if has_success else "failed",
+                "current_source": "",
+                "finished_at": _utc_now_iso(),
+                "message": "콘텐츠 업데이트가 완료되었습니다." if has_success else "콘텐츠 업데이트에 실패했습니다.",
+                "ok": has_success,
+            }
+        )
+    except Exception as exc:
+        job.update(
+            {
+                "status": "failed",
+                "current_source": "",
+                "finished_at": _utc_now_iso(),
+                "message": "콘텐츠 업데이트 중 오류가 발생했습니다.",
+                "error": str(exc),
+                "ok": False,
+            }
+        )
 
 
 # ── 현재 사용자 ─────────────────────────────────────────────
@@ -382,29 +498,6 @@ def _require_article_admin(user: dict) -> None:
     raise HTTPException(status_code=403, detail="기사 운영자 권한이 필요합니다.")
 
 
-def _fallback_article_text(payload: ArticleAdminIngestIn, metadata: dict) -> str:
-    parts = [
-        payload.title or metadata.get("title", ""),
-        payload.description or metadata.get("description", ""),
-        payload.content,
-    ]
-    return "\n\n".join([p.strip() for p in parts if p and p.strip()])
-
-
-def _level_from_text(text: str) -> str:
-    words = len((text or "").split())
-    if words < 450:
-        return "easy"
-    if words > 1100:
-        return "hard"
-    return "medium"
-
-
-def _minutes_from_text(text: str) -> int:
-    words = len((text or "").split())
-    return max(3, min(20, round(words / 150) + 3))
-
-
 @router.get("/article-sources")
 async def article_sources(session: SessionDep):
     return {"sources": await list_article_sources(session)}
@@ -464,68 +557,58 @@ async def article_admin_list(
     return await list_admin_articles(session, page=page)
 
 
-@router.post("/admin/articles/ingest")
-async def article_admin_ingest(
-    payload: ArticleAdminIngestIn,
-    session: SessionDep,
+@router.post("/admin/article-feeds/refresh")
+async def article_feed_refresh(
+    payload: ArticleFeedRefreshIn,
+    background_tasks: BackgroundTasks,
     _user: CurrentUserDep,
 ):
     _require_article_admin(_user)
-    url = payload.url.strip()
-    source = match_supported_source(url)
-    if not source:
-        raise HTTPException(status_code=400, detail="지원하지 않는 기사 소스입니다.")
-
-    extraction = await run_in_threadpool(extract_article_text, url)
-    metadata = extraction.get("metadata") or {}
-    text = extraction.get("text") or ""
-    status = extraction.get("status") or "failed"
-    if len(text.strip()) < 300:
-        text = _fallback_article_text(payload, metadata)
-        status = f"{status}:fallback_snippet"
-    chunks_text = split_article_text(text)
-    if not chunks_text:
-        raise HTTPException(status_code=422, detail="학습할 기사 본문을 찾지 못했습니다.")
-
-    topic = (payload.topic or source.default_topic or "world").strip().lower()
-    image_url = (
-        payload.image_url.strip()
-        or (metadata.get("image_url") or "").strip()
-        or source.fallback_image_url
-        or fallback_image_for(topic)
-    )
-    article_payload = {
-        **payload.model_dump(),
-        "source_key": source.key,
-        "source": payload.source.strip() or source.name,
-        "title": payload.title.strip() or metadata.get("title") or url,
-        "description": payload.description.strip() or metadata.get("description") or "",
-        "image_url": image_url,
-        "published_at": payload.published_at or metadata.get("published_at") or "",
-        "topic": topic,
-        "level": payload.level.strip() or _level_from_text(text),
-        "estimated_minutes": payload.estimated_minutes or _minutes_from_text(text),
-    }
-    chunks = [
-        {"chunk_index": idx, "text": chunk, "token_count": estimate_tokens(chunk)}
-        for idx, chunk in enumerate(chunks_text)
+    requested_key = payload.source_key.strip()
+    sources = [
+        source
+        for source in SUPPORTED_SOURCES
+        if source.is_active
+        and source.license_status == "approved"
+        and source.feed_url
+        and (not requested_key or source.key == requested_key)
     ]
-    can_publish = payload.publish and status.startswith("extracted")
-    article_id = await upsert_article_with_chunks(
-        session,
-        article_payload,
-        chunks,
-        extracted_text=text[:20000],
-        extraction_status=status,
-        publish=can_publish,
-    )
-    return {
-        "ok": True,
-        "article_id": article_id,
-        "published": can_publish,
-        "extraction_status": status,
-        "chunk_count": len(chunks),
+    if requested_key and not sources:
+        raise HTTPException(status_code=404, detail="업데이트할 언론사를 찾지 못했습니다.")
+
+    job_id = uuid.uuid4().hex
+    ARTICLE_REFRESH_JOBS[job_id] = {
+        "job_id": job_id,
+        "status": "queued",
+        "ok": False,
+        "source_key": requested_key,
+        "total_sources": len(sources),
+        "completed_sources": 0,
+        "current_source": "",
+        "saved": 0,
+        "skipped": 0,
+        "results": [],
+        "error": "",
+        "message": "콘텐츠 업데이트 대기 중입니다.",
+        "created_at": _utc_now_iso(),
+        "started_at": None,
+        "finished_at": None,
     }
+    _trim_article_refresh_jobs()
+    background_tasks.add_task(
+        _run_article_feed_refresh_job,
+        job_id,
+        [source.key for source in sources],
+        bool(payload.publish),
+        int(payload.max_items or 1),
+    )
+    return _refresh_job_snapshot(job_id)
+
+
+@router.get("/admin/article-feeds/refresh/{job_id}")
+async def article_feed_refresh_status(job_id: str, _user: CurrentUserDep):
+    _require_article_admin(_user)
+    return _refresh_job_snapshot(job_id)
 
 
 @router.patch("/admin/articles/{article_id}/publish")
@@ -549,7 +632,7 @@ async def article_sessions(session: SessionDep, _user: CurrentUserDep):
 async def article_session_detail(session_id: int, session: SessionDep, _user: CurrentUserDep):
     data = await get_article_session(session, _user["id"], session_id)
     if not data:
-        raise HTTPException(status_code=404, detail="기사 학습 세션을 찾을 수 없습니다.")
+        raise HTTPException(status_code=404, detail="뉴스 리딩 세션을 찾을 수 없습니다.")
     return data
 
 
@@ -559,7 +642,7 @@ async def article_study(session_id: int, session: SessionDep, _user: CurrentUser
     try:
         data = await get_article_session(session, _user["id"], session_id)
         if not data:
-            raise HTTPException(status_code=404, detail="기사 학습 세션을 찾을 수 없습니다.")
+            raise HTTPException(status_code=404, detail="뉴스 리딩 세션을 찾을 수 없습니다.")
         study = await run_in_threadpool(
             generate_article_study,
             data.get("title") or "",
@@ -586,7 +669,7 @@ async def article_ask(
     try:
         data = await get_article_session(session, _user["id"], session_id)
         if not data:
-            raise HTTPException(status_code=404, detail="기사 학습 세션을 찾을 수 없습니다.")
+            raise HTTPException(status_code=404, detail="뉴스 리딩 세션을 찾을 수 없습니다.")
         chunks = select_relevant_chunks(data.get("chunks") or [], question)
         answer = await run_in_threadpool(answer_article_question, question, chunks)
         return {"ok": True, "answer": answer, "evidence": chunks}
@@ -600,7 +683,7 @@ async def article_complete(session_id: int, session: SessionDep, _user: CurrentU
     try:
         data = await get_article_session(session, _user["id"], session_id)
         if not data:
-            raise HTTPException(status_code=404, detail="기사 학습 세션을 찾을 수 없습니다.")
+            raise HTTPException(status_code=404, detail="뉴스 리딩 세션을 찾을 수 없습니다.")
         completion = await run_in_threadpool(
             complete_article,
             data.get("title") or "",
@@ -628,7 +711,7 @@ async def article_save_words(
     usage_token = start_usage_capture()
     try:
         if not await get_article_session(session, _user["id"], session_id):
-            raise HTTPException(status_code=404, detail="기사 학습 세션을 찾을 수 없습니다.")
+            raise HTTPException(status_code=404, detail="뉴스 리딩 세션을 찾을 수 없습니다.")
         tag = (payload.tag or "뉴스").strip() or "뉴스"
         labels = await get_labels(session, _user["id"])
         if tag not in labels:

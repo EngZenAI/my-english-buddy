@@ -296,11 +296,13 @@ export const api = {
     }),
   articleDeleteSession: (id) =>
     jsonFetch(`/api/article-sessions/${id}`, { method: "DELETE" }),
-  articleAdminIngest: (payload) =>
-    jsonFetch("/api/admin/articles/ingest", {
+  articleAdminFeedRefresh: (payload = {}) =>
+    jsonFetch("/api/admin/article-feeds/refresh", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  articleAdminFeedRefreshStatus: (jobId) =>
+    jsonFetch(`/api/admin/article-feeds/refresh/${encodeURIComponent(jobId)}`),
   articleAdminPublish: (id, isPublished = true) =>
     jsonFetch(`/api/admin/articles/${id}/publish`, {
       method: "PATCH",

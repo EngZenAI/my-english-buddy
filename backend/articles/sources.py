@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from urllib.parse import urlparse
+
+
+@dataclass(frozen=True)
+class ArticleFeed:
+    url: str
+    topic: str = ""
+    scan_limit: int = 5
 
 
 @dataclass(frozen=True)
@@ -13,60 +19,70 @@ class ArticleSource:
     domains: tuple[str, ...]
     default_topic: str
     fallback_image_url: str
-
-
-TOPIC_FALLBACK_IMAGES = {
-    "world": "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1200&q=80",
-    "business": "https://images.unsplash.com/photo-1497366754035-f200968a6e72?auto=format&fit=crop&w=1200&q=80",
-    "technology": "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80",
-    "science": "https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=1200&q=80",
-    "health": "https://images.unsplash.com/photo-1505751172876-fa1923c5c528?auto=format&fit=crop&w=1200&q=80",
-    "culture": "https://images.unsplash.com/photo-1495020689067-958852a7765e?auto=format&fit=crop&w=1200&q=80",
-}
+    feed_url: str = ""
+    feeds: tuple[ArticleFeed, ...] = ()
+    site_url: str = ""
+    license_status: str = "pending"
+    is_active: bool = True
 
 
 SUPPORTED_SOURCES = (
     ArticleSource(
-        key="nasa",
-        name="NASA",
-        domains=("nasa.gov", "www.nasa.gov", "science.nasa.gov"),
-        default_topic="science",
-        fallback_image_url=TOPIC_FALLBACK_IMAGES["science"],
-    ),
-    ArticleSource(
-        key="un_news",
-        name="UN News",
-        domains=("news.un.org",),
+        key="korea_times",
+        name="The Korea Times",
+        domains=("koreatimes.co.kr", "www.koreatimes.co.kr"),
         default_topic="world",
-        fallback_image_url=TOPIC_FALLBACK_IMAGES["world"],
+        fallback_image_url="",
+        feed_url="https://feed.koreatimes.co.kr/k/world.xml",
+        feeds=(
+            ArticleFeed("https://feed.koreatimes.co.kr/k/world.xml", topic="world", scan_limit=3),
+            ArticleFeed("https://feed.koreatimes.co.kr/k/foreignaffairs.xml", topic="world", scan_limit=3),
+            ArticleFeed("https://feed.koreatimes.co.kr/k/southkorea.xml", topic="world", scan_limit=3),
+            ArticleFeed("https://feed.koreatimes.co.kr/k/economy.xml", topic="business", scan_limit=3),
+            ArticleFeed("https://feed.koreatimes.co.kr/k/business.xml", topic="business", scan_limit=3),
+            ArticleFeed("https://feed.koreatimes.co.kr/k/entertainment.xml", topic="entertainment", scan_limit=3),
+            ArticleFeed("https://feed.koreatimes.co.kr/k/opinion.xml", topic="opinion", scan_limit=3),
+            ArticleFeed("https://feed.koreatimes.co.kr/k/lifestyle.xml", topic="lifestyle", scan_limit=3),
+            ArticleFeed("https://feed.koreatimes.co.kr/k/sports.xml", topic="sports", scan_limit=3),
+        ),
+        site_url="https://www.koreatimes.co.kr/",
+        license_status="approved",
     ),
     ArticleSource(
-        key="world_bank",
-        name="World Bank Blogs",
-        domains=("blogs.worldbank.org", "www.worldbank.org"),
-        default_topic="business",
-        fallback_image_url=TOPIC_FALLBACK_IMAGES["business"],
+        key="bbc_world",
+        name="BBC World",
+        domains=("bbc.com", "www.bbc.com", "bbc.co.uk", "www.bbc.co.uk"),
+        default_topic="world",
+        fallback_image_url="",
+        feed_url="https://feeds.bbci.co.uk/news/world/rss.xml",
+        feeds=(
+            ArticleFeed("https://feeds.bbci.co.uk/news/world/rss.xml", topic="world", scan_limit=3),
+            ArticleFeed("https://feeds.bbci.co.uk/news/business/rss.xml", topic="business", scan_limit=3),
+            ArticleFeed(
+                "https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml",
+                topic="entertainment",
+                scan_limit=3,
+            ),
+            ArticleFeed("https://feeds.bbci.co.uk/news/health/rss.xml", topic="health", scan_limit=3),
+            ArticleFeed("https://feeds.bbci.co.uk/news/education/rss.xml", topic="education", scan_limit=3),
+            ArticleFeed("https://feeds.bbci.co.uk/news/politics/rss.xml", topic="world", scan_limit=3),
+            ArticleFeed("https://feeds.bbci.co.uk/news/technology/rss.xml", topic="technology", scan_limit=3),
+        ),
+        site_url="https://www.bbc.com/news/world",
+        license_status="approved",
     ),
     ArticleSource(
-        key="voa_learning",
-        name="VOA Learning English",
-        domains=("learningenglish.voanews.com",),
-        default_topic="culture",
-        fallback_image_url=TOPIC_FALLBACK_IMAGES["culture"],
-    ),
-    ArticleSource(
-        key="nih",
-        name="NIH",
-        domains=("nih.gov", "www.nih.gov"),
-        default_topic="health",
-        fallback_image_url=TOPIC_FALLBACK_IMAGES["health"],
-    ),
-    ArticleSource(
-        key="cdc",
-        name="CDC",
-        domains=("cdc.gov", "www.cdc.gov"),
-        default_topic="health",
-        fallback_image_url=TOPIC_FALLBACK_IMAGES["health"],
+        key="guardian_world",
+        name="The Guardian",
+        domains=("theguardian.com", "www.theguardian.com"),
+        default_topic="world",
+        fallback_image_url="",
+        feed_url="https://www.theguardian.com/world/rss",
+        feeds=(
+            ArticleFeed("https://www.theguardian.com/world/rss", topic="world", scan_limit=3),
+        ),
+        site_url="https://www.theguardian.com/world",
+        license_status="approved",
     ),
 )
 
@@ -79,23 +95,10 @@ def source_payloads() -> list[dict]:
             "domains": list(source.domains),
             "default_topic": source.default_topic,
             "fallback_image_url": source.fallback_image_url,
+            "feed_url": source.feed_url,
+            "site_url": source.site_url,
+            "license_status": source.license_status,
+            "is_active": source.is_active,
         }
         for source in SUPPORTED_SOURCES
     ]
-
-
-def match_supported_source(url: str) -> ArticleSource | None:
-    host = (urlparse(url or "").hostname or "").lower()
-    if not host:
-        return None
-    for source in SUPPORTED_SOURCES:
-        for domain in source.domains:
-            domain = domain.lower()
-            if host == domain or host.endswith(f".{domain}"):
-                return source
-    return None
-
-
-def fallback_image_for(topic: str) -> str:
-    return TOPIC_FALLBACK_IMAGES.get((topic or "").strip().lower()) or TOPIC_FALLBACK_IMAGES["world"]
-
