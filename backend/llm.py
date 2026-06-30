@@ -208,7 +208,7 @@ def _chunk_to_text(chunk) -> str:
     """LangChain stream chunk에서 표시 가능한 텍스트만 추출한다."""
     content = getattr(chunk, "content", chunk)
     if isinstance(content, str):
-      return content
+        return content
     if isinstance(content, list):
         parts = []
         for item in content:
@@ -220,33 +220,58 @@ def _chunk_to_text(chunk) -> str:
     return str(content or "")
 
 
+class _StreamUsageResponse:
+    def __init__(self, content: str, chunks: list):
+        self.content = content
+        self.usage_metadata = None
+        self.response_metadata = {"chunks": chunks}
+        for chunk in reversed(chunks):
+            usage = getattr(chunk, "usage_metadata", None)
+            if usage:
+                self.usage_metadata = usage
+                break
+            metadata = getattr(chunk, "response_metadata", None)
+            if metadata:
+                self.response_metadata = {
+                    **metadata,
+                    "chunks": chunks,
+                } if isinstance(metadata, dict) else {"metadata": metadata, "chunks": chunks}
+                break
+
+
 def _stream_tracked_llm(feature: str, operation: str, prompt_value) -> Iterator[str]:
     """LLM 토큰 스트림을 내보내고, 완료 후 사용량 이벤트를 기록한다."""
     model_name = get_active_model_name(feature)
     chunks: list[str] = []
+    response_chunks: list = []
     try:
         for chunk in get_llm(feature).stream(prompt_value):
+            response_chunks.append(chunk)
             text = _chunk_to_text(chunk)
             if not text:
                 continue
             chunks.append(text)
             yield text
     except Exception:
+        output = "".join(chunks)
         track_llm_usage(
             feature=feature,
             operation=operation,
             model_name=model_name,
             input_value=prompt_value,
-            output_value="".join(chunks),
+            response=_StreamUsageResponse(output, response_chunks),
+            output_value=output,
             success=False,
         )
         raise
+    output = "".join(chunks)
     track_llm_usage(
         feature=feature,
         operation=operation,
         model_name=model_name,
         input_value=prompt_value,
-        output_value="".join(chunks),
+        response=_StreamUsageResponse(output, response_chunks),
+        output_value=output,
     )
 
 

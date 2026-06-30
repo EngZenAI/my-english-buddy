@@ -92,13 +92,13 @@ def synthesize_roleplay_tts(
         },
     }
 
-    response = requests.post(
-        GEMINI_ENDPOINT.format(model=model),
-        params={"key": GEMINI_API_KEY},
-        json=payload,
-        timeout=60,
-    )
     try:
+        response = requests.post(
+            GEMINI_ENDPOINT.format(model=model),
+            params={"key": GEMINI_API_KEY},
+            json=payload,
+            timeout=60,
+        )
         response.raise_for_status()
         data = response.json()
         part = data["candidates"][0]["content"]["parts"][0]

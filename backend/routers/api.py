@@ -9,6 +9,7 @@
 import csv
 import io
 import json
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
@@ -76,6 +77,7 @@ from backend.services import (
 )
 
 router = APIRouter(prefix="/api", tags=["api"])
+logger = logging.getLogger(__name__)
 
 
 async def require_user(request: Request, session: SessionDep) -> dict:
@@ -198,8 +200,6 @@ class RoleplaySaveWordsIn(BaseModel):
 
 class RoleplayTtsIn(BaseModel):
     text: str
-    voice: str = DEFAULT_TTS_VOICE
-    model: str = DEFAULT_TTS_MODEL
 
 
 class SlangIn(BaseModel):
@@ -810,8 +810,9 @@ async def roleplay_continue_stream(
             new_history = [_norm_turn(h) for h in payload.history]
             new_history.append([payload.message, reply, coaching])
             yield _line({"type": "done", "history": new_history})
-        except Exception as exc:
-            yield _line({"type": "error", "message": str(exc)})
+        except Exception:
+            logger.exception("Roleplay streaming failed")
+            yield _line({"type": "error", "message": "AI 답변을 생성하지 못했어요. 잠시 후 다시 시도해주세요."})
         finally:
             await persist_usage_capture(usage_token, _user)
 
@@ -899,8 +900,8 @@ async def roleplay_tts(
     if not text_value:
         raise HTTPException(status_code=400, detail="읽을 문장이 없습니다.")
 
-    model = payload.model or DEFAULT_TTS_MODEL
-    voice = payload.voice or DEFAULT_TTS_VOICE
+    model = DEFAULT_TTS_MODEL
+    voice = DEFAULT_TTS_VOICE
     cache_key = roleplay_tts_cache_key(text_value, model=model, voice=voice)
 
     usage_token = start_usage_capture()
@@ -922,10 +923,11 @@ async def roleplay_tts(
                 "Cache-Control": "private, max-age=31536000, immutable",
             },
         )
-    except Exception as exc:
+    except Exception:
+        logger.exception("Roleplay TTS generation failed")
         raise HTTPException(
             status_code=502,
-            detail=f"AI 음성 생성에 실패했습니다. {exc}",
+            detail="AI 음성 생성에 실패했습니다. 잠시 후 다시 시도해주세요.",
         )
     finally:
         await persist_usage_capture(usage_token, _user)

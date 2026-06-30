@@ -219,6 +219,7 @@ export const api = {
   roleplayStart: (opts = {}) =>
     jsonFetch("/api/roleplay/start", {
       method: "POST",
+      signal: opts.signal,
       body: JSON.stringify({
         level: opts.level ?? "intermediate",
         scenario: opts.scenario ?? "general",
@@ -243,6 +244,7 @@ export const api = {
     const res = await fetch("/api/roleplay/continue/stream", {
       method: "POST",
       credentials: "same-origin",
+      signal: opts.signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         history,
@@ -322,8 +324,6 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         text,
-        voice: opts.voice ?? "Kore",
-        model: opts.model ?? "gemini-2.5-flash-preview-tts",
       }),
     });
     if (!res.ok) {

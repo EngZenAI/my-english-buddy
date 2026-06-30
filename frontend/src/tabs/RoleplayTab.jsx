@@ -183,6 +183,10 @@ export default function RoleplayTab({ user, onRequireLogin }) {
   const scrollRef = useRef(null);
   const recognitionRef = useRef(null);
   const audioRef = useRef(null);
+  const audioCleanupRef = useRef(null);
+  const startAbortRef = useRef(null);
+  const streamAbortRef = useRef(null);
+  const requestSeqRef = useRef(0);
 
   // 라벨은 태그 모드 칩 + 정리 페이지의 '단어장 추가' 태그 선택에 쓰이므로 로그인 시 로드.
   const labelsQuery = useQuery({
@@ -265,6 +269,15 @@ export default function RoleplayTab({ user, onRequireLogin }) {
     });
   };
 
+  const cancelRoleplayRequests = () => {
+    requestSeqRef.current += 1;
+    startAbortRef.current?.abort?.();
+    streamAbortRef.current?.abort?.();
+    startAbortRef.current = null;
+    streamAbortRef.current = null;
+    setStreaming(false);
+  };
+
   const stopListening = () => {
     recognitionRef.current?.stop?.();
     recognitionRef.current = null;
@@ -276,11 +289,14 @@ export default function RoleplayTab({ user, onRequireLogin }) {
       audioRef.current.pause();
       audioRef.current = null;
     }
+    audioCleanupRef.current?.();
+    audioCleanupRef.current = null;
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     setSpeaking(false);
   };
 
   const resetConversation = () => {
+    cancelRoleplayRequests();
     stopListening();
     stopSpeaking();
     setMessages([]);
@@ -297,18 +313,25 @@ export default function RoleplayTab({ user, onRequireLogin }) {
 
   useEffect(() => {
     return () => {
+      cancelRoleplayRequests();
       recognitionRef.current?.abort?.();
       audioRef.current?.pause?.();
+      audioCleanupRef.current?.();
       if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     };
   }, []);
 
   const startMutation = useMutation({
-    mutationFn: (cfg) => api.roleplayStart(cfg),
-    onSuccess: ({ history }) => {
+    mutationFn: ({ cfg, signal }) => api.roleplayStart({ ...cfg, signal }),
+    onSuccess: ({ history }, variables) => {
+      if (variables.requestId !== requestSeqRef.current) return;
+      startAbortRef.current = null;
       setMessages(pairsToMessages(history));
       if (isVoiceTab) playAssistantVoice(history?.[0]?.[1] || "");
       scrollToBottom();
+    },
+    onError: (_error, variables) => {
+      if (variables?.requestId === requestSeqRef.current) startAbortRef.current = null;
     },
   });
 
@@ -316,12 +339,17 @@ export default function RoleplayTab({ user, onRequireLogin }) {
   // title: 진행 중 칩에 보여줄 상황 제목(카드 라벨 / 자유주제 텍스트 / #태그).
   const start = ({ tag = null, situation = "", title = "" }) => {
     if (startMutation.isPending) return;
+    cancelRoleplayRequests();
+    const controller = new AbortController();
+    const requestId = requestSeqRef.current + 1;
+    requestSeqRef.current = requestId;
+    startAbortRef.current = controller;
     const cfg = { level, scenario: mode, tag, situation };
     setSession({ ...cfg, title });
     setMessages([]);
     setMsg("");
     setFinishNoticeDismissed(false);
-    startMutation.mutate(cfg);
+    startMutation.mutate({ cfg, requestId, signal: controller.signal });
   };
 
   const changeLevel = (l) => {
@@ -367,12 +395,17 @@ export default function RoleplayTab({ user, onRequireLogin }) {
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     let handledError = false;
+    let cleaned = false;
     const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
       URL.revokeObjectURL(url);
       if (audioRef.current === audio) audioRef.current = null;
+      if (audioCleanupRef.current === cleanup) audioCleanupRef.current = null;
     };
 
     audioRef.current = audio;
+    audioCleanupRef.current = cleanup;
     audio.onplay = () => {
       setSpeaking(true);
       setTtsSource(source);
@@ -454,6 +487,11 @@ export default function RoleplayTab({ user, onRequireLogin }) {
     const pairs = messagesToPairs(messages);
     // 다음 응답이 정리 구간에 도달하면 AI가 자연스럽게 마무리하도록 wrapUp 전달.
     const wrapUp = userTurns + 1 >= WRAP_UP_TURN;
+    streamAbortRef.current?.abort?.();
+    const controller = new AbortController();
+    const requestId = requestSeqRef.current + 1;
+    requestSeqRef.current = requestId;
+    streamAbortRef.current = controller;
     setMessages((prev) => [
       ...prev,
       { role: "user", text },
@@ -468,9 +506,10 @@ export default function RoleplayTab({ user, onRequireLogin }) {
       const { history } = await api.roleplayContinueStream(
         pairs,
         text,
-        { ...(session || {}), wrapUp },
+        { ...(session || {}), wrapUp, signal: controller.signal },
         {
           onDelta: (delta) => {
+            if (requestId !== requestSeqRef.current) return;
             setMessages((prev) => {
               const next = [...prev];
               const last = next[next.length - 1];
@@ -486,6 +525,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
             scrollToBottom();
           },
           onCoaching: (coaching) => {
+            if (requestId !== requestSeqRef.current) return;
             setMessages((prev) => {
               const next = [...prev];
               const last = next[next.length - 1];
@@ -498,6 +538,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
           },
         }
       );
+      if (requestId !== requestSeqRef.current) return;
       setMessages(pairsToMessages(history));
       if (speakReply) {
         const lastTurn = history?.[history.length - 1];
@@ -505,6 +546,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
       }
       scrollToBottom();
     } catch (_error) {
+      if (requestId !== requestSeqRef.current || controller.signal.aborted) return;
       setMessages((prev) => {
         const next = [...prev];
         if (next.length && next[next.length - 1].role === "bot") next.pop();
@@ -514,7 +556,10 @@ export default function RoleplayTab({ user, onRequireLogin }) {
       setMsg((current) => current || text);
       if (speakReply) setVoiceTranscript((current) => current || text);
     } finally {
-      setStreaming(false);
+      if (requestId === requestSeqRef.current) {
+        streamAbortRef.current = null;
+        setStreaming(false);
+      }
     }
   };
 
