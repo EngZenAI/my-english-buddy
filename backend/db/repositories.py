@@ -2108,7 +2108,9 @@ def _iso_or_none(value) -> str | None:
     if not value:
         return None
     if isinstance(value, datetime):
-        return value.isoformat(timespec="seconds") + "Z"
+        if value.tzinfo is not None and value.utcoffset() == timedelta(0):
+            return value.replace(tzinfo=None).isoformat(timespec="seconds") + "Z"
+        return value.isoformat(timespec="seconds")
     return str(value)
 
 

@@ -129,21 +129,25 @@ def _lead_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not chunks:
         return []
     chunk = chunks[0] or {}
-    text = (
-        chunk.get("lead")
-        or chunk.get("lead_text")
-        or chunk.get("description")
-        or chunk.get("content_snippet")
-        or chunk.get("text")
-        or ""
-    )
-    if not str(text).strip():
+    text = ""
+    for candidate in (
+        chunk.get("lead"),
+        chunk.get("lead_text"),
+        chunk.get("description"),
+        chunk.get("content_snippet"),
+        chunk.get("text"),
+    ):
+        candidate_text = str(candidate or "").strip()
+        if candidate_text:
+            text = candidate_text
+            break
+    if not text:
         return []
     return [
         {
             "chunk_id": chunk.get("id") or 1,
             "chunk_index": chunk.get("chunk_index") or 0,
-            "text": str(text)[:1400],
+            "text": text[:1400],
         }
     ]
 

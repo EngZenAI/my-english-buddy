@@ -396,6 +396,7 @@ def fetch_feed_entries(source: ArticleSource, timeout: int = 8, max_items: int =
     if source.license_status != "approved" or not source.is_active or not feeds:
         return []
     entries: list[dict[str, Any]] = []
+    failed_feeds: list[str] = []
     for feed in feeds:
         try:
             response = requests.get(
@@ -417,7 +418,8 @@ def fetch_feed_entries(source: ArticleSource, timeout: int = 8, max_items: int =
                     forced_topic=feed.topic,
                 )
             )
-        except Exception as exc:
+        except (requests.RequestException, ValueError) as exc:
+            failed_feeds.append(feed.url)
             logger.warning(
                 "article_feed_fetch_failed source=%s feed_url=%s error=%s",
                 source.key,
@@ -425,6 +427,10 @@ def fetch_feed_entries(source: ArticleSource, timeout: int = 8, max_items: int =
                 exc,
             )
             continue
+    if len(failed_feeds) == len(feeds):
+        raise RuntimeError(
+            f"All feeds failed for source {source.key}: {', '.join(failed_feeds)}"
+        )
     entries = _limit_by_topic(entries, per_topic_limit=max(1, max_items))
     for entry in entries:
         if not entry.get("image_url"):
