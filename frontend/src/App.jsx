@@ -245,7 +245,7 @@ export default function App() {
         onLogout={logout}
       />
 
-      <main className="flex-1 min-h-0 overflow-y-auto px-4 md:px-8 py-6 pb-24 md:pb-6">
+      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-6 pb-24 md:px-8 md:pb-6">
         {authLoading && (
           <LoadingPanel message="인증 상태를 확인하고 있습니다." />
         )}
