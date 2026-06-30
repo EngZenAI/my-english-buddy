@@ -1,10 +1,21 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { Mic, MicOff, RotateCcw, Send, Volume2, VolumeX } from "lucide-react";
 import { api } from "../api";
 import { queryKeys } from "../queryClient";
-import { EmptyState, LoadingSpinner, SkeletonBlock } from "../components/AsyncState";
+import { EmptyState, SkeletonBlock } from "../components/AsyncState";
 import MemberNotice from "../components/MemberNotice";
 import LearningNotesTab from "./LearningNotesTab";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Message } from "@/components/ui/message";
+import { MessageScroller } from "@/components/ui/message-scroller";
+import {
+  getCachedRoleplayAudio,
+  normalizeTtsText,
+  roleplayTtsCacheKey,
+  saveCachedRoleplayAudio,
+} from "../lib/roleplayAudioCache";
 
 // ──────────────────────────────────────────────────────────────────────
 // 롤플레잉 = 실전 영어 회화 연습 (단어 복습이 아님).
@@ -15,6 +26,9 @@ import LearningNotesTab from "./LearningNotesTab";
 // ──────────────────────────────────────────────────────────────────────
 
 // 백엔드 history 항목은 [user, bot, coaching] (coaching은 봇 답변에 붙는 한국어 코칭).
+const ROLEPLAY_TTS_MODEL = "gemini-2.5-flash-preview-tts";
+const ROLEPLAY_TTS_VOICE = "Kore";
+
 function pairsToMessages(pairs) {
   const out = [];
   for (const item of pairs) {
@@ -147,11 +161,17 @@ const GENERAL_CARDS = [
 ];
 
 export default function RoleplayTab({ user, onRequireLogin }) {
-  const [subTab, setSubTab] = useState("play"); // play | notes
+  const [subTab, setSubTab] = useState("play"); // play | voice | notes
   const [level, setLevel] = useState("intermediate");
   const [mode, setMode] = useState("opic");
   const [messages, setMessages] = useState([]);
   const [msg, setMsg] = useState("");
+  const [voiceTranscript, setVoiceTranscript] = useState("");
+  const [listening, setListening] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const [ttsSource, setTtsSource] = useState("idle"); // idle | generating | cache | generated | browser | error
+  const [voiceError, setVoiceError] = useState("");
+  const [autoSpeak, setAutoSpeak] = useState(true);
   const [freeTopic, setFreeTopic] = useState("");
   const [session, setSession] = useState(null); // 시작 시 고정된 {level, scenario, tag, situation}
   const [summary, setSummary] = useState(null); // 종료 후 {summary, expressions, vocab}
@@ -159,7 +179,14 @@ export default function RoleplayTab({ user, onRequireLogin }) {
   const [saveTag, setSaveTag] = useState(""); // 어휘 저장 시 태그
   const [savedCount, setSavedCount] = useState(null); // 저장 결과 안내
   const [finishNoticeDismissed, setFinishNoticeDismissed] = useState(false);
+  const [streaming, setStreaming] = useState(false);
   const scrollRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const audioRef = useRef(null);
+  const audioCleanupRef = useRef(null);
+  const startAbortRef = useRef(null);
+  const streamAbortRef = useRef(null);
+  const requestSeqRef = useRef(0);
 
   // 라벨은 태그 모드 칩 + 정리 페이지의 '단어장 추가' 태그 선택에 쓰이므로 로그인 시 로드.
   const labelsQuery = useQuery({
@@ -189,46 +216,122 @@ export default function RoleplayTab({ user, onRequireLogin }) {
     mode === "tag" && (labelsQuery.isLoading || wordsQuery.isLoading);
 
   const active = messages.length > 0;
+  const isVoiceTab = subTab === "voice";
+  const latestAssistantText = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i].role === "bot" && messages[i].text) return messages[i].text;
+    }
+    return "";
+  }, [messages]);
+  const voicePhase = streaming
+    ? {
+        title: "AI가 답변을 작성 중입니다",
+        description: "텍스트 답변이 먼저 도착하고, 이어서 AI 음성을 준비합니다.",
+        tone: "primary",
+      }
+    : ttsSource === "generating"
+      ? {
+          title: "AI 음성을 생성 중입니다",
+          description: "처음 듣는 문장은 몇 초 걸릴 수 있습니다. 준비되면 자동으로 재생됩니다.",
+          tone: "primary",
+        }
+      : speaking
+        ? {
+            title:
+              ttsSource === "browser"
+                ? "기기 내장 음성으로 재생 중입니다"
+                : "AI 음성을 재생 중입니다",
+            description:
+              ttsSource === "cache"
+                ? "AI 답변을 다시 읽고 있습니다."
+                : ttsSource === "browser"
+                  ? "AI 음성 대신 브라우저/기기 내장 음성을 사용 중입니다."
+                  : "AI 답변을 읽고 있습니다.",
+            tone: ttsSource === "browser" ? "warning" : "primary",
+          }
+        : listening
+          ? {
+              title: "듣고 있습니다",
+              description: "말한 내용을 전송 전에 확인할 수 있습니다.",
+              tone: "destructive",
+            }
+          : {
+              title: active ? "말할 준비가 됐습니다" : "상황을 먼저 선택하세요",
+              description: active
+                ? "말하기를 누르고 영어로 답하세요. AI 답변은 음성으로 재생됩니다."
+                : "상황을 선택하면 AI가 첫 장면을 열고 음성으로 읽어줍니다.",
+              tone: "muted",
+            };
 
   const scrollToBottom = () => {
     requestAnimationFrame(() => {
-      if (scrollRef.current)
-        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      scrollRef.current?.scrollToBottom?.();
     });
   };
 
+  const cancelRoleplayRequests = () => {
+    requestSeqRef.current += 1;
+    startAbortRef.current?.abort?.();
+    streamAbortRef.current?.abort?.();
+    startAbortRef.current = null;
+    streamAbortRef.current = null;
+    setStreaming(false);
+  };
+
+  const stopListening = () => {
+    recognitionRef.current?.stop?.();
+    recognitionRef.current = null;
+    setListening(false);
+  };
+
+  const stopSpeaking = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    audioCleanupRef.current?.();
+    audioCleanupRef.current = null;
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    setSpeaking(false);
+  };
+
   const resetConversation = () => {
+    cancelRoleplayRequests();
+    stopListening();
+    stopSpeaking();
     setMessages([]);
     setSession(null);
     setMsg("");
+    setVoiceTranscript("");
+    setTtsSource("idle");
+    setVoiceError("");
     setSummary(null);
     setPickedVocab(new Set());
     setSavedCount(null);
     setFinishNoticeDismissed(false);
   };
 
-  const startMutation = useMutation({
-    mutationFn: (cfg) => api.roleplayStart(cfg),
-    onSuccess: ({ history }) => {
-      setMessages(pairsToMessages(history));
-      scrollToBottom();
-    },
-  });
+  useEffect(() => {
+    return () => {
+      cancelRoleplayRequests();
+      recognitionRef.current?.abort?.();
+      audioRef.current?.pause?.();
+      audioCleanupRef.current?.();
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    };
+  }, []);
 
-  const sendMutation = useMutation({
-    mutationFn: ({ pairs, text, wrapUp }) =>
-      api.roleplayContinue(pairs, text, { ...(session || {}), wrapUp }),
-    onSuccess: ({ history }) => {
+  const startMutation = useMutation({
+    mutationFn: ({ cfg, signal }) => api.roleplayStart({ ...cfg, signal }),
+    onSuccess: ({ history }, variables) => {
+      if (variables.requestId !== requestSeqRef.current) return;
+      startAbortRef.current = null;
       setMessages(pairsToMessages(history));
+      if (isVoiceTab) playAssistantVoice(history?.[0]?.[1] || "");
       scrollToBottom();
     },
-    onError: (_error, { text }) => {
-      setMessages((prev) => {
-        const next = [...prev];
-        if (next.length && next[next.length - 1].role === "user") next.pop();
-        return next;
-      });
-      setMsg((current) => current || text);
+    onError: (_error, variables) => {
+      if (variables?.requestId === requestSeqRef.current) startAbortRef.current = null;
     },
   });
 
@@ -236,12 +339,17 @@ export default function RoleplayTab({ user, onRequireLogin }) {
   // title: 진행 중 칩에 보여줄 상황 제목(카드 라벨 / 자유주제 텍스트 / #태그).
   const start = ({ tag = null, situation = "", title = "" }) => {
     if (startMutation.isPending) return;
+    cancelRoleplayRequests();
+    const controller = new AbortController();
+    const requestId = requestSeqRef.current + 1;
+    requestSeqRef.current = requestId;
+    startAbortRef.current = controller;
     const cfg = { level, scenario: mode, tag, situation };
     setSession({ ...cfg, title });
     setMessages([]);
     setMsg("");
     setFinishNoticeDismissed(false);
-    startMutation.mutate(cfg);
+    startMutation.mutate({ cfg, requestId, signal: controller.signal });
   };
 
   const changeLevel = (l) => {
@@ -264,18 +372,241 @@ export default function RoleplayTab({ user, onRequireLogin }) {
   const showFinishNotice =
     shouldSuggestFinish && (!finishNoticeDismissed || reachedHardLimit);
 
-  const send = () => {
-    if (!msg.trim() || sendMutation.isPending) return;
+  const speakWithBrowser = (text) => {
+    const clean = (text || "").trim();
+    if (!clean || !("speechSynthesis" in window)) return false;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(clean);
+    utterance.lang = "en-US";
+    utterance.rate = 0.95;
+    setTtsSource("browser");
+    utterance.onstart = () => setSpeaking(true);
+    utterance.onend = () => setSpeaking(false);
+    utterance.onerror = () => {
+      setSpeaking(false);
+      setTtsSource("error");
+      setVoiceError("기기 내장 음성으로도 답변을 읽지 못했어요.");
+    };
+    window.speechSynthesis.speak(utterance);
+    return true;
+  };
+
+  const playAudioBlob = async (blob, source, fallbackText) => {
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    let handledError = false;
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      URL.revokeObjectURL(url);
+      if (audioRef.current === audio) audioRef.current = null;
+      if (audioCleanupRef.current === cleanup) audioCleanupRef.current = null;
+    };
+
+    audioRef.current = audio;
+    audioCleanupRef.current = cleanup;
+    audio.onplay = () => {
+      setSpeaking(true);
+      setTtsSource(source);
+    };
+    audio.onended = () => {
+      setSpeaking(false);
+      cleanup();
+    };
+    audio.onerror = () => {
+      handledError = true;
+      setSpeaking(false);
+      cleanup();
+      setVoiceError(
+        source === "cache"
+          ? "브라우저에 저장된 AI 음성을 재생하지 못해 기기 내장 음성으로 전환했어요."
+          : "AI 음성을 재생하지 못해 기기 내장 음성으로 전환했어요.",
+      );
+      speakWithBrowser(fallbackText);
+    };
+
+    try {
+      await audio.play();
+    } catch (error) {
+      if (handledError) return;
+      setSpeaking(false);
+      cleanup();
+      throw error;
+    }
+  };
+
+  const playAssistantVoice = async (text, { force = false } = {}) => {
+    const clean = normalizeTtsText(text);
+    if ((!autoSpeak && !force) || !clean) return;
+    stopSpeaking();
+    setVoiceError("");
+    setTtsSource("generating");
+    try {
+      const cacheKey = await roleplayTtsCacheKey(clean, {
+        model: ROLEPLAY_TTS_MODEL,
+        voice: ROLEPLAY_TTS_VOICE,
+      });
+      const cached = await getCachedRoleplayAudio(cacheKey).catch(() => null);
+      if (cached?.blob) {
+        await playAudioBlob(cached.blob, "cache", clean);
+        return;
+      }
+
+      const result = await api.roleplayTtsAudio(clean, {
+        model: ROLEPLAY_TTS_MODEL,
+        voice: ROLEPLAY_TTS_VOICE,
+      });
+      await saveCachedRoleplayAudio({
+        key: result.cacheKey || cacheKey,
+        blob: result.blob,
+        mimeType: result.mimeType,
+        model: result.model,
+        voice: result.voice,
+        text: clean,
+      }).catch(() => {});
+      await playAudioBlob(result.blob, "generated", clean);
+    } catch (error) {
+      const fallbackStarted = speakWithBrowser(clean);
+      const detail = error?.message
+        ? ` (${error.message.replace(/\s+/g, " ").slice(0, 120)})`
+        : "";
+      if (fallbackStarted) {
+        setVoiceError(`AI 음성 생성에 실패해 기기 내장 음성으로 재생 중입니다.${detail}`);
+      } else {
+        setTtsSource("error");
+        setVoiceError(`AI 음성 생성에 실패했고, 이 브라우저는 기기 내장 음성도 지원하지 않아요.${detail}`);
+      }
+    }
+  };
+
+  const sendText = async (inputText, { speakReply = false } = {}) => {
+    const text = (inputText || "").trim();
+    if (!text || streaming) return;
     if (reachedHardLimit) return;
-    const text = msg;
     const pairs = messagesToPairs(messages);
     // 다음 응답이 정리 구간에 도달하면 AI가 자연스럽게 마무리하도록 wrapUp 전달.
     const wrapUp = userTurns + 1 >= WRAP_UP_TURN;
-    setMessages((prev) => [...prev, { role: "user", text }]);
+    streamAbortRef.current?.abort?.();
+    const controller = new AbortController();
+    const requestId = requestSeqRef.current + 1;
+    requestSeqRef.current = requestId;
+    streamAbortRef.current = controller;
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", text },
+      { role: "bot", text: "", coaching: "", streaming: true },
+    ]);
     setMsg("");
+    setVoiceTranscript("");
     setFinishNoticeDismissed(false);
-    sendMutation.mutate({ pairs, text, wrapUp });
+    setStreaming(true);
     scrollToBottom();
+    try {
+      const { history } = await api.roleplayContinueStream(
+        pairs,
+        text,
+        { ...(session || {}), wrapUp, signal: controller.signal },
+        {
+          onDelta: (delta) => {
+            if (requestId !== requestSeqRef.current) return;
+            setMessages((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last?.role === "bot") {
+                next[next.length - 1] = {
+                  ...last,
+                  text: `${last.text || ""}${delta}`,
+                  streaming: true,
+                };
+              }
+              return next;
+            });
+            scrollToBottom();
+          },
+          onCoaching: (coaching) => {
+            if (requestId !== requestSeqRef.current) return;
+            setMessages((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last?.role === "bot") {
+                next[next.length - 1] = { ...last, coaching, streaming: true };
+              }
+              return next;
+            });
+            scrollToBottom();
+          },
+        }
+      );
+      if (requestId !== requestSeqRef.current) return;
+      setMessages(pairsToMessages(history));
+      if (speakReply) {
+        const lastTurn = history?.[history.length - 1];
+        playAssistantVoice(lastTurn?.[1] || "");
+      }
+      scrollToBottom();
+    } catch (_error) {
+      if (requestId !== requestSeqRef.current || controller.signal.aborted) return;
+      setMessages((prev) => {
+        const next = [...prev];
+        if (next.length && next[next.length - 1].role === "bot") next.pop();
+        if (next.length && next[next.length - 1].role === "user") next.pop();
+        return next;
+      });
+      setMsg((current) => current || text);
+      if (speakReply) setVoiceTranscript((current) => current || text);
+    } finally {
+      if (requestId === requestSeqRef.current) {
+        streamAbortRef.current = null;
+        setStreaming(false);
+      }
+    }
+  };
+
+  const send = () => sendText(msg);
+
+  const startListening = () => {
+    if (!user || !active || starting || streaming || reachedHardLimit) return;
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setVoiceError("이 브라우저는 음성 인식을 지원하지 않아요. Chrome 또는 Edge에서 사용해주세요.");
+      return;
+    }
+    stopSpeaking();
+    setVoiceError("");
+    setVoiceTranscript("");
+    const recognition = new SpeechRecognition();
+    recognition.lang = "en-US";
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.onresult = (event) => {
+      let transcript = "";
+      for (let i = 0; i < event.results.length; i += 1) {
+        transcript += event.results[i][0]?.transcript || "";
+      }
+      setVoiceTranscript(transcript.trim());
+    };
+    recognition.onerror = (event) => {
+      setVoiceError(
+        event.error === "not-allowed"
+          ? "마이크 권한이 필요합니다. 브라우저 권한을 허용해주세요."
+          : "음성 인식 중 문제가 생겼어요. 다시 시도해주세요."
+      );
+      setListening(false);
+    };
+    recognition.onend = () => {
+      setListening(false);
+      recognitionRef.current = null;
+    };
+    recognitionRef.current = recognition;
+    setListening(true);
+    recognition.start();
+  };
+
+  const sendVoice = () => {
+    stopListening();
+    sendText(voiceTranscript, { speakReply: true });
   };
 
   // 대화 종료 → 요약 + 표현/어휘 추출
@@ -318,7 +649,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
   };
 
   const starting = startMutation.isPending;
-  const sending = sendMutation.isPending;
+  const sending = streaming;
   const summarizing = summaryMutation.isPending;
 
   const cards = mode === "opic" ? OPIC_CARDS : GENERAL_CARDS;
@@ -334,10 +665,11 @@ export default function RoleplayTab({ user, onRequireLogin }) {
 
       {!user && <MemberNotice feature="롤플레잉" onRequireLogin={onRequireLogin} />}
 
-      {/* 롤플레잉 내부 탭: 대화 / 학습노트 */}
+      {/* 롤플레잉 내부 탭: 대화 / 음성채팅 / 학습노트 */}
       <div className="mt-4 flex gap-1 border-b border-slate-200">
         {[
           { id: "play", label: "대화하기" },
+          { id: "voice", label: "음성채팅(Beta)" },
           { id: "notes", label: "학습노트" },
         ].map((t) => (
           <button
@@ -361,7 +693,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
         </div>
       )}
 
-      {subTab === "play" && (
+      {(subTab === "play" || subTab === "voice") && (
         <>
       {/* ── 상단 선택: 레벨 + 모드 ───────────────────────── */}
       <div className="mt-4 space-y-2 mb-3">
@@ -532,7 +864,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
             {session.title && (
               <span
                 title={session.title}
-                className="rounded-full bg-brand-50 px-2 py-0.5 text-brand-700 max-w-[220px] truncate"
+                className="max-w-[220px] truncate rounded-full bg-brand-50 px-2 py-0.5 text-brand-700"
               >
                 {session.title}
               </span>
@@ -552,12 +884,16 @@ export default function RoleplayTab({ user, onRequireLogin }) {
                 {summarizing ? "정리 중…" : "대화 마무리 & 정리"}
               </button>
             )}
-            <button
+            <Button
+              type="button"
+              variant="link"
+              size="sm"
               onClick={resetConversation}
-              className="text-xs text-slate-500 hover:text-slate-700 underline whitespace-nowrap"
+              className="h-7 px-1 text-xs text-slate-500 hover:text-slate-700"
             >
+              <RotateCcw className="h-3.5 w-3.5" />
               다른 상황 고르기
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -618,10 +954,74 @@ export default function RoleplayTab({ user, onRequireLogin }) {
         </div>
       )}
 
+      {isVoiceTab && !summary && (
+        <div
+          className={`mb-3 rounded-lg border px-4 py-3 ${
+            voicePhase.tone === "destructive"
+              ? "border-rose-200 bg-rose-50"
+              : voicePhase.tone === "warning"
+                ? "border-amber-200 bg-amber-50"
+                : voicePhase.tone === "primary"
+                  ? "border-brand-200 bg-brand-50"
+                  : "border-slate-200 bg-white"
+          }`}
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p
+                className={`text-sm font-semibold ${
+                  voicePhase.tone === "destructive"
+                    ? "text-rose-800"
+                    : voicePhase.tone === "warning"
+                      ? "text-amber-800"
+                      : voicePhase.tone === "primary"
+                        ? "text-brand-700"
+                        : "text-slate-700"
+                }`}
+              >
+                {voicePhase.title}
+              </p>
+              <p
+                className={`mt-1 text-xs ${
+                  voicePhase.tone === "destructive"
+                    ? "text-rose-700"
+                    : voicePhase.tone === "warning"
+                      ? "text-amber-700"
+                      : voicePhase.tone === "primary"
+                        ? "text-brand-700"
+                        : "text-slate-500"
+                }`}
+              >
+                {voicePhase.description}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              {speaking && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={stopSpeaking}
+                  className="h-8"
+                >
+                  <VolumeX className="h-4 w-4" />
+                  멈춤
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isVoiceTab && (
+        <p className="mb-1.5 text-xs font-medium text-slate-500">대화 기록</p>
+      )}
+
       {/* ── 채팅 영역 ─────────────────────────────────────── */}
-      <div
+      <MessageScroller
         ref={scrollRef}
-        className="h-[380px] overflow-y-auto border border-slate-200 rounded-lg bg-white p-3 space-y-3"
+        className={isVoiceTab ? "h-[280px]" : "h-[420px]"}
+        contentClassName="min-h-full"
       >
         {starting && (
           <div className="space-y-3">
@@ -643,46 +1043,45 @@ export default function RoleplayTab({ user, onRequireLogin }) {
           </div>
         )}
         {!starting &&
-          messages.map((m, i) =>
-            m.role === "user" ? (
-              <div key={i} className="flex justify-end">
-                <div className="bg-brand-600 text-white rounded-2xl rounded-br-sm px-3 py-2
-                                text-sm max-w-[80%] whitespace-pre-wrap">
-                  {m.text}
-                </div>
-              </div>
-            ) : (
-              <div key={i} className="space-y-1">
-                <div className="flex justify-start">
-                  <div className="bg-slate-100 text-slate-800 rounded-2xl rounded-bl-sm px-3 py-2
-                                  text-sm max-w-[80%] whitespace-pre-wrap">
-                    {m.text}
+          messages.map((m, i) => {
+            const canReplay =
+              isVoiceTab && m.role === "bot" && m.text && !m.streaming;
+            return (
+              <Message
+                key={`${m.role}-${i}`}
+                role={m.role === "user" ? "user" : "assistant"}
+                coaching={m.coaching}
+                loading={m.streaming && !m.text}
+              >
+                {canReplay ? (
+                  <div className="flex items-start gap-2">
+                    <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
+                      {m.text}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => playAssistantVoice(m.text, { force: true })}
+                      className="-mr-1 -mt-1 h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+                      aria-label="이 답변 다시 듣기"
+                      title="다시 듣기"
+                    >
+                      <Volume2 className="h-4 w-4" />
+                    </Button>
                   </div>
-                </div>
-                {m.coaching && (
-                  <div className="flex justify-start">
-                    <div className="max-w-[80%] rounded-lg border border-amber-200 bg-amber-50
-                                    px-3 py-1.5 text-xs text-amber-800 whitespace-pre-wrap">
-                      💡 {m.coaching}
-                    </div>
-                  </div>
+                ) : (
+                  m.text
                 )}
-              </div>
-            ),
-          )}
-        {sending && (
-          <div className="flex justify-start">
-            <div className="bg-slate-100 text-slate-500 rounded-2xl rounded-bl-sm px-3 py-2 text-sm">
-              <LoadingSpinner label="답변 작성 중" />
-            </div>
-          </div>
-        )}
-      </div>
+              </Message>
+            );
+          })}
+      </MessageScroller>
 
       {/* 입력창: 대화 시작 후에만 활성화 (정리 화면에선 숨김) */}
-      {!summary && (
+      {!summary && !isVoiceTab && (
         <div className="flex items-center gap-2 mt-3">
-          <input
+          <Input
             value={msg}
             onChange={(e) => setMsg(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && send()}
@@ -694,17 +1093,87 @@ export default function RoleplayTab({ user, onRequireLogin }) {
                   ? "영어로 대답해봐요! (엔터로 전송)"
                   : "위에서 상황을 먼저 선택하세요"
             }
-            className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm
-                       disabled:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-200"
+            className="h-11 flex-1 bg-background disabled:bg-muted"
           />
-          <button
+          <Button
+            type="button"
             onClick={send}
             disabled={sending || !user || !active || reachedHardLimit}
-            className="rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-60
-                       disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold whitespace-nowrap"
+            className="h-11 shrink-0 px-4"
           >
-            전송 ➤
-          </button>
+            <Send className="h-4 w-4" />
+            전송
+          </Button>
+        </div>
+      )}
+
+      {!summary && isVoiceTab && (
+        <div className="mt-3 rounded-lg border border-border bg-background p-3">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center">
+            <Button
+              type="button"
+              variant={listening ? "destructive" : "default"}
+              onClick={listening ? stopListening : startListening}
+              disabled={!user || !active || starting || streaming || reachedHardLimit}
+              className="h-11 shrink-0"
+            >
+              {listening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+              {listening ? "녹음 중지" : "말하기"}
+            </Button>
+            <Input
+              value={voiceTranscript}
+              onChange={(e) => setVoiceTranscript(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && sendVoice()}
+              disabled={!user || !active || starting || streaming || reachedHardLimit}
+              placeholder={
+                reachedHardLimit
+                  ? "토큰 보호를 위해 대화를 마무리해주세요"
+                  : active
+                    ? "인식된 문장이 여기에 표시됩니다"
+                    : "위에서 상황을 먼저 선택하세요"
+              }
+              className="h-11 flex-1 bg-background disabled:bg-muted"
+            />
+            <Button
+              type="button"
+              onClick={sendVoice}
+              disabled={
+                streaming ||
+                !user ||
+                !active ||
+                reachedHardLimit ||
+                !voiceTranscript.trim()
+              }
+              className="h-11 shrink-0 px-4"
+            >
+              <Send className="h-4 w-4" />
+              전송
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setAutoSpeak((v) => !v)}
+              className="h-11 shrink-0"
+            >
+              {autoSpeak ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+              {autoSpeak ? "읽기 켬" : "읽기 끔"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() =>
+                speaking ? stopSpeaking() : playAssistantVoice(latestAssistantText, { force: true })
+              }
+              disabled={!latestAssistantText || streaming}
+              className="h-11 shrink-0"
+            >
+              {speaking ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+              {speaking ? "AI 멈춤" : "AI 다시 듣기"}
+            </Button>
+          </div>
+          {voiceError && (
+            <p className="mt-2 text-xs font-medium text-rose-600">{voiceError}</p>
+          )}
         </div>
       )}
 

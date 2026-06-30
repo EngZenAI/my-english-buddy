@@ -219,6 +219,7 @@ export const api = {
   roleplayStart: (opts = {}) =>
     jsonFetch("/api/roleplay/start", {
       method: "POST",
+      signal: opts.signal,
       body: JSON.stringify({
         level: opts.level ?? "intermediate",
         scenario: opts.scenario ?? "general",
@@ -239,6 +240,64 @@ export const api = {
         wrap_up: opts.wrapUp ?? false,
       }),
     }),
+  roleplayContinueStream: async (history, message, opts = {}, handlers = {}) => {
+    const res = await fetch("/api/roleplay/continue/stream", {
+      method: "POST",
+      credentials: "same-origin",
+      signal: opts.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        history,
+        message,
+        level: opts.level ?? "intermediate",
+        scenario: opts.scenario ?? "general",
+        tag: opts.tag ?? null,
+        situation: opts.situation ?? "",
+        wrap_up: opts.wrapUp ?? false,
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`${res.status} ${text}`);
+    }
+    if (!res.body) {
+      throw new Error("Streaming response is not available in this browser.");
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let doneEvent = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const event = JSON.parse(line);
+        if (event.type === "delta") handlers.onDelta?.(event.text || "");
+        if (event.type === "coaching") handlers.onCoaching?.(event.text || "");
+        if (event.type === "done") doneEvent = event;
+        if (event.type === "error") throw new Error(event.message || "Streaming failed.");
+      }
+
+      if (done) break;
+    }
+
+    if (buffer.trim()) {
+      const event = JSON.parse(buffer);
+      if (event.type === "delta") handlers.onDelta?.(event.text || "");
+      if (event.type === "coaching") handlers.onCoaching?.(event.text || "");
+      if (event.type === "done") doneEvent = event;
+      if (event.type === "error") throw new Error(event.message || "Streaming failed.");
+    }
+
+    if (!doneEvent) throw new Error("Streaming ended before completion.");
+    return { history: doneEvent.history || [] };
+  },
   // 대화 종료 후 정리: 요약 + 유용 표현 + 유용 어휘 추출
   roleplaySummary: (history, opts = {}) =>
     jsonFetch("/api/roleplay/summary", {
@@ -258,6 +317,29 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ items, tag }),
     }),
+  roleplayTtsAudio: async (text, opts = {}) => {
+    const res = await fetch("/api/roleplay/tts", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`${res.status} ${detail}`);
+    }
+    const blob = await res.blob();
+    return {
+      blob,
+      cacheKey: res.headers.get("X-TTS-Cache-Key") || "",
+      source: res.headers.get("X-TTS-Source") || "generated",
+      model: res.headers.get("X-TTS-Model") || opts.model || "gemini-2.5-flash-preview-tts",
+      voice: res.headers.get("X-TTS-Voice") || opts.voice || "Kore",
+      mimeType: blob.type || res.headers.get("Content-Type") || "audio/wav",
+    };
+  },
   // 학습노트: 저장된 롤플레잉
   roleplaySessions: () => jsonFetch("/api/roleplay/sessions"),
   roleplayDeleteSession: (id) =>
