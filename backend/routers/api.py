@@ -8,6 +8,8 @@
 
 import csv
 import io
+import json
+import logging
 import uuid
 from datetime import datetime
 from typing import Annotated
@@ -15,6 +17,7 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
+from starlette.responses import Response, StreamingResponse
 
 from backend.api_usage import start_usage_capture, stop_usage_capture
 from backend.articles.feeds import fetch_feed_entries
@@ -73,10 +76,19 @@ from backend.db.repositories import (
     update_word,
 )
 from backend.db.session import SessionFactory
+from backend.roleplay_tts import (
+    DEFAULT_TTS_MODEL,
+    DEFAULT_TTS_VOICE,
+    normalize_tts_text,
+    roleplay_tts_cache_key,
+    synthesize_roleplay_tts,
+)
 from backend.llm import (
+    coach_roleplay_turn,
     continue_roleplay,
     explain_slang,
     start_roleplay,
+    stream_roleplay_reply,
     summarize_roleplay,
 )
 from backend.quiz.schemas import QuizGenerateIn, QuizGradeIn, QuizReviewScheduleApplyIn
@@ -88,6 +100,8 @@ from backend.services import (
 )
 
 router = APIRouter(prefix="/api", tags=["api"])
+logger = logging.getLogger(__name__)
+ROLEPLAY_TTS_MAX_CHARS = 400
 
 ARTICLE_REFRESH_JOBS: dict[str, dict] = {}
 ARTICLE_REFRESH_JOB_LIMIT = 20
@@ -107,6 +121,13 @@ CurrentUserDep = Annotated[dict, Depends(require_user)]
 async def persist_usage_capture(token, user: dict | None) -> None:
     events = stop_usage_capture(token)
     await record_api_usage_events(user.get("id") if user else None, events)
+
+
+async def safe_persist_usage_capture(token, user: dict | None) -> None:
+    try:
+        await persist_usage_capture(token, user)
+    except Exception:
+        logger.exception("Failed to persist API usage events")
 
 
 def defer_usage_capture(
@@ -209,6 +230,10 @@ class RoleplaySummaryIn(BaseModel):
 class RoleplaySaveWordsIn(BaseModel):
     items: list  # [{word, korean, korean_detail?, english_def?, example?}, ...]
     tag: str | None = None
+
+
+class RoleplayTtsIn(BaseModel):
+    text: str
 
 
 class SlangIn(BaseModel):
@@ -1020,7 +1045,7 @@ async def slang(payload: SlangIn, session: SessionDep, _user: CurrentUserDep):
             )
         }
     finally:
-        await persist_usage_capture(usage_token, _user)
+        await safe_persist_usage_capture(usage_token, _user)
 
 
 # ── 퀴즈 — 회원 전용 ───────────────────────────────────────
@@ -1040,7 +1065,7 @@ async def quiz_generate(payload: QuizGenerateIn, session: SessionDep, _user: Cur
     try:
         return await generate_assignment(session, _user["id"], words, payload)
     finally:
-        await persist_usage_capture(usage_token, _user)
+        await safe_persist_usage_capture(usage_token, _user)
 
 
 @router.post("/quiz/grade")
@@ -1056,7 +1081,7 @@ async def quiz_grade(payload: QuizGradeIn, session: SessionDep, _user: CurrentUs
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
-        await persist_usage_capture(usage_token, _user)
+        await safe_persist_usage_capture(usage_token, _user)
 
 
 @router.post("/quiz/review-schedule/apply")
@@ -1129,7 +1154,7 @@ async def roleplay_start(payload: RoleplayStartIn, session: SessionDep, _user: C
         # 첫 턴: 사용자 발화 없음, 코칭 없음.
         return {"history": [["", reply, ""]]}
     finally:
-        await persist_usage_capture(usage_token, _user)
+        await safe_persist_usage_capture(usage_token, _user)
 
 
 @router.post("/roleplay/continue")
@@ -1154,7 +1179,73 @@ async def roleplay_continue(payload: RoleplayContinueIn, session: SessionDep, _u
         new_history.append([payload.message, result["reply"], result["coaching"]])
         return {"history": new_history}
     finally:
-        await persist_usage_capture(usage_token, _user)
+        await safe_persist_usage_capture(usage_token, _user)
+
+
+@router.post("/roleplay/continue/stream")
+async def roleplay_continue_stream(
+    payload: RoleplayContinueIn,
+    session: SessionDep,
+    _user: CurrentUserDep,
+):
+    # LLM 맥락용으로는 (user, bot)만 필요(코칭 제외).
+    context = [(t[0], t[1]) for t in (_norm_turn(h) for h in payload.history)]
+    words = await _roleplay_words(session, _user["id"], payload.scenario, payload.tag)
+
+    async def events():
+        usage_token = start_usage_capture()
+        reply_parts: list[str] = []
+        sentinel = object()
+        iterator = stream_roleplay_reply(
+            context,
+            payload.message,
+            level=payload.level,
+            scenario=payload.scenario,
+            tag=payload.tag,
+            situation=payload.situation,
+            words=words,
+            wrap_up=payload.wrap_up,
+        )
+
+        def _line(event: dict) -> str:
+            return json.dumps(event, ensure_ascii=False) + "\n"
+
+        try:
+            while True:
+                chunk = await run_in_threadpool(next, iterator, sentinel)
+                if chunk is sentinel:
+                    break
+                reply_parts.append(chunk)
+                yield _line({"type": "delta", "text": chunk})
+
+            reply = "".join(reply_parts).strip()
+            coaching = await run_in_threadpool(
+                coach_roleplay_turn,
+                context,
+                payload.message,
+                reply,
+                level=payload.level,
+                scenario=payload.scenario,
+                tag=payload.tag,
+                situation=payload.situation,
+            )
+            if coaching:
+                yield _line({"type": "coaching", "text": coaching})
+
+            new_history = [_norm_turn(h) for h in payload.history]
+            new_history.append([payload.message, reply, coaching])
+            yield _line({"type": "done", "history": new_history})
+        except Exception:
+            logger.exception("Roleplay streaming failed")
+            yield _line({"type": "error", "message": "AI 답변을 생성하지 못했어요. 잠시 후 다시 시도해주세요."})
+        finally:
+            await safe_persist_usage_capture(usage_token, _user)
+
+    return StreamingResponse(
+        events(),
+        media_type="application/x-ndjson; charset=utf-8",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @router.post("/roleplay/summary")
@@ -1188,7 +1279,7 @@ async def roleplay_summary(payload: RoleplaySummaryIn, session: SessionDep, _use
         )
         return {**result, "session_id": session_id}
     finally:
-        await persist_usage_capture(usage_token, _user)
+        await safe_persist_usage_capture(usage_token, _user)
 
 
 @router.post("/roleplay/save-words")
@@ -1220,7 +1311,56 @@ async def roleplay_save_words(payload: RoleplaySaveWordsIn, session: SessionDep,
         result = await insert_words(session, _user["id"], items)
         return {"ok": True, **result}
     finally:
-        await persist_usage_capture(usage_token, _user)
+        await safe_persist_usage_capture(usage_token, _user)
+
+
+@router.post("/roleplay/tts")
+async def roleplay_tts(
+    payload: RoleplayTtsIn,
+    session: SessionDep,
+    _user: CurrentUserDep,
+):
+    """Gemini TTS로 roleplay 답변 음성을 만들고, 저장 없이 오디오 바이트를 반환한다."""
+    text_value = normalize_tts_text(payload.text)
+    if not text_value:
+        raise HTTPException(status_code=400, detail="읽을 문장이 없습니다.")
+    if len(text_value) > ROLEPLAY_TTS_MAX_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"읽을 문장은 {ROLEPLAY_TTS_MAX_CHARS}자 이내로 입력해주세요.",
+        )
+
+    model = DEFAULT_TTS_MODEL
+    voice = DEFAULT_TTS_VOICE
+    cache_key = roleplay_tts_cache_key(text_value, model=model, voice=voice)
+
+    usage_token = start_usage_capture()
+    try:
+        wav_bytes, mime_type, model, voice = await run_in_threadpool(
+            synthesize_roleplay_tts,
+            text_value,
+            model=model,
+            voice=voice,
+        )
+        return Response(
+            content=wav_bytes,
+            media_type=mime_type,
+            headers={
+                "X-TTS-Cache-Key": cache_key,
+                "X-TTS-Source": "generated",
+                "X-TTS-Model": model,
+                "X-TTS-Voice": voice,
+                "Cache-Control": "private, max-age=31536000, immutable",
+            },
+        )
+    except Exception:
+        logger.exception("Roleplay TTS generation failed")
+        raise HTTPException(
+            status_code=502,
+            detail="AI 음성 생성에 실패했습니다. 잠시 후 다시 시도해주세요.",
+        )
+    finally:
+        await safe_persist_usage_capture(usage_token, _user)
 
 
 @router.get("/roleplay/sessions")
