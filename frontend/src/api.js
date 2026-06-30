@@ -315,6 +315,31 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ items, tag }),
     }),
+  roleplayTtsAudio: async (text, opts = {}) => {
+    const res = await fetch("/api/roleplay/tts", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        voice: opts.voice ?? "Kore",
+        model: opts.model ?? "gemini-2.5-flash-preview-tts",
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`${res.status} ${detail}`);
+    }
+    const blob = await res.blob();
+    return {
+      blob,
+      cacheKey: res.headers.get("X-TTS-Cache-Key") || "",
+      source: res.headers.get("X-TTS-Source") || "generated",
+      model: res.headers.get("X-TTS-Model") || opts.model || "gemini-2.5-flash-preview-tts",
+      voice: res.headers.get("X-TTS-Voice") || opts.voice || "Kore",
+      mimeType: blob.type || res.headers.get("Content-Type") || "audio/wav",
+    };
+  },
   // 학습노트: 저장된 롤플레잉
   roleplaySessions: () => jsonFetch("/api/roleplay/sessions"),
   roleplayDeleteSession: (id) =>

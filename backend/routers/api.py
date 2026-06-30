@@ -14,7 +14,7 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
-from starlette.responses import StreamingResponse
+from starlette.responses import Response, StreamingResponse
 
 from backend.api_usage import start_usage_capture, stop_usage_capture
 from backend.auth.password_reset import PasswordResetError, validate_reset_password
@@ -51,6 +51,13 @@ from backend.db.repositories import (
     delete_roleplay_session,
     update_user_password_hash,
     update_word,
+)
+from backend.roleplay_tts import (
+    DEFAULT_TTS_MODEL,
+    DEFAULT_TTS_VOICE,
+    normalize_tts_text,
+    roleplay_tts_cache_key,
+    synthesize_roleplay_tts,
 )
 from backend.llm import (
     coach_roleplay_turn,
@@ -187,6 +194,12 @@ class RoleplaySummaryIn(BaseModel):
 class RoleplaySaveWordsIn(BaseModel):
     items: list  # [{word, korean, korean_detail?, english_def?, example?}, ...]
     tag: str | None = None
+
+
+class RoleplayTtsIn(BaseModel):
+    text: str
+    voice: str = DEFAULT_TTS_VOICE
+    model: str = DEFAULT_TTS_MODEL
 
 
 class SlangIn(BaseModel):
@@ -871,6 +884,49 @@ async def roleplay_save_words(payload: RoleplaySaveWordsIn, session: SessionDep,
             return {"ok": False, "added": 0, "skipped": 0}
         result = await insert_words(session, _user["id"], items)
         return {"ok": True, **result}
+    finally:
+        await persist_usage_capture(usage_token, _user)
+
+
+@router.post("/roleplay/tts")
+async def roleplay_tts(
+    payload: RoleplayTtsIn,
+    session: SessionDep,
+    _user: CurrentUserDep,
+):
+    """Gemini TTS로 roleplay 답변 음성을 만들고, 저장 없이 오디오 바이트를 반환한다."""
+    text_value = normalize_tts_text(payload.text)
+    if not text_value:
+        raise HTTPException(status_code=400, detail="읽을 문장이 없습니다.")
+
+    model = payload.model or DEFAULT_TTS_MODEL
+    voice = payload.voice or DEFAULT_TTS_VOICE
+    cache_key = roleplay_tts_cache_key(text_value, model=model, voice=voice)
+
+    usage_token = start_usage_capture()
+    try:
+        wav_bytes, mime_type, model, voice = await run_in_threadpool(
+            synthesize_roleplay_tts,
+            text_value,
+            model=model,
+            voice=voice,
+        )
+        return Response(
+            content=wav_bytes,
+            media_type=mime_type,
+            headers={
+                "X-TTS-Cache-Key": cache_key,
+                "X-TTS-Source": "generated",
+                "X-TTS-Model": model,
+                "X-TTS-Voice": voice,
+                "Cache-Control": "private, max-age=31536000, immutable",
+            },
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"AI 음성 생성에 실패했습니다. {exc}",
+        )
     finally:
         await persist_usage_capture(usage_token, _user)
 
