@@ -44,7 +44,7 @@ export default function ResponsiveNav({
       {/* ========================================================================= */}
       {/* 1. PC/데스크톱 네비게이션: 좌측 사이드바 (md 이상에서만 노출) */}
       {/* ========================================================================= */}
-      <aside className="hidden md:flex flex-col justify-between w-64 h-screen border-r bg-card p-5 shrink-0 select-none">
+      <aside className="hidden md:flex h-dvh w-64 shrink-0 select-none flex-col justify-between overflow-y-auto border-r bg-card p-5">
         <div className="flex flex-col gap-6">
           {/* 로고 영역 */}
           <button
