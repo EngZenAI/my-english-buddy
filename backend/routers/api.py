@@ -78,6 +78,7 @@ from backend.services import (
 
 router = APIRouter(prefix="/api", tags=["api"])
 logger = logging.getLogger(__name__)
+ROLEPLAY_TTS_MAX_CHARS = 400
 
 
 async def require_user(request: Request, session: SessionDep) -> dict:
@@ -899,6 +900,11 @@ async def roleplay_tts(
     text_value = normalize_tts_text(payload.text)
     if not text_value:
         raise HTTPException(status_code=400, detail="읽을 문장이 없습니다.")
+    if len(text_value) > ROLEPLAY_TTS_MAX_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"읽을 문장은 {ROLEPLAY_TTS_MAX_CHARS}자 이내로 입력해주세요.",
+        )
 
     model = DEFAULT_TTS_MODEL
     voice = DEFAULT_TTS_VOICE
