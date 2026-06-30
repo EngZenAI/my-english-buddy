@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth.models import OAuthAccount, User
+from backend.articles.sources import source_payloads
 from backend.db.models import Label, QuizHistory, Word
 from backend.db.session import SessionFactory, engine
 
@@ -208,6 +209,91 @@ async def init_db() -> None:
                     ON roleplay_sessions (user_id, created_at DESC)
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS article_sources (
+                    key                TEXT PRIMARY KEY,
+                    name               TEXT NOT NULL,
+                    domains            JSONB DEFAULT '[]'::jsonb,
+                    default_topic      TEXT,
+                    fallback_image_url TEXT,
+                    is_active          BOOLEAN DEFAULT TRUE,
+                    created_at         TIMESTAMP DEFAULT NOW(),
+                    updated_at         TIMESTAMP DEFAULT NOW()
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS articles (
+                    id                SERIAL PRIMARY KEY,
+                    source_key        TEXT,
+                    source            TEXT,
+                    title             TEXT NOT NULL,
+                    url               TEXT NOT NULL,
+                    image_url         TEXT,
+                    published_at      TIMESTAMP,
+                    topic             TEXT,
+                    level             TEXT,
+                    estimated_minutes INTEGER DEFAULT 5,
+                    is_published      BOOLEAN DEFAULT FALSE,
+                    description       TEXT,
+                    content_snippet   TEXT,
+                    extracted_text    TEXT,
+                    extraction_status TEXT,
+                    created_at        TIMESTAMP DEFAULT NOW(),
+                    updated_at        TIMESTAMP DEFAULT NOW()
+                )
+                """,
+                "ALTER TABLE articles ADD COLUMN IF NOT EXISTS source_key TEXT",
+                "ALTER TABLE articles ADD COLUMN IF NOT EXISTS topic TEXT",
+                "ALTER TABLE articles ADD COLUMN IF NOT EXISTS level TEXT",
+                "ALTER TABLE articles ADD COLUMN IF NOT EXISTS estimated_minutes INTEGER DEFAULT 5",
+                "ALTER TABLE articles ADD COLUMN IF NOT EXISTS is_published BOOLEAN DEFAULT FALSE",
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_articles_url
+                    ON articles (url)
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS ix_articles_published_topic
+                    ON articles (is_published, topic, published_at DESC, id DESC)
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS article_chunks (
+                    id          SERIAL PRIMARY KEY,
+                    article_id  INTEGER NOT NULL,
+                    chunk_index INTEGER NOT NULL,
+                    text        TEXT NOT NULL,
+                    token_count INTEGER DEFAULT 0,
+                    created_at  TIMESTAMP DEFAULT NOW()
+                )
+                """,
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_article_chunks_article_index
+                    ON article_chunks (article_id, chunk_index)
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS ix_article_chunks_article
+                    ON article_chunks (article_id, chunk_index)
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS article_sessions (
+                    id              SERIAL PRIMARY KEY,
+                    user_id         UUID NOT NULL,
+                    article_id      INTEGER NOT NULL,
+                    status          TEXT DEFAULT 'started',
+                    current_chunk   INTEGER DEFAULT 0,
+                    study_json      JSONB DEFAULT '{}'::jsonb,
+                    completion_json JSONB DEFAULT '{}'::jsonb,
+                    created_at      TIMESTAMP DEFAULT NOW(),
+                    updated_at      TIMESTAMP DEFAULT NOW()
+                )
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS ix_article_sessions_user_created
+                    ON article_sessions (user_id, created_at DESC)
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS ix_article_sessions_article
+                    ON article_sessions (article_id)
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS api_usage_events (
                     id            SERIAL PRIMARY KEY,
                     user_id       UUID,
@@ -248,6 +334,25 @@ async def init_db() -> None:
             WHERE w.id = r.id
             """
         )
+        for source in source_payloads():
+            await conn.execute(
+                text(
+                    """INSERT INTO article_sources
+                           (key, name, domains, default_topic, fallback_image_url, is_active, updated_at)
+                       VALUES (:key, :name, CAST(:domains AS jsonb), :default_topic,
+                               :fallback_image_url, TRUE, NOW())
+                       ON CONFLICT (key) DO UPDATE SET
+                           name = EXCLUDED.name,
+                           domains = EXCLUDED.domains,
+                           default_topic = EXCLUDED.default_topic,
+                           fallback_image_url = EXCLUDED.fallback_image_url,
+                           updated_at = NOW()"""
+                ),
+                {
+                    **source,
+                    "domains": json.dumps(source["domains"], ensure_ascii=False),
+                },
+            )
 
 
 async def is_word_saved(session: AsyncSession, user_id: str, word: str) -> bool:
@@ -787,6 +892,7 @@ FEATURE_LABELS = {
     "slang": "슬랭 설명",
     "quiz": "AI 퀴즈",
     "roleplay": "롤플레잉",
+    "article": "기사 학습",
 }
 
 OPERATION_LABELS = {
@@ -800,6 +906,9 @@ OPERATION_LABELS = {
     ("roleplay", "start"): "롤플레잉 시작",
     ("roleplay", "continue"): "롤플레잉 대화",
     ("roleplay", "summary"): "롤플레잉 정리",
+    ("article", "study"): "기사 문단 학습",
+    ("article", "ask"): "기사 질문 답변",
+    ("article", "complete"): "기사 학습 정리",
 }
 
 
@@ -1630,6 +1739,367 @@ async def delete_roleplay_session(
     result = await session.execute(
         text(
             """DELETE FROM roleplay_sessions
+               WHERE user_id = :user_id AND id = :session_id"""
+        ),
+        {"user_id": user_id, "session_id": session_id},
+    )
+    await session.commit()
+    return bool(result.rowcount)
+
+
+def _parse_datetime(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+async def upsert_article_with_chunks(
+    session: AsyncSession,
+    article: dict,
+    chunks: list[dict],
+    extracted_text: str = "",
+    extraction_status: str = "",
+    publish: bool | None = None,
+) -> int:
+    """Create/update canonical article metadata and replace its ordered chunks."""
+    result = await session.execute(
+        text(
+            """INSERT INTO articles
+                   (source_key, source, title, url, image_url, published_at, topic,
+                    level, estimated_minutes, is_published, description, content_snippet,
+                    extracted_text, extraction_status, updated_at)
+               VALUES (:source_key, :source, :title, :url, :image_url, :published_at, :topic,
+                       :level, :estimated_minutes, :is_published, :description,
+                       :content_snippet, :extracted_text, :extraction_status, NOW())
+               ON CONFLICT (url) DO UPDATE SET
+                   source_key = EXCLUDED.source_key,
+                   source = EXCLUDED.source,
+                   title = EXCLUDED.title,
+                   image_url = EXCLUDED.image_url,
+                   published_at = EXCLUDED.published_at,
+                   topic = EXCLUDED.topic,
+                   level = EXCLUDED.level,
+                   estimated_minutes = EXCLUDED.estimated_minutes,
+                   is_published = CASE
+                       WHEN :publish_provided THEN EXCLUDED.is_published
+                       ELSE articles.is_published
+                   END,
+                   description = EXCLUDED.description,
+                   content_snippet = EXCLUDED.content_snippet,
+                   extracted_text = EXCLUDED.extracted_text,
+                   extraction_status = EXCLUDED.extraction_status,
+                   updated_at = NOW()
+               RETURNING id"""
+        ),
+        {
+            "source_key": (article.get("source_key") or "").strip(),
+            "source": (article.get("source") or "").strip(),
+            "title": (article.get("title") or "").strip(),
+            "url": (article.get("url") or "").strip(),
+            "image_url": (article.get("image_url") or "").strip(),
+            "published_at": _parse_datetime(article.get("published_at")),
+            "topic": (article.get("topic") or "").strip(),
+            "level": (article.get("level") or "medium").strip(),
+            "estimated_minutes": int(article.get("estimated_minutes") or 5),
+            "is_published": bool(publish) if publish is not None else bool(article.get("is_published")),
+            "publish_provided": publish is not None,
+            "description": (article.get("description") or "").strip(),
+            "content_snippet": (article.get("content") or article.get("content_snippet") or "").strip(),
+            "extracted_text": extracted_text or "",
+            "extraction_status": extraction_status or "",
+        },
+    )
+    article_id = int(result.scalar_one())
+    await session.execute(
+        text("DELETE FROM article_chunks WHERE article_id = :article_id"),
+        {"article_id": article_id},
+    )
+    if chunks:
+        await session.execute(
+            text(
+                """INSERT INTO article_chunks
+                       (article_id, chunk_index, text, token_count)
+                   VALUES (:article_id, :chunk_index, :text, :token_count)"""
+            ),
+            [
+                {
+                    "article_id": article_id,
+                    "chunk_index": int(chunk.get("chunk_index") or idx),
+                    "text": chunk.get("text") or "",
+                    "token_count": int(chunk.get("token_count") or 0),
+                }
+                for idx, chunk in enumerate(chunks)
+                if (chunk.get("text") or "").strip()
+            ],
+        )
+    await session.commit()
+    return article_id
+
+
+async def list_article_sources(session: AsyncSession) -> list[dict]:
+    result = await session.execute(
+        text(
+            """SELECT key, name, domains, default_topic, fallback_image_url, is_active
+               FROM article_sources
+               WHERE is_active = TRUE
+               ORDER BY name ASC"""
+        )
+    )
+    return _rows(result)
+
+
+async def list_published_articles(
+    session: AsyncSession,
+    topic: str = "",
+    level: str = "",
+    q: str = "",
+    page: int = 1,
+    page_size: int = 12,
+) -> dict:
+    page = max(1, int(page or 1))
+    page_size = max(1, min(int(page_size or 12), 30))
+    clauses = ["is_published = TRUE"]
+    params: dict[str, Any] = {"limit": page_size, "offset": (page - 1) * page_size}
+    if topic:
+        clauses.append("topic = :topic")
+        params["topic"] = topic
+    if level:
+        clauses.append("level = :level")
+        params["level"] = level
+    if q:
+        clauses.append("(title ILIKE :q OR description ILIKE :q OR source ILIKE :q)")
+        params["q"] = f"%{q}%"
+    where_sql = " AND ".join(clauses)
+    result = await session.execute(
+        text(
+            f"""SELECT id, source_key, source, title, url, image_url, published_at,
+                      topic, level, estimated_minutes, description, extraction_status,
+                      created_at, updated_at
+               FROM articles
+               WHERE {where_sql}
+               ORDER BY published_at DESC NULLS LAST, updated_at DESC, id DESC
+               LIMIT :limit OFFSET :offset"""
+        ),
+        params,
+    )
+    rows = _rows(result)
+    count_result = await session.execute(
+        text(f"SELECT COUNT(*)::int FROM articles WHERE {where_sql}"),
+        {k: v for k, v in params.items() if k not in {"limit", "offset"}},
+    )
+    return {"articles": rows, "page": page, "page_size": page_size, "total": int(count_result.scalar_one())}
+
+
+async def list_admin_articles(
+    session: AsyncSession,
+    page: int = 1,
+    page_size: int = 30,
+) -> dict:
+    page = max(1, int(page or 1))
+    page_size = max(1, min(int(page_size or 30), 100))
+    result = await session.execute(
+        text(
+            """SELECT id, source_key, source, title, url, image_url, published_at,
+                      topic, level, estimated_minutes, is_published, description,
+                      extraction_status, created_at, updated_at
+               FROM articles
+               ORDER BY updated_at DESC, id DESC
+               LIMIT :limit OFFSET :offset"""
+        ),
+        {"limit": page_size, "offset": (page - 1) * page_size},
+    )
+    rows = _rows(result)
+    count_result = await session.execute(text("SELECT COUNT(*)::int FROM articles"))
+    return {
+        "articles": rows,
+        "page": page,
+        "page_size": page_size,
+        "total": int(count_result.scalar_one()),
+    }
+
+
+async def get_article_catalog_item(
+    session: AsyncSession,
+    article_id: int,
+    include_unpublished: bool = False,
+) -> dict | None:
+    clauses = ["id = :article_id"]
+    if not include_unpublished:
+        clauses.append("is_published = TRUE")
+    result = await session.execute(
+        text(
+            f"""SELECT id, source_key, source, title, url, image_url, published_at,
+                      topic, level, estimated_minutes, is_published, description,
+                      content_snippet, extraction_status, created_at, updated_at
+               FROM articles
+               WHERE {' AND '.join(clauses)}"""
+        ),
+        {"article_id": article_id},
+    )
+    row = result.mappings().first()
+    if not row:
+        return None
+    data = dict(row)
+    data["chunks"] = await get_article_chunks(session, article_id)
+    return data
+
+
+async def publish_article(
+    session: AsyncSession,
+    article_id: int,
+    is_published: bool = True,
+) -> bool:
+    result = await session.execute(
+        text(
+            """UPDATE articles
+               SET is_published = :is_published, updated_at = NOW()
+               WHERE id = :article_id
+                 AND EXISTS (
+                     SELECT 1 FROM article_chunks
+                     WHERE article_chunks.article_id = articles.id
+                 )"""
+        ),
+        {"article_id": article_id, "is_published": is_published},
+    )
+    await session.commit()
+    return bool(result.rowcount)
+
+
+async def create_article_session(
+    session: AsyncSession,
+    user_id: str,
+    article_id: int,
+) -> int:
+    result = await session.execute(
+        text(
+            """INSERT INTO article_sessions (user_id, article_id)
+               VALUES (:user_id, :article_id)
+               RETURNING id"""
+        ),
+        {"user_id": user_id, "article_id": article_id},
+    )
+    await session.commit()
+    return int(result.scalar_one())
+
+
+async def get_article_chunks(session: AsyncSession, article_id: int) -> list[dict]:
+    result = await session.execute(
+        text(
+            """SELECT id, article_id, chunk_index, text, token_count
+               FROM article_chunks
+               WHERE article_id = :article_id
+               ORDER BY chunk_index ASC"""
+        ),
+        {"article_id": article_id},
+    )
+    return _rows(result)
+
+
+async def get_article_session(session: AsyncSession, user_id: str, session_id: int) -> dict | None:
+    result = await session.execute(
+        text(
+            """SELECT s.id, s.user_id, s.article_id, s.status, s.current_chunk,
+                      s.study_json, s.completion_json, s.created_at, s.updated_at,
+                      a.source_key, a.source, a.title, a.url, a.image_url, a.published_at,
+                      a.topic, a.level, a.estimated_minutes, a.description,
+                      a.content_snippet, a.extraction_status
+               FROM article_sessions s
+               JOIN articles a ON a.id = s.article_id
+               WHERE s.user_id = :user_id AND s.id = :session_id AND a.is_published = TRUE"""
+        ),
+        {"user_id": user_id, "session_id": session_id},
+    )
+    row = result.mappings().first()
+    if not row:
+        return None
+    data = dict(row)
+    data["chunks"] = await get_article_chunks(session, int(data["article_id"]))
+    return data
+
+
+async def get_article_sessions(session: AsyncSession, user_id: str) -> list[dict]:
+    result = await session.execute(
+        text(
+            """SELECT s.id, s.article_id, s.status, s.current_chunk,
+                      s.study_json, s.completion_json, s.created_at, s.updated_at,
+                      a.source_key, a.source, a.title, a.url, a.image_url, a.published_at,
+                      a.topic, a.level, a.estimated_minutes, a.description,
+                      a.extraction_status
+               FROM article_sessions s
+               JOIN articles a ON a.id = s.article_id
+               WHERE s.user_id = :user_id AND a.is_published = TRUE
+               ORDER BY s.created_at DESC, s.id DESC
+               LIMIT 50"""
+        ),
+        {"user_id": user_id},
+    )
+    return _rows(result)
+
+
+async def update_article_study(
+    session: AsyncSession,
+    user_id: str,
+    session_id: int,
+    study: dict,
+) -> bool:
+    result = await session.execute(
+        text(
+            """UPDATE article_sessions
+               SET study_json = CAST(:study AS jsonb),
+                   status = 'studying',
+                   updated_at = NOW()
+               WHERE user_id = :user_id AND id = :session_id"""
+        ),
+        {
+            "user_id": user_id,
+            "session_id": session_id,
+            "study": json.dumps(study or {}, ensure_ascii=False),
+        },
+    )
+    await session.commit()
+    return bool(result.rowcount)
+
+
+async def update_article_completion(
+    session: AsyncSession,
+    user_id: str,
+    session_id: int,
+    completion: dict,
+) -> bool:
+    result = await session.execute(
+        text(
+            """UPDATE article_sessions
+               SET completion_json = CAST(:completion AS jsonb),
+                   status = 'completed',
+                   updated_at = NOW()
+               WHERE user_id = :user_id AND id = :session_id"""
+        ),
+        {
+            "user_id": user_id,
+            "session_id": session_id,
+            "completion": json.dumps(completion or {}, ensure_ascii=False),
+        },
+    )
+    await session.commit()
+    return bool(result.rowcount)
+
+
+async def delete_article_session(
+    session: AsyncSession,
+    user_id: str,
+    session_id: int,
+) -> bool:
+    result = await session.execute(
+        text(
+            """DELETE FROM article_sessions
                WHERE user_id = :user_id AND id = :session_id"""
         ),
         {"user_id": user_id, "session_id": session_id},

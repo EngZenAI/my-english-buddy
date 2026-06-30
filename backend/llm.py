@@ -75,6 +75,13 @@ FEATURE_MODEL_PROFILES = {
         "model_id": "meta-llama/llama-3-3-70b-instruct",
         "params": {"max_tokens": 512, "temperature": 0.7, "top_p": 0.9},
     },
+    # 기사 학습. 문단별 해설/요약/근거 기반 Q&A는 구조화 출력이 중요하고
+    # 입력이 길 수 있어 quiz와 같은 큰 모델을 쓰되 토큰은 중간값으로 제한한다.
+    "article": {
+        "provider": "watsonx",
+        "model_id": "openai/gpt-oss-120b",
+        "params": {"max_tokens": 3072, "temperature": 0.2},
+    },
 }
 
 FALLBACK_MODEL_KEY = "qwen"                       # WatsonX 실패 시 쓸 모델 키

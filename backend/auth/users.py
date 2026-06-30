@@ -78,9 +78,9 @@ current_active_user = fastapi_users.current_user(active=True)
 async def get_current_user_from_token(
     session: AsyncSession,
     token: str,
-) -> dict[str, str] | None:
+) -> dict[str, str | bool] | None:
     result = await session.execute(
-        select(User.id, User.email)
+        select(User.id, User.email, User.is_superuser)
         .join(AccessToken, User.id == AccessToken.user_id)
         .where(
             AccessToken.token == token,
@@ -91,7 +91,11 @@ async def get_current_user_from_token(
         )
     )
     user = result.one_or_none()
-    return {"id": str(user.id), "email": user.email} if user else None
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "is_superuser": bool(user.is_superuser),
+    } if user else None
 
 
 async def get_current_user_id_from_token(
@@ -105,7 +109,7 @@ async def get_current_user_id_from_token(
 async def get_current_user_from_cookie(
     request: Request,
     session: AsyncSession,
-) -> dict[str, str] | None:
+) -> dict[str, str | bool] | None:
     token = request.cookies.get(settings.auth_cookie_name)
     if not token:
         return None

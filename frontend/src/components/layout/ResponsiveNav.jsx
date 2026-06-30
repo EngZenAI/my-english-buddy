@@ -1,4 +1,4 @@
-import { Search, BookOpen, PenLine, MessageCircle, User, LogIn, LogOut, ChevronLeft } from "lucide-react";
+import { Search, BookOpen, PenLine, MessageCircle, LogIn, LogOut, ChevronLeft, Newspaper } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
@@ -15,6 +15,7 @@ export default function ResponsiveNav({
   const icons = {
     search: Search,
     wordbook: BookOpen,
+    articles: Newspaper,
     quiz: PenLine,
     roleplay: MessageCircle,
   };
