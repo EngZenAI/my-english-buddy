@@ -31,6 +31,13 @@ def split_article_text(text: str, max_chars: int = 1200) -> list[str]:
                 sentence = normalize_whitespace(sentence)
                 if not sentence:
                     continue
+                # Force split oversized sentences
+                if len(sentence) > max_chars:
+                    if current:
+                        chunks.append(current)
+                        current = ""
+                    chunks.append(sentence[:max_chars])
+                    continue
                 if current and len(current) + len(sentence) + 1 > max_chars:
                     chunks.append(current)
                     current = sentence

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BookOpen,
@@ -158,6 +158,13 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
       queryClient.invalidateQueries({ queryKey: ["articles", "catalog"] });
     },
   });
+
+  // Reset mutation state when active session changes
+  useEffect(() => {
+    studyMutation.reset();
+    askMutation.reset();
+    completeMutation.reset();
+  }, [activeSessionId]);
 
   const sessionData = sessionQuery.data || null;
   const study = sessionData?.study_json || studyMutation.data?.study || {};

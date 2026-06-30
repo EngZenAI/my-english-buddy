@@ -190,5 +190,12 @@ def answer_article_question(question: str, chunks: list[dict[str, Any]]) -> dict
             "unsupported": True,
         },
     )
-    return data if isinstance(data, dict) else {"answer_ko": str(raw), "answer_en": "", "evidence_chunk_ids": [], "unsupported": False}
+    if not isinstance(data, dict):
+        return {
+            "answer_ko": "기사에서 확인되는 근거를 찾지 못했어요.",
+            "answer_en": "",
+            "evidence_chunk_ids": [],
+            "unsupported": True,
+        }
+    return data
 

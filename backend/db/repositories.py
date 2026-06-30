@@ -2013,7 +2013,7 @@ async def get_article_session(session: AsyncSession, user_id: str, session_id: i
                       a.content_snippet, a.extraction_status
                FROM article_sessions s
                JOIN articles a ON a.id = s.article_id
-               WHERE s.user_id = :user_id AND s.id = :session_id"""
+               WHERE s.user_id = :user_id AND s.id = :session_id AND a.is_published = TRUE"""
         ),
         {"user_id": user_id, "session_id": session_id},
     )
@@ -2035,7 +2035,7 @@ async def get_article_sessions(session: AsyncSession, user_id: str) -> list[dict
                       a.extraction_status
                FROM article_sessions s
                JOIN articles a ON a.id = s.article_id
-               WHERE s.user_id = :user_id
+               WHERE s.user_id = :user_id AND a.is_published = TRUE
                ORDER BY s.created_at DESC, s.id DESC
                LIMIT 50"""
         ),

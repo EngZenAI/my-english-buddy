@@ -11,7 +11,7 @@ import io
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 from starlette.concurrency import run_in_threadpool
 
 from backend.api_usage import start_usage_capture, stop_usage_capture
@@ -235,8 +235,19 @@ class ArticleAskIn(BaseModel):
 
 
 class ArticleSaveWordsIn(BaseModel):
-    items: list
+    items: list[dict]
     tag: str | None = "뉴스"
+
+    @validator("items")
+    def validate_items(cls, v):
+        if not isinstance(v, list):
+            raise ValueError("items must be a list")
+        if len(v) > 100:
+            raise ValueError("Maximum 100 items allowed")
+        for item in v:
+            if not isinstance(item, dict):
+                raise ValueError("Each item must be a dictionary")
+        return v
 
 
 class ArticlePublishIn(BaseModel):

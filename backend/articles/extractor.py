@@ -10,6 +10,8 @@ from urllib.parse import urlparse
 
 import requests
 
+from backend.articles.sources import match_supported_source
+
 logger = logging.getLogger(__name__)
 
 
@@ -119,6 +121,8 @@ def extract_article_text(url: str, timeout: int = 8) -> dict:
     """Return {text, status, error}; never raises for normal extraction failures."""
     if not _valid_url(url):
         return {"text": "", "status": "invalid_url", "error": "Invalid article URL"}
+    if not match_supported_source(url):
+        return {"text": "", "status": "invalid_url", "error": "URL not from a supported source"}
     try:
         response = requests.get(
             url,

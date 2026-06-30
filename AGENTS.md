@@ -15,7 +15,7 @@ LLM을 활용한 "나만의 영어 학습" 앱. 단어 검색 → 단어장 저�
 
 ## 아키텍처 (현재 상태)
 
-```
+```text
 english-app/
 ├── backend/                 # FastAPI REST API + 정적 서빙
 │   ├── main.py              # 엔트리. /api·/auth 라우터 + frontend/dist 정적 서빙(SPA)
@@ -53,7 +53,7 @@ english-app/
 DB·LLM·OAuth 키는 `.env`에 있음(`.env.example` 참고). 백엔드는 Postgres가 필요.
 
 **방식 A — 한 서버 (평소):**
-```
+```bash
 cd frontend && npm install && npm run build   # frontend/dist 생성
 cd .. && uvicorn backend.main:app --reload     # http://localhost:8000
 ```
@@ -61,7 +61,7 @@ cd .. && uvicorn backend.main:app --reload     # http://localhost:8000
 - `frontend/dist`가 없으면 `/`는 503 "빌드하세요" 안내.
 
 **방식 B — 프론트 개발(핫리로드, 권장):** 터미널 2개
-```
+```bash
 uvicorn backend.main:app --reload      # 8000 (반드시 함께 켜야 데이터 동작)
 cd frontend && npm run dev              # 5173 (여기로 접속; /api·/auth는 8000으로 프록시)
 ```
