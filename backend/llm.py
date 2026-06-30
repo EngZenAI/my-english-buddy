@@ -22,7 +22,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import TypedDict
+from typing import Iterator, TypedDict
 
 from dotenv import load_dotenv
 from langchain_core.output_parsers import StrOutputParser
@@ -202,6 +202,52 @@ def _invoke_tracked_llm(feature: str, operation: str, prompt_value) -> str:
         output_value=text,
     )
     return text
+
+
+def _chunk_to_text(chunk) -> str:
+    """LangChain stream chunk에서 표시 가능한 텍스트만 추출한다."""
+    content = getattr(chunk, "content", chunk)
+    if isinstance(content, str):
+      return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                parts.append(str(item.get("text") or item.get("content") or ""))
+        return "".join(parts)
+    return str(content or "")
+
+
+def _stream_tracked_llm(feature: str, operation: str, prompt_value) -> Iterator[str]:
+    """LLM 토큰 스트림을 내보내고, 완료 후 사용량 이벤트를 기록한다."""
+    model_name = get_active_model_name(feature)
+    chunks: list[str] = []
+    try:
+        for chunk in get_llm(feature).stream(prompt_value):
+            text = _chunk_to_text(chunk)
+            if not text:
+                continue
+            chunks.append(text)
+            yield text
+    except Exception:
+        track_llm_usage(
+            feature=feature,
+            operation=operation,
+            model_name=model_name,
+            input_value=prompt_value,
+            output_value="".join(chunks),
+            success=False,
+        )
+        raise
+    track_llm_usage(
+        feature=feature,
+        operation=operation,
+        model_name=model_name,
+        input_value=prompt_value,
+        output_value="".join(chunks),
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -586,6 +632,117 @@ def continue_roleplay(
     prompt_value = prompt.invoke({"history": lc_history, "user_msg": user_msg})
     raw = _invoke_tracked_llm("roleplay", "continue", prompt_value)
     return _parse_coached(raw)
+
+
+def _roleplay_continue_prompt_value(
+    history: list,
+    user_msg: str,
+    level: str = "intermediate",
+    scenario: str = "general",
+    tag: str | None = None,
+    situation: str = "",
+    words: list | None = None,
+    wrap_up: bool = False,
+):
+    """롤플레잉 진행 턴의 순수 답변용 prompt value를 만든다."""
+    words = words or []
+    system = _roleplay_system_prompt(
+        level, scenario, tag, situation, words, coaching=False, wrap_up=wrap_up
+    )
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system),
+        ("placeholder", "{history}"),
+        ("human", "{user_msg}"),
+    ])
+    lc_history = []
+    for user, bot in history:
+        if user:
+            lc_history.append(("human", user))
+        if bot:
+            lc_history.append(("assistant", bot))
+    return prompt.invoke({"history": lc_history, "user_msg": user_msg})
+
+
+def stream_roleplay_reply(
+    history: list,
+    user_msg: str,
+    level: str = "intermediate",
+    scenario: str = "general",
+    tag: str | None = None,
+    situation: str = "",
+    words: list | None = None,
+    wrap_up: bool = False,
+) -> Iterator[str]:
+    """사용자 발화에 대한 AI 답변을 토큰 단위로 스트리밍한다."""
+    if not user_msg.strip():
+        return
+    prompt_value = _roleplay_continue_prompt_value(
+        history,
+        user_msg,
+        level=level,
+        scenario=scenario,
+        tag=tag,
+        situation=situation,
+        words=words,
+        wrap_up=wrap_up,
+    )
+    yield from _stream_tracked_llm("roleplay", "continue_stream", prompt_value)
+
+
+def coach_roleplay_turn(
+    history: list,
+    user_msg: str,
+    ai_reply: str,
+    level: str = "intermediate",
+    scenario: str = "general",
+    tag: str | None = None,
+    situation: str = "",
+) -> str:
+    """스트리밍 답변 완료 후, 최근 사용자 발화에 대한 짧은 한국어 코칭을 생성한다."""
+    if not user_msg.strip():
+        return ""
+
+    lines = []
+    for user, bot in history[-4:]:
+        if user:
+            lines.append(f"Learner: {user}")
+        if bot:
+            lines.append(f"AI: {bot}")
+    recent_context = "\n".join(lines).strip()
+
+    prompt = ChatPromptTemplate.from_template("""You are an English speaking coach for a Korean learner.
+
+Recent context:
+{recent_context}
+
+Current learner message:
+{user_msg}
+
+AI's in-character reply:
+{ai_reply}
+
+Level: {level}
+Scenario: {scenario}
+Tag: {tag}
+Situation: {situation}
+
+Write ONLY a brief Korean coaching tip for the learner's current message.
+Rules:
+- 1-2 short Korean sentences.
+- Suggest a more natural/native expression, or fix grammar/word choice.
+- If the learner's English was already natural and correct, return an empty string.
+- Do not include markdown, labels, or bullet points.
+""")
+    prompt_value = prompt.invoke({
+        "recent_context": recent_context,
+        "user_msg": user_msg,
+        "ai_reply": ai_reply,
+        "level": level,
+        "scenario": scenario,
+        "tag": tag or "",
+        "situation": situation or "",
+    })
+    return _invoke_tracked_llm("roleplay", "coaching", prompt_value).strip()
 
 
 # ── 대화 종료 후 정리(3단계): 요약 + 유용 표현 + 유용 어휘 추출 ──────────

@@ -1,10 +1,16 @@
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { Send, RotateCcw } from "lucide-react";
 import { api } from "../api";
 import { queryKeys } from "../queryClient";
-import { EmptyState, LoadingSpinner, SkeletonBlock } from "../components/AsyncState";
+import { EmptyState, SkeletonBlock } from "../components/AsyncState";
 import MemberNotice from "../components/MemberNotice";
 import LearningNotesTab from "./LearningNotesTab";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Marker, MarkerGroup } from "@/components/ui/marker";
+import { Message } from "@/components/ui/message";
+import { MessageScroller } from "@/components/ui/message-scroller";
 
 // ──────────────────────────────────────────────────────────────────────
 // 롤플레잉 = 실전 영어 회화 연습 (단어 복습이 아님).
@@ -159,6 +165,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
   const [saveTag, setSaveTag] = useState(""); // 어휘 저장 시 태그
   const [savedCount, setSavedCount] = useState(null); // 저장 결과 안내
   const [finishNoticeDismissed, setFinishNoticeDismissed] = useState(false);
+  const [streaming, setStreaming] = useState(false);
   const scrollRef = useRef(null);
 
   // 라벨은 태그 모드 칩 + 정리 페이지의 '단어장 추가' 태그 선택에 쓰이므로 로그인 시 로드.
@@ -192,8 +199,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
 
   const scrollToBottom = () => {
     requestAnimationFrame(() => {
-      if (scrollRef.current)
-        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      scrollRef.current?.scrollToBottom?.();
     });
   };
 
@@ -212,23 +218,6 @@ export default function RoleplayTab({ user, onRequireLogin }) {
     onSuccess: ({ history }) => {
       setMessages(pairsToMessages(history));
       scrollToBottom();
-    },
-  });
-
-  const sendMutation = useMutation({
-    mutationFn: ({ pairs, text, wrapUp }) =>
-      api.roleplayContinue(pairs, text, { ...(session || {}), wrapUp }),
-    onSuccess: ({ history }) => {
-      setMessages(pairsToMessages(history));
-      scrollToBottom();
-    },
-    onError: (_error, { text }) => {
-      setMessages((prev) => {
-        const next = [...prev];
-        if (next.length && next[next.length - 1].role === "user") next.pop();
-        return next;
-      });
-      setMsg((current) => current || text);
     },
   });
 
@@ -264,18 +253,69 @@ export default function RoleplayTab({ user, onRequireLogin }) {
   const showFinishNotice =
     shouldSuggestFinish && (!finishNoticeDismissed || reachedHardLimit);
 
-  const send = () => {
-    if (!msg.trim() || sendMutation.isPending) return;
+  const send = async () => {
+    if (!msg.trim() || streaming) return;
     if (reachedHardLimit) return;
     const text = msg;
     const pairs = messagesToPairs(messages);
     // 다음 응답이 정리 구간에 도달하면 AI가 자연스럽게 마무리하도록 wrapUp 전달.
     const wrapUp = userTurns + 1 >= WRAP_UP_TURN;
-    setMessages((prev) => [...prev, { role: "user", text }]);
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", text },
+      { role: "bot", text: "", coaching: "", streaming: true },
+    ]);
     setMsg("");
     setFinishNoticeDismissed(false);
-    sendMutation.mutate({ pairs, text, wrapUp });
+    setStreaming(true);
     scrollToBottom();
+    try {
+      const { history } = await api.roleplayContinueStream(
+        pairs,
+        text,
+        { ...(session || {}), wrapUp },
+        {
+          onDelta: (delta) => {
+            setMessages((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last?.role === "bot") {
+                next[next.length - 1] = {
+                  ...last,
+                  text: `${last.text || ""}${delta}`,
+                  streaming: true,
+                };
+              }
+              return next;
+            });
+            scrollToBottom();
+          },
+          onCoaching: (coaching) => {
+            setMessages((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last?.role === "bot") {
+                next[next.length - 1] = { ...last, coaching, streaming: true };
+              }
+              return next;
+            });
+            scrollToBottom();
+          },
+        }
+      );
+      setMessages(pairsToMessages(history));
+      scrollToBottom();
+    } catch (_error) {
+      setMessages((prev) => {
+        const next = [...prev];
+        if (next.length && next[next.length - 1].role === "bot") next.pop();
+        if (next.length && next[next.length - 1].role === "user") next.pop();
+        return next;
+      });
+      setMsg((current) => current || text);
+    } finally {
+      setStreaming(false);
+    }
   };
 
   // 대화 종료 → 요약 + 표현/어휘 추출
@@ -318,7 +358,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
   };
 
   const starting = startMutation.isPending;
-  const sending = sendMutation.isPending;
+  const sending = streaming;
   const summarizing = summaryMutation.isPending;
 
   const cards = mode === "opic" ? OPIC_CARDS : GENERAL_CARDS;
@@ -522,22 +562,23 @@ export default function RoleplayTab({ user, onRequireLogin }) {
       {/* ── 진행 중: 상황 칩 + 다시 고르기 ─────────────────── */}
       {active && session && (
         <div className="flex items-center justify-between mb-2">
-          <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">
+          <MarkerGroup>
+            <Marker variant="muted">
               {LEVELS.find((l) => l.value === level)?.label}
-            </span>
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">
+            </Marker>
+            <Marker variant="muted">
               {MODES.find((m) => m.value === mode)?.label}
-            </span>
+            </Marker>
             {session.title && (
-              <span
+              <Marker
+                variant="primary"
                 title={session.title}
-                className="rounded-full bg-brand-50 px-2 py-0.5 text-brand-700 max-w-[220px] truncate"
+                className="max-w-[220px]"
               >
                 {session.title}
-              </span>
+              </Marker>
             )}
-          </div>
+          </MarkerGroup>
           <div className="flex items-center gap-2">
             {!summary && !showFinishNotice && (
               <button
@@ -552,12 +593,16 @@ export default function RoleplayTab({ user, onRequireLogin }) {
                 {summarizing ? "정리 중…" : "대화 마무리 & 정리"}
               </button>
             )}
-            <button
+            <Button
+              type="button"
+              variant="link"
+              size="sm"
               onClick={resetConversation}
-              className="text-xs text-slate-500 hover:text-slate-700 underline whitespace-nowrap"
+              className="h-7 px-1 text-xs text-slate-500 hover:text-slate-700"
             >
+              <RotateCcw className="h-3.5 w-3.5" />
               다른 상황 고르기
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -619,9 +664,10 @@ export default function RoleplayTab({ user, onRequireLogin }) {
       )}
 
       {/* ── 채팅 영역 ─────────────────────────────────────── */}
-      <div
+      <MessageScroller
         ref={scrollRef}
-        className="h-[380px] overflow-y-auto border border-slate-200 rounded-lg bg-white p-3 space-y-3"
+        className="h-[420px]"
+        contentClassName="min-h-full"
       >
         {starting && (
           <div className="space-y-3">
@@ -643,46 +689,22 @@ export default function RoleplayTab({ user, onRequireLogin }) {
           </div>
         )}
         {!starting &&
-          messages.map((m, i) =>
-            m.role === "user" ? (
-              <div key={i} className="flex justify-end">
-                <div className="bg-brand-600 text-white rounded-2xl rounded-br-sm px-3 py-2
-                                text-sm max-w-[80%] whitespace-pre-wrap">
-                  {m.text}
-                </div>
-              </div>
-            ) : (
-              <div key={i} className="space-y-1">
-                <div className="flex justify-start">
-                  <div className="bg-slate-100 text-slate-800 rounded-2xl rounded-bl-sm px-3 py-2
-                                  text-sm max-w-[80%] whitespace-pre-wrap">
-                    {m.text}
-                  </div>
-                </div>
-                {m.coaching && (
-                  <div className="flex justify-start">
-                    <div className="max-w-[80%] rounded-lg border border-amber-200 bg-amber-50
-                                    px-3 py-1.5 text-xs text-amber-800 whitespace-pre-wrap">
-                      💡 {m.coaching}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ),
-          )}
-        {sending && (
-          <div className="flex justify-start">
-            <div className="bg-slate-100 text-slate-500 rounded-2xl rounded-bl-sm px-3 py-2 text-sm">
-              <LoadingSpinner label="답변 작성 중" />
-            </div>
-          </div>
-        )}
-      </div>
+          messages.map((m, i) => (
+            <Message
+              key={`${m.role}-${i}`}
+              role={m.role === "user" ? "user" : "assistant"}
+              coaching={m.coaching}
+              loading={m.streaming && !m.text}
+            >
+              {m.text}
+            </Message>
+          ))}
+      </MessageScroller>
 
       {/* 입력창: 대화 시작 후에만 활성화 (정리 화면에선 숨김) */}
       {!summary && (
         <div className="flex items-center gap-2 mt-3">
-          <input
+          <Input
             value={msg}
             onChange={(e) => setMsg(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && send()}
@@ -694,17 +716,17 @@ export default function RoleplayTab({ user, onRequireLogin }) {
                   ? "영어로 대답해봐요! (엔터로 전송)"
                   : "위에서 상황을 먼저 선택하세요"
             }
-            className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm
-                       disabled:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-200"
+            className="h-11 flex-1 bg-background disabled:bg-muted"
           />
-          <button
+          <Button
+            type="button"
             onClick={send}
             disabled={sending || !user || !active || reachedHardLimit}
-            className="rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-60
-                       disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold whitespace-nowrap"
+            className="h-11 shrink-0 px-4"
           >
-            전송 ➤
-          </button>
+            <Send className="h-4 w-4" />
+            전송
+          </Button>
         </div>
       )}
 

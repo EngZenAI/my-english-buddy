@@ -239,6 +239,63 @@ export const api = {
         wrap_up: opts.wrapUp ?? false,
       }),
     }),
+  roleplayContinueStream: async (history, message, opts = {}, handlers = {}) => {
+    const res = await fetch("/api/roleplay/continue/stream", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        history,
+        message,
+        level: opts.level ?? "intermediate",
+        scenario: opts.scenario ?? "general",
+        tag: opts.tag ?? null,
+        situation: opts.situation ?? "",
+        wrap_up: opts.wrapUp ?? false,
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`${res.status} ${text}`);
+    }
+    if (!res.body) {
+      throw new Error("Streaming response is not available in this browser.");
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let doneEvent = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const event = JSON.parse(line);
+        if (event.type === "delta") handlers.onDelta?.(event.text || "");
+        if (event.type === "coaching") handlers.onCoaching?.(event.text || "");
+        if (event.type === "done") doneEvent = event;
+        if (event.type === "error") throw new Error(event.message || "Streaming failed.");
+      }
+
+      if (done) break;
+    }
+
+    if (buffer.trim()) {
+      const event = JSON.parse(buffer);
+      if (event.type === "delta") handlers.onDelta?.(event.text || "");
+      if (event.type === "coaching") handlers.onCoaching?.(event.text || "");
+      if (event.type === "done") doneEvent = event;
+      if (event.type === "error") throw new Error(event.message || "Streaming failed.");
+    }
+
+    if (!doneEvent) throw new Error("Streaming ended before completion.");
+    return { history: doneEvent.history || [] };
+  },
   // 대화 종료 후 정리: 요약 + 유용 표현 + 유용 어휘 추출
   roleplaySummary: (history, opts = {}) =>
     jsonFetch("/api/roleplay/summary", {

@@ -8,11 +8,13 @@
 
 import csv
 import io
+import json
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
+from starlette.responses import StreamingResponse
 
 from backend.api_usage import start_usage_capture, stop_usage_capture
 from backend.auth.password_reset import PasswordResetError, validate_reset_password
@@ -51,9 +53,11 @@ from backend.db.repositories import (
     update_word,
 )
 from backend.llm import (
+    coach_roleplay_turn,
     continue_roleplay,
     explain_slang,
     start_roleplay,
+    stream_roleplay_reply,
     summarize_roleplay,
 )
 from backend.quiz.schemas import QuizGenerateIn, QuizGradeIn, QuizReviewScheduleApplyIn
@@ -738,6 +742,71 @@ async def roleplay_continue(payload: RoleplayContinueIn, session: SessionDep, _u
         return {"history": new_history}
     finally:
         await persist_usage_capture(usage_token, _user)
+
+
+@router.post("/roleplay/continue/stream")
+async def roleplay_continue_stream(
+    payload: RoleplayContinueIn,
+    session: SessionDep,
+    _user: CurrentUserDep,
+):
+    # LLM 맥락용으로는 (user, bot)만 필요(코칭 제외).
+    context = [(t[0], t[1]) for t in (_norm_turn(h) for h in payload.history)]
+    words = await _roleplay_words(session, _user["id"], payload.scenario, payload.tag)
+
+    async def events():
+        usage_token = start_usage_capture()
+        reply_parts: list[str] = []
+        sentinel = object()
+        iterator = stream_roleplay_reply(
+            context,
+            payload.message,
+            level=payload.level,
+            scenario=payload.scenario,
+            tag=payload.tag,
+            situation=payload.situation,
+            words=words,
+            wrap_up=payload.wrap_up,
+        )
+
+        def _line(event: dict) -> str:
+            return json.dumps(event, ensure_ascii=False) + "\n"
+
+        try:
+            while True:
+                chunk = await run_in_threadpool(next, iterator, sentinel)
+                if chunk is sentinel:
+                    break
+                reply_parts.append(chunk)
+                yield _line({"type": "delta", "text": chunk})
+
+            reply = "".join(reply_parts).strip()
+            coaching = await run_in_threadpool(
+                coach_roleplay_turn,
+                context,
+                payload.message,
+                reply,
+                level=payload.level,
+                scenario=payload.scenario,
+                tag=payload.tag,
+                situation=payload.situation,
+            )
+            if coaching:
+                yield _line({"type": "coaching", "text": coaching})
+
+            new_history = [_norm_turn(h) for h in payload.history]
+            new_history.append([payload.message, reply, coaching])
+            yield _line({"type": "done", "history": new_history})
+        except Exception as exc:
+            yield _line({"type": "error", "message": str(exc)})
+        finally:
+            await persist_usage_capture(usage_token, _user)
+
+    return StreamingResponse(
+        events(),
+        media_type="application/x-ndjson; charset=utf-8",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @router.post("/roleplay/summary")
