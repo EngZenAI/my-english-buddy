@@ -97,6 +97,13 @@ async def persist_usage_capture(token, user: dict | None) -> None:
     await record_api_usage_events(user.get("id") if user else None, events)
 
 
+async def safe_persist_usage_capture(token, user: dict | None) -> None:
+    try:
+        await persist_usage_capture(token, user)
+    except Exception:
+        logger.exception("Failed to persist API usage events")
+
+
 def defer_usage_capture(
     background_tasks: BackgroundTasks,
     token,
@@ -621,7 +628,7 @@ async def slang(payload: SlangIn, session: SessionDep, _user: CurrentUserDep):
             )
         }
     finally:
-        await persist_usage_capture(usage_token, _user)
+        await safe_persist_usage_capture(usage_token, _user)
 
 
 # ── 퀴즈 — 회원 전용 ───────────────────────────────────────
@@ -641,7 +648,7 @@ async def quiz_generate(payload: QuizGenerateIn, session: SessionDep, _user: Cur
     try:
         return await generate_assignment(session, _user["id"], words, payload)
     finally:
-        await persist_usage_capture(usage_token, _user)
+        await safe_persist_usage_capture(usage_token, _user)
 
 
 @router.post("/quiz/grade")
@@ -657,7 +664,7 @@ async def quiz_grade(payload: QuizGradeIn, session: SessionDep, _user: CurrentUs
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
-        await persist_usage_capture(usage_token, _user)
+        await safe_persist_usage_capture(usage_token, _user)
 
 
 @router.post("/quiz/review-schedule/apply")
@@ -730,7 +737,7 @@ async def roleplay_start(payload: RoleplayStartIn, session: SessionDep, _user: C
         # 첫 턴: 사용자 발화 없음, 코칭 없음.
         return {"history": [["", reply, ""]]}
     finally:
-        await persist_usage_capture(usage_token, _user)
+        await safe_persist_usage_capture(usage_token, _user)
 
 
 @router.post("/roleplay/continue")
@@ -755,7 +762,7 @@ async def roleplay_continue(payload: RoleplayContinueIn, session: SessionDep, _u
         new_history.append([payload.message, result["reply"], result["coaching"]])
         return {"history": new_history}
     finally:
-        await persist_usage_capture(usage_token, _user)
+        await safe_persist_usage_capture(usage_token, _user)
 
 
 @router.post("/roleplay/continue/stream")
@@ -815,7 +822,7 @@ async def roleplay_continue_stream(
             logger.exception("Roleplay streaming failed")
             yield _line({"type": "error", "message": "AI 답변을 생성하지 못했어요. 잠시 후 다시 시도해주세요."})
         finally:
-            await persist_usage_capture(usage_token, _user)
+            await safe_persist_usage_capture(usage_token, _user)
 
     return StreamingResponse(
         events(),
@@ -855,7 +862,7 @@ async def roleplay_summary(payload: RoleplaySummaryIn, session: SessionDep, _use
         )
         return {**result, "session_id": session_id}
     finally:
-        await persist_usage_capture(usage_token, _user)
+        await safe_persist_usage_capture(usage_token, _user)
 
 
 @router.post("/roleplay/save-words")
@@ -887,7 +894,7 @@ async def roleplay_save_words(payload: RoleplaySaveWordsIn, session: SessionDep,
         result = await insert_words(session, _user["id"], items)
         return {"ok": True, **result}
     finally:
-        await persist_usage_capture(usage_token, _user)
+        await safe_persist_usage_capture(usage_token, _user)
 
 
 @router.post("/roleplay/tts")
@@ -936,7 +943,7 @@ async def roleplay_tts(
             detail="AI 음성 생성에 실패했습니다. 잠시 후 다시 시도해주세요.",
         )
     finally:
-        await persist_usage_capture(usage_token, _user)
+        await safe_persist_usage_capture(usage_token, _user)
 
 
 @router.get("/roleplay/sessions")
