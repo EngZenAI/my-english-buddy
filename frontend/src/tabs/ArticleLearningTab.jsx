@@ -195,9 +195,14 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
   const study = sessionData?.study_json || studyMutation.data?.study || {};
   const completion = sessionData?.completion_json || completeMutation.data?.completion || {};
   const chunks = sessionData?.chunks || studyMutation.data?.chunks || [];
-  const refreshJob = refreshJobQuery.data || adminRefreshMutation.data || null;
+  const mutationRefreshJob =
+    adminRefreshMutation.data?.job_id === refreshJobId ? adminRefreshMutation.data : null;
+  const refreshJob = refreshJobQuery.isError
+    ? null
+    : refreshJobQuery.data || mutationRefreshJob || null;
   const isRefreshRunning =
-    adminRefreshMutation.isPending || refreshJob?.status === "queued" || refreshJob?.status === "running";
+    adminRefreshMutation.isPending ||
+    (!refreshJobQuery.isError && (refreshJob?.status === "queued" || refreshJob?.status === "running"));
   const refreshTotal = Number(refreshJob?.total_sources || 0);
   const refreshCompleted = Number(refreshJob?.completed_sources || 0);
   const refreshProgress = refreshTotal > 0 ? Math.round((refreshCompleted / refreshTotal) * 100) : 0;
@@ -321,6 +326,11 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
             {adminRefreshMutation.isError && (
               <p className="mt-2 text-xs text-rose-600">
                 업데이트 실패: {adminRefreshMutation.error?.message || "확인 필요"}
+              </p>
+            )}
+            {refreshJobQuery.isError && (
+              <p className="mt-2 text-xs text-rose-600">
+                업데이트 상태 확인 실패: {refreshJobQuery.error?.message || "확인 필요"}
               </p>
             )}
             {refreshJob && (

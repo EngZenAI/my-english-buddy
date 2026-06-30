@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 MEDIA_NS = "{http://search.yahoo.com/mrss/}"
 ATOM_NS = "{http://www.w3.org/2005/Atom}"
 CONTENT_NS = "{http://purl.org/rss/1.0/modules/content/}"
+DC_NS = "{http://purl.org/dc/elements/1.1/}"
 
 ALLOWED_TOPICS = {
     "world",
@@ -330,7 +331,7 @@ def parse_feed_entries(
             title = _child_text(item, "title")
             link = _child_text(item, "link")
             summary = _child_text(item, "description", f"{CONTENT_NS}encoded")
-            published = _child_text(item, "pubDate", "dc:date")
+            published = _child_text(item, "pubDate", f"{DC_NS}date")
             guid = _child_text(item, "guid") or link
             category = _child_text(item, "category")
 
@@ -396,25 +397,34 @@ def fetch_feed_entries(source: ArticleSource, timeout: int = 8, max_items: int =
         return []
     entries: list[dict[str, Any]] = []
     for feed in feeds:
-        response = requests.get(
-            feed.url,
-            timeout=timeout,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (compatible; EnglishBuddy/1.0; "
-                    "+https://example.com/english-buddy)"
-                )
-            },
-        )
-        response.raise_for_status()
-        entries.extend(
-            parse_feed_entries(
-                response.text,
-                source,
-                max_items=feed.scan_limit,
-                forced_topic=feed.topic,
+        try:
+            response = requests.get(
+                feed.url,
+                timeout=timeout,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (compatible; EnglishBuddy/1.0; "
+                        "+https://example.com/english-buddy)"
+                    )
+                },
             )
-        )
+            response.raise_for_status()
+            entries.extend(
+                parse_feed_entries(
+                    response.text,
+                    source,
+                    max_items=feed.scan_limit,
+                    forced_topic=feed.topic,
+                )
+            )
+        except Exception as exc:
+            logger.warning(
+                "article_feed_fetch_failed source=%s feed_url=%s error=%s",
+                source.key,
+                feed.url,
+                exc,
+            )
+            continue
     entries = _limit_by_topic(entries, per_topic_limit=max(1, max_items))
     for entry in entries:
         if not entry.get("image_url"):

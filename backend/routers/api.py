@@ -11,7 +11,6 @@ import io
 import json
 import logging
 import uuid
-from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
@@ -38,6 +37,7 @@ from backend.db.repositories import (
     bulk_import_words,
     bulk_update_words,
     count_words_by_tag,
+    create_article_refresh_job,
     delete_label,
     delete_article_session,
     delete_word,
@@ -47,6 +47,7 @@ from backend.db.repositories import (
     get_all_words,
     get_article_session,
     get_article_sessions,
+    get_article_refresh_job,
     get_article_catalog_item,
     get_activity_summary,
     get_quiz_stats,
@@ -69,7 +70,9 @@ from backend.db.repositories import (
     create_article_session,
     delete_roleplay_session,
     publish_article,
+    trim_article_refresh_jobs,
     update_article_completion,
+    update_article_refresh_job,
     update_article_study,
     upsert_feed_articles,
     update_user_password_hash,
@@ -103,7 +106,6 @@ router = APIRouter(prefix="/api", tags=["api"])
 logger = logging.getLogger(__name__)
 ROLEPLAY_TTS_MAX_CHARS = 400
 
-ARTICLE_REFRESH_JOBS: dict[str, dict] = {}
 ARTICLE_REFRESH_JOB_LIMIT = 20
 
 
@@ -265,23 +267,12 @@ class ArticlePublishIn(BaseModel):
     is_published: bool = True
 
 
-def _utc_now_iso() -> str:
-    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
+async def _trim_article_refresh_jobs(session: SessionDep) -> None:
+    await trim_article_refresh_jobs(session, ARTICLE_REFRESH_JOB_LIMIT)
 
 
-def _trim_article_refresh_jobs() -> None:
-    if len(ARTICLE_REFRESH_JOBS) <= ARTICLE_REFRESH_JOB_LIMIT:
-        return
-    ordered = sorted(
-        ARTICLE_REFRESH_JOBS.items(),
-        key=lambda item: item[1].get("created_at") or "",
-    )
-    for job_id, _job in ordered[: max(0, len(ARTICLE_REFRESH_JOBS) - ARTICLE_REFRESH_JOB_LIMIT)]:
-        ARTICLE_REFRESH_JOBS.pop(job_id, None)
-
-
-def _refresh_job_snapshot(job_id: str) -> dict:
-    job = ARTICLE_REFRESH_JOBS.get(job_id)
+async def _refresh_job_snapshot(session: SessionDep, job_id: str) -> dict:
+    job = await get_article_refresh_job(session, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="업데이트 작업을 찾을 수 없습니다.")
     return {
@@ -298,29 +289,31 @@ async def _run_article_feed_refresh_job(
 ) -> None:
     source_by_key = {source.key: source for source in SUPPORTED_SOURCES}
     sources = [source_by_key[key] for key in source_keys if key in source_by_key]
-    job = ARTICLE_REFRESH_JOBS.get(job_id)
-    if not job:
-        return
-
-    job.update(
-        {
-            "status": "running",
-            "started_at": _utc_now_iso(),
-            "current_source": "",
-            "message": "콘텐츠 업데이트를 시작했습니다.",
-        }
-    )
-    total_saved = 0
-    total_skipped = 0
 
     try:
         async with SessionFactory() as job_session:
+            job = await get_article_refresh_job(job_session, job_id)
+            if not job:
+                return
+
+            job = await update_article_refresh_job(
+                job_session,
+                job_id,
+                status="running",
+                started_at=True,
+                current_source="",
+                message="콘텐츠 업데이트를 시작했습니다.",
+            ) or job
+            results = list(job.get("results") or [])
+            total_saved = int(job.get("saved") or 0)
+            total_skipped = int(job.get("skipped") or 0)
+
             for source in sources:
-                job.update(
-                    {
-                        "current_source": source.name,
-                        "message": f"{source.name} 뉴스를 가져오는 중입니다.",
-                    }
+                await update_article_refresh_job(
+                    job_session,
+                    job_id,
+                    current_source=source.name,
+                    message=f"{source.name} 뉴스를 가져오는 중입니다.",
                 )
                 try:
                     entries = await run_in_threadpool(fetch_feed_entries, source, 8, max_items)
@@ -329,7 +322,7 @@ async def _run_article_feed_refresh_job(
                     skipped = int(result.get("skipped") or 0)
                     total_saved += saved
                     total_skipped += skipped
-                    job["results"].append(
+                    results.append(
                         {
                             "source_key": source.key,
                             "source": source.name,
@@ -342,7 +335,7 @@ async def _run_article_feed_refresh_job(
                     )
                 except Exception as exc:
                     await job_session.rollback()
-                    job["results"].append(
+                    results.append(
                         {
                             "source_key": source.key,
                             "source": source.name,
@@ -354,34 +347,47 @@ async def _run_article_feed_refresh_job(
                         }
                     )
                 finally:
-                    job["completed_sources"] = min(
-                        int(job.get("completed_sources") or 0) + 1,
+                    completed_sources = min(
+                        len(results),
                         int(job.get("total_sources") or len(sources)),
                     )
-                    job["saved"] = total_saved
-                    job["skipped"] = total_skipped
+                    job = await update_article_refresh_job(
+                        job_session,
+                        job_id,
+                        completed_sources=completed_sources,
+                        saved=total_saved,
+                        skipped=total_skipped,
+                        results=results,
+                    ) or job
 
-        has_success = any(item.get("ok") for item in job.get("results", []))
-        job.update(
-            {
-                "status": "completed" if has_success else "failed",
-                "current_source": "",
-                "finished_at": _utc_now_iso(),
-                "message": "콘텐츠 업데이트가 완료되었습니다." if has_success else "콘텐츠 업데이트에 실패했습니다.",
-                "ok": has_success,
-            }
-        )
+        has_success = any(item.get("ok") for item in results)
+        async with SessionFactory() as job_session:
+            await update_article_refresh_job(
+                job_session,
+                job_id,
+                status="completed" if has_success else "failed",
+                current_source="",
+                finished_at=True,
+                message=(
+                    "콘텐츠 업데이트가 완료되었습니다."
+                    if has_success
+                    else "콘텐츠 업데이트에 실패했습니다."
+                ),
+                ok=has_success,
+            )
     except Exception as exc:
-        job.update(
-            {
-                "status": "failed",
-                "current_source": "",
-                "finished_at": _utc_now_iso(),
-                "message": "콘텐츠 업데이트 중 오류가 발생했습니다.",
-                "error": str(exc),
-                "ok": False,
-            }
-        )
+        logger.exception("Article feed refresh job failed job_id=%s", job_id)
+        async with SessionFactory() as job_session:
+            await update_article_refresh_job(
+                job_session,
+                job_id,
+                status="failed",
+                current_source="",
+                finished_at=True,
+                message="콘텐츠 업데이트 중 오류가 발생했습니다.",
+                error=str(exc),
+                ok=False,
+            )
 
 
 # ── 현재 사용자 ─────────────────────────────────────────────
@@ -586,6 +592,7 @@ async def article_admin_list(
 async def article_feed_refresh(
     payload: ArticleFeedRefreshIn,
     background_tasks: BackgroundTasks,
+    session: SessionDep,
     _user: CurrentUserDep,
 ):
     _require_article_admin(_user)
@@ -602,7 +609,7 @@ async def article_feed_refresh(
         raise HTTPException(status_code=404, detail="업데이트할 언론사를 찾지 못했습니다.")
 
     job_id = uuid.uuid4().hex
-    ARTICLE_REFRESH_JOBS[job_id] = {
+    job = await create_article_refresh_job(session, {
         "job_id": job_id,
         "status": "queued",
         "ok": False,
@@ -615,11 +622,8 @@ async def article_feed_refresh(
         "results": [],
         "error": "",
         "message": "콘텐츠 업데이트 대기 중입니다.",
-        "created_at": _utc_now_iso(),
-        "started_at": None,
-        "finished_at": None,
-    }
-    _trim_article_refresh_jobs()
+    })
+    await _trim_article_refresh_jobs(session)
     background_tasks.add_task(
         _run_article_feed_refresh_job,
         job_id,
@@ -627,13 +631,13 @@ async def article_feed_refresh(
         bool(payload.publish),
         int(payload.max_items or 1),
     )
-    return _refresh_job_snapshot(job_id)
+    return job
 
 
 @router.get("/admin/article-feeds/refresh/{job_id}")
-async def article_feed_refresh_status(job_id: str, _user: CurrentUserDep):
+async def article_feed_refresh_status(job_id: str, session: SessionDep, _user: CurrentUserDep):
     _require_article_admin(_user)
-    return _refresh_job_snapshot(job_id)
+    return await _refresh_job_snapshot(session, job_id)
 
 
 @router.patch("/admin/articles/{article_id}/publish")

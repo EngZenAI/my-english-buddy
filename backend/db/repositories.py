@@ -306,6 +306,30 @@ async def init_db() -> None:
                     ON article_sessions (article_id)
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS article_refresh_jobs (
+                    job_id            TEXT PRIMARY KEY,
+                    status            TEXT NOT NULL,
+                    ok                BOOLEAN DEFAULT FALSE,
+                    source_key        TEXT,
+                    total_sources     INTEGER DEFAULT 0,
+                    completed_sources INTEGER DEFAULT 0,
+                    current_source    TEXT,
+                    saved             INTEGER DEFAULT 0,
+                    skipped           INTEGER DEFAULT 0,
+                    results           JSONB DEFAULT '[]'::jsonb,
+                    error             TEXT,
+                    message           TEXT,
+                    created_at        TIMESTAMP DEFAULT NOW(),
+                    started_at        TIMESTAMP,
+                    finished_at       TIMESTAMP,
+                    updated_at        TIMESTAMP DEFAULT NOW()
+                )
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS ix_article_refresh_jobs_status_created
+                    ON article_refresh_jobs (status, created_at DESC)
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS api_usage_events (
                     id            SERIAL PRIMARY KEY,
                     user_id       UUID,
@@ -2078,6 +2102,136 @@ async def list_admin_articles(
         "page_size": page_size,
         "total": int(count_result.scalar_one()),
     }
+
+
+def _iso_or_none(value) -> str | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat(timespec="seconds") + "Z"
+    return str(value)
+
+
+def _article_refresh_job(row) -> dict | None:
+    if not row:
+        return None
+    data = dict(row)
+    data["results"] = data.get("results") or []
+    for key in ("created_at", "started_at", "finished_at", "updated_at"):
+        data[key] = _iso_or_none(data.get(key))
+    return data
+
+
+async def create_article_refresh_job(session: AsyncSession, job: dict) -> dict:
+    result = await session.execute(
+        text(
+            """INSERT INTO article_refresh_jobs
+                   (job_id, status, ok, source_key, total_sources, completed_sources,
+                    current_source, saved, skipped, results, error, message)
+               VALUES
+                   (:job_id, :status, :ok, :source_key, :total_sources, :completed_sources,
+                    :current_source, :saved, :skipped, CAST(:results AS jsonb), :error, :message)
+               RETURNING job_id, status, ok, source_key, total_sources, completed_sources,
+                         current_source, saved, skipped, results, error, message,
+                         created_at, started_at, finished_at, updated_at"""
+        ),
+        {
+            "job_id": job.get("job_id"),
+            "status": job.get("status") or "queued",
+            "ok": bool(job.get("ok", False)),
+            "source_key": job.get("source_key") or "",
+            "total_sources": int(job.get("total_sources") or 0),
+            "completed_sources": int(job.get("completed_sources") or 0),
+            "current_source": job.get("current_source") or "",
+            "saved": int(job.get("saved") or 0),
+            "skipped": int(job.get("skipped") or 0),
+            "results": json.dumps(job.get("results") or [], ensure_ascii=False),
+            "error": job.get("error") or "",
+            "message": job.get("message") or "",
+        },
+    )
+    await session.commit()
+    return _article_refresh_job(result.mappings().first()) or {}
+
+
+async def get_article_refresh_job(session: AsyncSession, job_id: str) -> dict | None:
+    result = await session.execute(
+        text(
+            """SELECT job_id, status, ok, source_key, total_sources, completed_sources,
+                      current_source, saved, skipped, results, error, message,
+                      created_at, started_at, finished_at, updated_at
+               FROM article_refresh_jobs
+               WHERE job_id = :job_id"""
+        ),
+        {"job_id": job_id},
+    )
+    return _article_refresh_job(result.mappings().first())
+
+
+async def update_article_refresh_job(session: AsyncSession, job_id: str, **values) -> dict | None:
+    allowed = {
+        "status",
+        "ok",
+        "source_key",
+        "total_sources",
+        "completed_sources",
+        "current_source",
+        "saved",
+        "skipped",
+        "results",
+        "error",
+        "message",
+        "started_at",
+        "finished_at",
+    }
+    updates = {key: value for key, value in values.items() if key in allowed}
+    if not updates:
+        return await get_article_refresh_job(session, job_id)
+
+    assignments = []
+    params: dict[str, Any] = {"job_id": job_id}
+    for key, value in updates.items():
+        if key == "results":
+            assignments.append("results = CAST(:results AS jsonb)")
+            params[key] = json.dumps(value or [], ensure_ascii=False)
+        elif key in {"started_at", "finished_at"}:
+            assignments.append(f"{key} = NOW()")
+        else:
+            assignments.append(f"{key} = :{key}")
+            params[key] = value
+    assignments.append("updated_at = NOW()")
+
+    result = await session.execute(
+        text(
+            f"""UPDATE article_refresh_jobs
+                SET {', '.join(assignments)}
+                WHERE job_id = :job_id
+                RETURNING job_id, status, ok, source_key, total_sources, completed_sources,
+                          current_source, saved, skipped, results, error, message,
+                          created_at, started_at, finished_at, updated_at"""
+        ),
+        params,
+    )
+    await session.commit()
+    return _article_refresh_job(result.mappings().first())
+
+
+async def trim_article_refresh_jobs(session: AsyncSession, keep_count: int) -> None:
+    await session.execute(
+        text(
+            """WITH removable AS (
+                   SELECT job_id
+                   FROM article_refresh_jobs
+                   WHERE status IN ('completed', 'failed')
+                   ORDER BY created_at DESC, job_id DESC
+                   OFFSET :keep_count
+               )
+               DELETE FROM article_refresh_jobs
+               WHERE job_id IN (SELECT job_id FROM removable)"""
+        ),
+        {"keep_count": max(0, int(keep_count or 0))},
+    )
+    await session.commit()
 
 
 async def get_article_catalog_item(
