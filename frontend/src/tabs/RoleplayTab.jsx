@@ -397,10 +397,8 @@ export default function RoleplayTab({ user, onRequireLogin }) {
       await audio.play();
     } catch (error) {
       if (handledError) return;
-      if (!handledError) {
-        setSpeaking(false);
-        cleanup();
-      }
+      setSpeaking(false);
+      cleanup();
       throw error;
     }
   };
