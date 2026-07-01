@@ -238,7 +238,7 @@ export default function QuizTab({ user, onRequireLogin, quizState, setQuizState 
       <div className="flex flex-col gap-5 md:flex-row md:items-center justify-between border-b pb-4.5">
         <div>
           <h2 className="text-xl font-bold text-slate-800 tracking-tight dark:text-slate-100 flex items-center gap-1.5">
-            <Sparkles className="h-5 w-5 text-indigo-500 fill-indigo-100" />
+            <Sparkles className="h-5 w-5 text-brand-500 fill-brand-100" />
             AI 어휘 퀴즈
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">

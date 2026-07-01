@@ -30,17 +30,17 @@ export default function QuizResult({
 
   return (
     <Card className="shadow-[0_4px_20px_rgba(0,0,0,0.03)] border-slate-100/90 rounded-2xl overflow-hidden mt-6 animate-fadeIn select-none">
-      <CardHeader className="bg-indigo-50/50 dark:bg-indigo-950/20 border-b border-indigo-100/30 p-5 flex items-center justify-between flex-row">
+      <CardHeader className="bg-brand-50/70 dark:bg-brand-900/20 border-b border-brand-100 p-5 flex items-center justify-between flex-row">
         <div>
           <CardTitle className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
-            <Award className="h-5 w-5 text-indigo-500 stroke-[2.2]" />
+            <Award className="h-5 w-5 text-brand-500 stroke-[2.2]" />
             퀴즈 채점 성적 리포트
           </CardTitle>
           <CardDescription className="text-xs mt-0.5">실시간 인공지능 채점 결과입니다.</CardDescription>
         </div>
         <div className="text-right">
           <span className="text-[10px] font-bold text-slate-400 block uppercase">총점</span>
-          <span className="text-xl font-black text-indigo-600 tracking-tight">{scoreSummary}</span>
+          <span className="text-xl font-black text-brand-600 tracking-tight">{scoreSummary}</span>
         </div>
       </CardHeader>
       

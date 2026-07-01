@@ -290,10 +290,10 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
         {!user && <MemberNotice feature="뉴스 리딩" onRequireLogin={onRequireLogin} />}
 
         {user && isArticleAdmin && (
-          <div className="rounded-lg border border-indigo-200 bg-indigo-50/60 p-3">
+          <div className="rounded-lg border border-brand-200 bg-brand-50/80 p-3">
             <div className="mb-2">
-              <h4 className="text-sm font-bold text-indigo-950">콘텐츠 업데이트</h4>
-              <p className="text-xs text-indigo-700">
+              <h4 className="text-sm font-bold text-brand-800">콘텐츠 업데이트</h4>
+              <p className="text-xs text-brand-700">
                 언론사별 주요 뉴스를 가져와 학습 목록에 반영합니다.
               </p>
             </div>
@@ -302,7 +302,7 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
                 <select
                   value={feedSourceKey}
                   onChange={(event) => setFeedSourceKey(event.target.value)}
-                  className="h-9 min-w-[150px] rounded-lg border border-indigo-200 bg-white px-2 text-xs text-slate-700"
+                  className="h-9 min-w-[150px] rounded-lg border border-brand-200 bg-white px-2 text-xs text-slate-700"
                 >
                   <option value="">전체 언론사</option>
                   {(sourcesQuery.data?.sources || [])
@@ -317,7 +317,7 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
                   type="button"
                   onClick={refreshFeeds}
                   disabled={isRefreshRunning}
-                  className="h-9 rounded-lg bg-indigo-600 px-3 text-xs font-bold text-white disabled:opacity-50"
+                  className="h-9 rounded-lg bg-brand-600 px-3 text-xs font-bold text-white disabled:opacity-50"
                 >
                   {isRefreshRunning ? "업데이트 중" : "업데이트"}
                 </button>
@@ -350,7 +350,7 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
                 <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
                   <div
                     className={`h-full rounded-full transition-all ${
-                      refreshJob.status === "failed" ? "bg-rose-500" : "bg-indigo-600"
+                      refreshJob.status === "failed" ? "bg-rose-500" : "bg-brand-600"
                     }`}
                     style={{ width: `${refreshJob.status === "completed" ? 100 : refreshProgress}%` }}
                   />

@@ -240,7 +240,7 @@ export default function QuizScreen({
                     {result.study_note && (
                       <div className="pt-1.5 border-t border-slate-100/60 mt-1">
                         <span className="font-bold text-brand-500 block text-[9px] uppercase mb-1">📖 핵심 오답 가이드 & 팁</span>
-                        <p className="text-indigo-600 font-semibold bg-indigo-50/30 p-2 rounded-lg leading-relaxed">
+                        <p className="text-brand-700 font-semibold bg-brand-50/60 p-2 rounded-lg leading-relaxed">
                           {result.study_note}
                         </p>
                       </div>

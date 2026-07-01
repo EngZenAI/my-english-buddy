@@ -38,7 +38,7 @@ const CHART_COLORS = {
   correct: "#10b981", // emerald-500
   partial: "#f59e0b", // amber-500
   incorrect: "#ef4444", // red-500
-  accuracy: "#6366f1", // indigo-500 (brand)
+  accuracy: "#2f7d73",
   incorrectRate: "#fda4af", // rose-300
   grid: "#f1f5f9",
   axis: "#94a3b8",
