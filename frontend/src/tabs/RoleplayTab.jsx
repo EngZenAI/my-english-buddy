@@ -642,7 +642,13 @@ export default function RoleplayTab({ user, onRequireLogin }) {
   });
 
   const finish = () => {
-    if (summaryMutation.isPending || summaryInFlightRef.current || streaming || starting) return;
+    if (
+      summaryMutation.isPending ||
+      summaryInFlightRef.current ||
+      roleplayRequestInFlightRef.current
+    ) {
+      return;
+    }
     summaryInFlightRef.current = true;
     summaryMutation.mutate();
   };
@@ -664,7 +670,8 @@ export default function RoleplayTab({ user, onRequireLogin }) {
 
   const starting = startMutation.isPending;
   const sending = streaming;
-  const summarizing = summaryMutation.isPending;
+  const summarizing = summaryMutation.isPending || summaryInFlightRef.current;
+  const finishDisabled = summarizing || starting || sending;
 
   const cards = mode === "opic" ? OPIC_CARDS : GENERAL_CARDS;
 
@@ -888,7 +895,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
             {!summary && !showFinishNotice && (
               <button
                 onClick={finish}
-                disabled={summarizing || streaming || starting}
+                disabled={finishDisabled}
                 className={`rounded-lg px-3 py-1 text-xs font-semibold disabled:opacity-60 ${
                   reachedCap || reachedHardLimit
                     ? "bg-brand-600 text-white hover:bg-brand-700"
@@ -954,7 +961,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
               <button
                 type="button"
                 onClick={finish}
-                disabled={summarizing || streaming || starting}
+                disabled={finishDisabled}
                 className={`rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60 ${
                   reachedHardLimit
                     ? "bg-rose-600 hover:bg-rose-700"

@@ -1250,21 +1250,21 @@ async def roleplay_continue_stream(
         usage_token = start_usage_capture()
         reply_parts: list[str] = []
         sentinel = object()
-        iterator = stream_roleplay_reply(
-            context,
-            payload.message,
-            level=payload.level,
-            scenario=payload.scenario,
-            tag=payload.tag,
-            situation=payload.situation,
-            words=words,
-            wrap_up=payload.wrap_up,
-        )
 
         def _line(event: dict) -> str:
             return json.dumps(event, ensure_ascii=False) + "\n"
 
         try:
+            iterator = stream_roleplay_reply(
+                context,
+                payload.message,
+                level=payload.level,
+                scenario=payload.scenario,
+                tag=payload.tag,
+                situation=payload.situation,
+                words=words,
+                wrap_up=payload.wrap_up,
+            )
             while True:
                 if await request.is_disconnected():
                     return
