@@ -30,6 +30,14 @@ import { cn } from "@/lib/utils";
 
 const SIDEBAR_COLLAPSED_KEY = "englishBuddy.sidebarCollapsed";
 
+const tabIcons = {
+  search: Search,
+  wordbook: BookMarked,
+  articles: FileText,
+  roleplay: MessagesSquare,
+  quiz: ClipboardCheck,
+};
+
 export default function ResponsiveNav({
   tabs,
   value,
@@ -42,28 +50,20 @@ export default function ResponsiveNav({
 }) {
   const [collapsed, setCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
-    return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
+    try {
+      return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
+    } catch {
+      return false;
+    }
   });
 
   useEffect(() => {
-    window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed));
+    try {
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed));
+    } catch {
+      // Persistence is optional; keep rendering if storage is blocked.
+    }
   }, [collapsed]);
-
-  const icons = {
-    search: Search,
-    wordbook: BookMarked,
-    articles: FileText,
-    roleplay: MessagesSquare,
-    quiz: ClipboardCheck,
-  };
-
-  const desktopIcons = {
-    search: Search,
-    wordbook: BookMarked,
-    articles: FileText,
-    roleplay: MessagesSquare,
-    quiz: ClipboardCheck,
-  };
 
   const isHome = view === "home";
 
@@ -157,7 +157,7 @@ export default function ResponsiveNav({
 
           <nav className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overflow-x-hidden pr-0.5">
             {navItems.map((tab) => {
-              const Icon = desktopIcons[tab.id] || Search;
+              const Icon = tabIcons[tab.id] || Search;
               const isActive = isHome && value === tab.id;
 
               return (
@@ -329,7 +329,7 @@ export default function ResponsiveNav({
       {/* 하단 고정 캡슐 탭 바 (ref/image.png 디자인 이식) */}
       <nav className="md:hidden fixed bottom-4 left-4 right-4 h-15 bg-white/95 dark:bg-slate-950/95 backdrop-blur border border-slate-100/80 rounded-full flex items-center justify-around z-45 shadow-[0_8px_30px_rgba(0,0,0,0.06)] px-2.5">
         {tabs.map((tab) => {
-          const Icon = icons[tab.id] || Search;
+          const Icon = tabIcons[tab.id] || Search;
           const isActive = isHome && value === tab.id;
 
           return (
