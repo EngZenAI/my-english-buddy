@@ -301,6 +301,7 @@ export default function SearchTab({ user, onRequireLogin }) {
   const slangMutation = useMutation({
     mutationFn: ({ engWord, korWord }) => api.slang(engWord, korWord),
     onMutate: () => {
+      setSlangVisible(true);
       setSlangText("");
     },
     onSuccess: ({ explanation }, { engWord, korWord }) => {
@@ -319,7 +320,7 @@ export default function SearchTab({ user, onRequireLogin }) {
     setExample(r.example);
     setCustomExample(r.example);
     setPhonetic(r.phonetic || "");
-    setSlangVisible(!!r.english_word);
+    setSlangVisible(false);
     setSlangText("");
   };
 
@@ -507,6 +508,7 @@ export default function SearchTab({ user, onRequireLogin }) {
       return;
     }
     if (!engWord) {
+      setSlangVisible(true);
       setSlangText("단어를 먼저 검색해주세요.");
       return;
     }
@@ -641,6 +643,45 @@ export default function SearchTab({ user, onRequireLogin }) {
             />
           </div>
 
+          {eng.trim() && kor.trim() && (
+            <div className="px-5 pb-5">
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800">
+                      원하는 뜻이 아닌가요?
+                    </p>
+                    <p className="mt-1 text-xs font-medium text-slate-500">
+                      문맥에 맞는 의미를 AI에게 물어보고 저장 내용에 반영할 수 있습니다.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSlang}
+                    disabled={slangMutation.isPending || !eng.trim()}
+                    className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md border border-[#b7dcd3] bg-white px-3 text-xs font-semibold text-[#286d65] shadow-sm transition hover:bg-[#f4faf8] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {slangMutation.isPending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-3.5 w-3.5" />
+                    )}
+                    AI에게 물어보기
+                  </button>
+                </div>
+                {(slangVisible || slangText) && (
+                  <textarea
+                    rows={slangText ? 7 : 4}
+                    value={slangText}
+                    onChange={(e) => setSlangText(e.target.value)}
+                    placeholder="AI가 분석한 의미를 확인한 뒤 필요하면 고쳐서 저장할 수 있어요"
+                    className="mt-3 w-full resize-none rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm leading-6 text-slate-900 outline-none transition focus:border-[#5ba79a] focus:ring-2 focus:ring-[#d7ebe5]"
+                  />
+                )}
+              </div>
+            </div>
+          )}
+
           {!hasSearch && (
             <div className="mx-5 mb-5 rounded-md border border-slate-200 bg-white px-4 py-4 text-sm font-medium text-slate-600">
               영어 단어나 한국어 뜻을 입력하면 사전 정의, 번역, 예문, 저장 옵션이 표시됩니다.
@@ -688,41 +729,6 @@ export default function SearchTab({ user, onRequireLogin }) {
                 rows={5}
                 loading={searchLoading}
               />
-            </div>
-
-            <div className={SECTION_CARD_CLASS}>
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 text-amber-500" />
-                  <span className={SECTION_LABEL_CLASS}>AI 의미 분석</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleSlang}
-                  disabled={slangMutation.isPending || !eng.trim()}
-                  className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {slangMutation.isPending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Sparkles className="h-3.5 w-3.5" />
-                  )}
-                  AI에게 물어보기
-                </button>
-              </div>
-              {slangVisible || slangText ? (
-                <textarea
-                  rows={slangText ? 8 : 4}
-                  value={slangText}
-                  onChange={(e) => setSlangText(e.target.value)}
-                  placeholder="AI 답변을 받은 뒤 내 표현에 맞게 고쳐서 저장할 수 있어요"
-                  className="w-full resize-none rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm leading-6 text-slate-800 outline-none transition focus:border-[#5ba79a] focus:ring-2 focus:ring-[#d7ebe5]"
-                />
-              ) : (
-                <p className="text-sm font-medium leading-6 text-slate-600">
-                  검색 결과가 의도한 뜻과 다르면 AI 설명을 받아 저장 내용에 반영할 수 있습니다.
-                </p>
-              )}
             </div>
 
             {user && (
