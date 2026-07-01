@@ -12,6 +12,7 @@ import json
 import logging
 import threading
 import uuid
+from _thread import LockType
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
@@ -111,7 +112,7 @@ ROLEPLAY_BUSY_MESSAGE = "이전 롤플레잉 AI 응답이 아직 끝나지 않�
 ROLEPLAY_LIMIT_MESSAGE = "AI 롤플레잉 요청이 많아 잠시 대기 중입니다. 방금 전 요청이 끝난 뒤 다시 시도해주세요."
 
 _roleplay_lock_guard = threading.Lock()
-_roleplay_user_locks: dict[str, threading.Lock] = {}
+_roleplay_user_locks: dict[str, LockType] = {}
 
 ARTICLE_REFRESH_JOB_LIMIT = 20
 
@@ -1149,7 +1150,7 @@ def _needs_translation(value: str) -> bool:
     return not text or text in {"번역 실패", "translation failed"}
 
 
-def _roleplay_lock_for(user_id: str) -> threading.Lock:
+def _roleplay_lock_for(user_id: str) -> LockType:
     with _roleplay_lock_guard:
         lock = _roleplay_user_locks.get(user_id)
         if lock is None:
@@ -1158,14 +1159,14 @@ def _roleplay_lock_for(user_id: str) -> threading.Lock:
         return lock
 
 
-def _acquire_roleplay_request_lock(user_id: str) -> threading.Lock:
+def _acquire_roleplay_request_lock(user_id: str) -> LockType:
     lock = _roleplay_lock_for(str(user_id))
     if not lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail=ROLEPLAY_BUSY_MESSAGE)
     return lock
 
 
-def _release_roleplay_request_lock(lock: threading.Lock | None) -> None:
+def _release_roleplay_request_lock(lock: LockType | None) -> None:
     if not lock:
         return
     try:
@@ -1250,6 +1251,7 @@ async def roleplay_continue_stream(
         usage_token = start_usage_capture()
         reply_parts: list[str] = []
         sentinel = object()
+        iterator = None
 
         def _line(event: dict) -> str:
             return json.dumps(event, ensure_ascii=False) + "\n"
