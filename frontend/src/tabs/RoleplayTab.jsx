@@ -187,6 +187,8 @@ export default function RoleplayTab({ user, onRequireLogin }) {
   const startAbortRef = useRef(null);
   const streamAbortRef = useRef(null);
   const requestSeqRef = useRef(0);
+  const roleplayRequestInFlightRef = useRef(false);
+  const summaryInFlightRef = useRef(false);
 
   // 라벨은 태그 모드 칩 + 정리 페이지의 '단어장 추가' 태그 선택에 쓰이므로 로그인 시 로드.
   const labelsQuery = useQuery({
@@ -271,6 +273,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
 
   const cancelRoleplayRequests = () => {
     requestSeqRef.current += 1;
+    roleplayRequestInFlightRef.current = false;
     startAbortRef.current?.abort?.();
     streamAbortRef.current?.abort?.();
     startAbortRef.current = null;
@@ -326,20 +329,25 @@ export default function RoleplayTab({ user, onRequireLogin }) {
     onSuccess: ({ history }, variables) => {
       if (variables.requestId !== requestSeqRef.current) return;
       startAbortRef.current = null;
+      roleplayRequestInFlightRef.current = false;
       setMessages(pairsToMessages(history));
       if (isVoiceTab) playAssistantVoice(history?.[0]?.[1] || "");
       scrollToBottom();
     },
     onError: (_error, variables) => {
-      if (variables?.requestId === requestSeqRef.current) startAbortRef.current = null;
+      if (variables?.requestId === requestSeqRef.current) {
+        startAbortRef.current = null;
+        roleplayRequestInFlightRef.current = false;
+      }
     },
   });
 
   // 카드/태그/자유주제 클릭 → 즉시 시작.
   // title: 진행 중 칩에 보여줄 상황 제목(카드 라벨 / 자유주제 텍스트 / #태그).
   const start = ({ tag = null, situation = "", title = "" }) => {
-    if (startMutation.isPending) return;
+    if (startMutation.isPending || roleplayRequestInFlightRef.current) return;
     cancelRoleplayRequests();
+    roleplayRequestInFlightRef.current = true;
     const controller = new AbortController();
     const requestId = requestSeqRef.current + 1;
     requestSeqRef.current = requestId;
@@ -482,8 +490,9 @@ export default function RoleplayTab({ user, onRequireLogin }) {
 
   const sendText = async (inputText, { speakReply = false } = {}) => {
     const text = (inputText || "").trim();
-    if (!text || streaming) return;
+    if (!text || streaming || roleplayRequestInFlightRef.current) return;
     if (reachedHardLimit) return;
+    roleplayRequestInFlightRef.current = true;
     const pairs = messagesToPairs(messages);
     // 다음 응답이 정리 구간에 도달하면 AI가 자연스럽게 마무리하도록 wrapUp 전달.
     const wrapUp = userTurns + 1 >= WRAP_UP_TURN;
@@ -558,6 +567,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
     } finally {
       if (requestId === requestSeqRef.current) {
         streamAbortRef.current = null;
+        roleplayRequestInFlightRef.current = false;
         setStreaming(false);
       }
     }
@@ -619,6 +629,9 @@ export default function RoleplayTab({ user, onRequireLogin }) {
       setSaveTag((session && session.tag) || "");
       setSavedCount(null);
     },
+    onSettled: () => {
+      summaryInFlightRef.current = false;
+    },
   });
 
   const saveWordsMutation = useMutation({
@@ -629,7 +642,14 @@ export default function RoleplayTab({ user, onRequireLogin }) {
   });
 
   const finish = () => {
-    if (summaryMutation.isPending) return;
+    if (
+      summaryMutation.isPending ||
+      summaryInFlightRef.current ||
+      roleplayRequestInFlightRef.current
+    ) {
+      return;
+    }
+    summaryInFlightRef.current = true;
     summaryMutation.mutate();
   };
 
@@ -650,7 +670,8 @@ export default function RoleplayTab({ user, onRequireLogin }) {
 
   const starting = startMutation.isPending;
   const sending = streaming;
-  const summarizing = summaryMutation.isPending;
+  const summarizing = summaryMutation.isPending || summaryInFlightRef.current;
+  const finishDisabled = summarizing || starting || sending;
 
   const cards = mode === "opic" ? OPIC_CARDS : GENERAL_CARDS;
 
@@ -874,7 +895,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
             {!summary && !showFinishNotice && (
               <button
                 onClick={finish}
-                disabled={summarizing}
+                disabled={finishDisabled}
                 className={`rounded-lg px-3 py-1 text-xs font-semibold disabled:opacity-60 ${
                   reachedCap || reachedHardLimit
                     ? "bg-brand-600 text-white hover:bg-brand-700"
@@ -940,7 +961,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
               <button
                 type="button"
                 onClick={finish}
-                disabled={summarizing}
+                disabled={finishDisabled}
                 className={`rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60 ${
                   reachedHardLimit
                     ? "bg-rose-600 hover:bg-rose-700"
