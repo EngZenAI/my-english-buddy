@@ -274,7 +274,7 @@ export default function ResponsiveNav({
       {/* 2. 모바일 네비게이션: 상단 헤더 + 하단 탭 바 (md 미만에서만 노출) */}
       {/* ========================================================================= */}
       {/* 상단 미니 헤더 */}
-      <header className="md:hidden sticky top-0 left-0 right-0 h-14 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-4 flex items-center justify-between z-40 select-none">
+      <header className="md:hidden sticky top-0 left-0 right-0 h-14 border-b border-[#e1ddd4] bg-[#f6f3ee]/95 backdrop-blur supports-[backdrop-filter]:bg-[#f6f3ee]/75 px-4 flex items-center justify-between z-40 select-none">
         <div className="flex items-center gap-2">
           {!isHome && (
             <Button
@@ -287,7 +287,7 @@ export default function ResponsiveNav({
               <ChevronLeft className="h-5 w-5" />
             </Button>
           )}
-          <span className={`font-bold tracking-tight text-foreground ${isHome ? "text-lg text-[#5c6bf2] dark:text-indigo-400 font-extrabold" : "text-base"}`}>
+          <span className={`font-bold tracking-tight text-foreground ${isHome ? "text-lg text-[#2f7d73] font-extrabold" : "text-base"}`}>
             {getMobileTitle()}
           </span>
         </div>
@@ -303,7 +303,7 @@ export default function ResponsiveNav({
                 className="h-9 w-9 rounded-full bg-slate-50 dark:bg-slate-900 border"
               >
                 <Avatar className="h-8 w-8">
-                  <AvatarFallback className="bg-[#eff2fe] text-[#5c6bf2] text-[10px] font-bold">
+                  <AvatarFallback className="bg-[#e7f3ef] text-[#235f58] text-[10px] font-bold">
                     {getUserInitials()}
                   </AvatarFallback>
                 </Avatar>
@@ -316,7 +316,7 @@ export default function ResponsiveNav({
                 variant="ghost"
                 size="sm"
                 onClick={onLogin}
-                className="text-xs text-[#5c6bf2] hover:text-[#4958df] hover:bg-brand-50 gap-1 rounded-full px-3"
+                className="text-xs text-[#2f7d73] hover:text-[#235f58] hover:bg-brand-50 gap-1 rounded-full px-3"
               >
                 <LogIn className="h-3.5 w-3.5" />
                 로그인
@@ -327,7 +327,7 @@ export default function ResponsiveNav({
       </header>
 
       {/* 하단 고정 캡슐 탭 바 (ref/image.png 디자인 이식) */}
-      <nav className="md:hidden fixed bottom-4 left-4 right-4 h-15 bg-white/95 dark:bg-slate-950/95 backdrop-blur border border-slate-100/80 rounded-full flex items-center justify-around z-45 shadow-[0_8px_30px_rgba(0,0,0,0.06)] px-2.5">
+      <nav className="md:hidden fixed bottom-4 left-4 right-4 h-15 bg-white/95 backdrop-blur border border-[#e1ddd4]/80 rounded-full flex items-center justify-around z-45 shadow-[0_10px_30px_rgba(99,88,72,0.10)] px-2.5">
         {tabs.map((tab) => {
           const Icon = tabIcons[tab.id] || Search;
           const isActive = isHome && value === tab.id;
@@ -342,8 +342,8 @@ export default function ResponsiveNav({
               }}
               className={`flex items-center gap-1.5 py-2 px-3.5 rounded-full transition-all duration-300 ${
                 isActive
-                  ? "bg-[#eff2fe] text-[#5c6bf2] dark:bg-indigo-950/50 dark:text-indigo-300 font-extrabold scale-100"
-                  : "text-slate-400 hover:text-slate-600 dark:text-slate-600 p-2"
+                  ? "bg-[#e7f3ef] text-[#2f7d73] font-extrabold scale-100"
+                  : "text-slate-400 hover:text-slate-600 p-2"
               }`}
             >
               <Icon className={`h-5 w-5 ${isActive ? "stroke-[2.5]" : "stroke-[1.8]"}`} />
