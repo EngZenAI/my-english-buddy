@@ -15,6 +15,7 @@ import { queryKeys } from "../queryClient";
 import AudioButton from "../components/AudioButton";
 import { LoadingSpinner, SkeletonBlock } from "../components/AsyncState";
 import MemberNotice from "../components/MemberNotice";
+import SystemNotice from "../components/common/SystemNotice";
 
 const DEBOUNCE_MS = 250;
 const RECENT_SEARCHES_KEY = "englishBuddy.recentSearches.v1";
@@ -582,14 +583,18 @@ export default function SearchTab({ user, onRequireLogin }) {
             }}
           >
             <div className="min-w-0 flex-1">
-              {eng.trim() && (
+              {!hasSearch ? (
+                <SystemNotice>
+                  영어 단어, 한국어 뜻, 예문을 함께 정리하여 단어장에 추가해 보세요.
+                </SystemNotice>
+              ) : eng.trim() ? (
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="truncate text-2xl font-bold tracking-normal text-slate-950">
                     {eng.trim()}
                   </h2>
                   <AudioButton word={eng} lang="en" phonetic={phonetic} />
                 </div>
-              )}
+              ) : null}
               {phonetic && (
                 <p className="mt-1 text-sm text-slate-400">{phonetic}</p>
               )}
@@ -610,11 +615,13 @@ export default function SearchTab({ user, onRequireLogin }) {
               ) : searchQuery.isError ? (
                 <span className="text-sm font-medium text-rose-500">검색 실패</span>
               ) : null}
-              <SaveButton
-                saved={saved}
-                onClick={handleSave}
-                disabled={saveDisabled}
-              />
+              {hasSearch && (
+                <SaveButton
+                  saved={saved}
+                  onClick={handleSave}
+                  disabled={saveDisabled}
+                />
+              )}
             </div>
           </div>
 
@@ -679,12 +686,6 @@ export default function SearchTab({ user, onRequireLogin }) {
                   />
                 )}
               </div>
-            </div>
-          )}
-
-          {!hasSearch && (
-            <div className="mx-5 mb-5 rounded-md border border-slate-200 bg-white px-4 py-4 text-sm font-medium text-slate-600">
-              영어 단어나 한국어 뜻을 입력하면 사전 정의, 번역, 예문, 저장 옵션이 표시됩니다.
             </div>
           )}
 

@@ -761,7 +761,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
               title={filter ? `'${filter}' 태그의 단어가 없어요.` : "저장된 단어가 없어요."}
               description={
                 filter
-                  ? "다른 태그를 골라보거나 단어를 추가해보세요."
+                  ? "다른 태그를 골라보거나 단어를 추가해 보세요."
                   : "단어 검색 탭에서 저장하거나 CSV를 가져와보세요!"
               }
             />
