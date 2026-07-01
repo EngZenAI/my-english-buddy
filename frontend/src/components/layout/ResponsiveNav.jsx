@@ -1,6 +1,42 @@
-import { Search, BookOpen, PenLine, MessageCircle, LogIn, LogOut, ChevronLeft, Newspaper } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  BookMarked,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsUpDown,
+  ClipboardCheck,
+  FileText,
+  LogIn,
+  LogOut,
+  MessagesSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Search,
+  Settings,
+} from "lucide-react";
+import englishBuddyLogo from "@/assets/english-buddy-logo.svg";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Separator } from "@/components/ui/separator";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
+
+const SIDEBAR_COLLAPSED_KEY = "englishBuddy.sidebarCollapsed";
+
+const tabIcons = {
+  search: Search,
+  wordbook: BookMarked,
+  articles: FileText,
+  roleplay: MessagesSquare,
+  quiz: ClipboardCheck,
+};
 
 export default function ResponsiveNav({
   tabs,
@@ -12,13 +48,22 @@ export default function ResponsiveNav({
   onLogin,
   onLogout,
 }) {
-  const icons = {
-    search: Search,
-    wordbook: BookOpen,
-    articles: Newspaper,
-    quiz: PenLine,
-    roleplay: MessageCircle,
-  };
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed));
+    } catch {
+      // Persistence is optional; keep rendering if storage is blocked.
+    }
+  }, [collapsed]);
 
   const isHome = view === "home";
 
@@ -39,97 +84,187 @@ export default function ResponsiveNav({
     return user.email.substring(0, 2).toUpperCase();
   };
 
+  const navItems = tabs.map((tab) => {
+    return tab;
+  });
+
+  const goHome = () => setView("home");
+
   return (
     <>
       {/* ========================================================================= */}
       {/* 1. PC/데스크톱 네비게이션: 좌측 사이드바 (md 이상에서만 노출) */}
       {/* ========================================================================= */}
-      <aside className="hidden md:flex h-dvh w-64 shrink-0 select-none flex-col justify-between overflow-y-auto border-r bg-card p-5">
-        <div className="flex flex-col gap-6">
-          {/* 로고 영역 */}
-          <button
-            type="button"
-            onClick={() => setView("home")}
-            className="flex items-center gap-2 px-2 cursor-pointer text-left"
-          >
-            <Compass className="h-6 w-6 text-[#5c6bf2] stroke-[2.5]" />
-            <span className="font-extrabold text-lg text-slate-800 dark:text-slate-100 tracking-tight">
-              English Buddy
-            </span>
-          </button>
+      <aside
+        className={cn(
+          "relative hidden h-dvh shrink-0 select-none flex-col justify-between overflow-hidden border-r border-[#e1ddd4] bg-[#f6f3ee] text-slate-700 shadow-[18px_0_40px_rgba(99,88,72,0.08)] transition-[width] duration-200 ease-out md:flex",
+          collapsed ? "w-20" : "w-[290px]"
+        )}
+      >
+        <div className={cn("relative flex min-h-0 flex-1 flex-col", collapsed ? "px-3 py-5" : "px-5 py-6")}>
+          <div className={cn("mb-8 flex items-center", collapsed ? "justify-center" : "justify-between gap-3")}>
+            <button
+              type="button"
+              onClick={goHome}
+              className={cn(
+                "flex min-w-0 items-center gap-3 rounded-lg text-left outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[#2f7d73]/30",
+                collapsed && "justify-center"
+              )}
+              title="English Buddy"
+            >
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center">
+                <img
+                  src={englishBuddyLogo}
+                  alt=""
+                  aria-hidden="true"
+                  className="block h-10 w-10 drop-shadow-[0_8px_18px_rgba(47,125,115,0.18)]"
+                  draggable="false"
+                />
+              </span>
+              {!collapsed && (
+                <span className="truncate text-xl font-extrabold tracking-tight text-slate-900">
+                  English Buddy
+                </span>
+              )}
+            </button>
 
-          {/* 탭 목록 */}
-          <nav className="flex flex-col gap-1.5">
-            {tabs.map((tab) => {
-              const Icon = icons[tab.id] || Search;
+            {!collapsed && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => setCollapsed(true)}
+                className="h-9 w-9 shrink-0 rounded-lg text-slate-500 hover:bg-white hover:text-slate-900"
+                aria-label="사이드바 접기"
+              >
+                <PanelLeftClose className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+
+          {collapsed && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => setCollapsed(false)}
+              className="mx-auto mb-6 h-9 w-9 rounded-lg text-slate-500 hover:bg-white hover:text-slate-900"
+              aria-label="사이드바 펼치기"
+            >
+              <PanelLeftOpen className="h-4 w-4" />
+            </Button>
+          )}
+
+          <nav className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overflow-x-hidden pr-0.5">
+            {navItems.map((tab) => {
+              const Icon = tabIcons[tab.id] || Search;
               const isActive = isHome && value === tab.id;
 
               return (
                 <button
                   key={tab.id}
                   type="button"
+                  title={collapsed ? tab.label : undefined}
                   onClick={() => {
                     setView("home");
                     onChange(tab.id);
                   }}
-                  className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all duration-200 text-sm font-semibold ${
+                  className={cn(
+                    "group flex h-12 items-center rounded-xl text-sm font-semibold outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#2f7d73]/30",
+                    collapsed ? "justify-center px-0" : "gap-3 px-4",
                     isActive
-                      ? "bg-[#eff2fe] text-[#5c6bf2] dark:bg-indigo-950/40 dark:text-indigo-300"
-                      : "text-slate-500 hover:text-slate-800 hover:bg-[#eff2fe]/30 dark:text-slate-400 dark:hover:text-slate-200"
-                  }`}
+                      ? "bg-white text-[#2f7d73] shadow-sm ring-1 ring-[#e7e1d7]"
+                      : "text-slate-600 hover:bg-white/70 hover:text-slate-950"
+                  )}
                 >
-                  <Icon className={`h-4.5 w-4.5 ${isActive ? "stroke-[2.5]" : "stroke-[1.8]"}`} />
-                  <span>{tab.label}</span>
+                  <span
+                    className={cn(
+                      "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors",
+                      isActive ? "bg-[#e7f3ef] text-[#2f7d73]" : "text-slate-500 group-hover:text-slate-900"
+                    )}
+                  >
+                    <Icon className={cn("h-5 w-5", isActive ? "stroke-[2.4]" : "stroke-[1.9]")} />
+                  </span>
+                  {!collapsed && <span className="truncate">{tab.label}</span>}
+                  {!collapsed && isActive && <ChevronRight className="ml-auto h-4 w-4 text-[#2f7d73]/70" />}
                 </button>
               );
             })}
           </nav>
         </div>
 
-        {/* 하단 유저 프로필 및 계정 관련 액션 */}
-        <div className="border-t pt-4 flex flex-col gap-2">
+        <div className={cn("relative border-t border-[#e1ddd4]", collapsed ? "px-3 py-4" : "p-5")}>
+          {!collapsed && <Separator className="mb-4 bg-[#e1ddd4]" />}
+
           {user ? (
-            <div className="flex flex-col gap-3">
-              <button
-                type="button"
-                onClick={() => setView("mypage")}
-                className={`flex w-full items-center gap-3 p-2 rounded-xl cursor-pointer text-left transition-colors ${
-                  view === "mypage" 
-                    ? "bg-[#eff2fe] dark:bg-indigo-950/20" 
-                    : "hover:bg-slate-50 dark:hover:bg-slate-900/50"
-                }`}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className={cn(
+                    "flex w-full min-w-0 items-center rounded-xl text-left outline-none transition-colors hover:bg-white focus-visible:ring-2 focus-visible:ring-[#2f7d73]/30 data-[state=open]:bg-white",
+                    collapsed ? "h-11 justify-center px-0" : "gap-3 px-2 py-2"
+                  )}
+                  title={collapsed ? user.email : undefined}
+                  aria-label="계정 메뉴"
+                >
+                  <Avatar className="h-10 w-10 shrink-0 border border-[#e1ddd4]">
+                    <AvatarFallback className="bg-[#e7f3ef] text-xs font-extrabold text-[#235f58]">
+                      {getUserInitials()}
+                    </AvatarFallback>
+                  </Avatar>
+                  {!collapsed && (
+                    <>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-bold text-slate-900">{user.email}</div>
+                        <div className="text-xs font-medium text-[#2f7d73]">로그인됨</div>
+                      </div>
+                      <ChevronsUpDown className="h-4 w-4 shrink-0 text-slate-500" />
+                    </>
+                  )}
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                side="top"
+                align={collapsed ? "center" : "end"}
+                sideOffset={10}
+                className="w-56 border-[#d8d0c3] bg-[#f2eee7] text-slate-800 shadow-[0_16px_36px_rgba(99,88,72,0.14)]"
               >
-                <Avatar className="h-9 w-9 border border-[#eff2fe]">
-                  <AvatarFallback className="bg-[#eff2fe] text-[#5c6bf2] text-xs font-bold">
-                    {getUserInitials()}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="flex flex-col min-w-0">
-                  <span className="text-xs text-slate-400 font-medium">마이페이지</span>
-                  <span className="text-sm text-slate-700 dark:text-slate-300 font-semibold truncate">
+                <DropdownMenuLabel className="min-w-0">
+                  <div className="truncate text-sm font-semibold">계정</div>
+                  <div className="truncate text-xs font-normal text-slate-500">
                     {user.email}
-                  </span>
-                </div>
-              </button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={onLogout}
-                className="w-full justify-start text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/5 gap-2 px-3 h-9 rounded-lg"
-              >
-                <LogOut className="h-4 w-4" />
-                로그아웃
-              </Button>
-            </div>
+                  </div>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator className="bg-[#ded6ca]" />
+                <DropdownMenuItem
+                  onSelect={() => setView("mypage")}
+                  className="focus:bg-[#e7f3ef] focus:text-[#235f58]"
+                >
+                  <Settings className="h-4 w-4" />
+                  계정 설정
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={onLogout}
+                  className="text-destructive focus:bg-[#f8e7e3] focus:text-destructive"
+                >
+                  <LogOut className="h-4 w-4" />
+                  로그아웃
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           ) : (
             <Button
               type="button"
               onClick={onLogin}
-              className="w-full bg-[#5c6bf2] hover:bg-[#4958df] text-white shadow-sm flex items-center justify-center gap-2 py-2.5 h-10 rounded-xl font-bold text-sm transition-all"
+              className={cn(
+                "bg-[#2f7d73] font-bold text-white shadow-[0_10px_24px_rgba(47,125,115,0.16)] hover:bg-[#286d65]",
+                collapsed ? "h-11 w-11 rounded-xl p-0" : "h-11 w-full rounded-xl"
+              )}
+              aria-label="로그인"
             >
               <LogIn className="h-4 w-4" />
-              로그인
+              {!collapsed && "로그인"}
             </Button>
           )}
         </div>
@@ -194,7 +329,7 @@ export default function ResponsiveNav({
       {/* 하단 고정 캡슐 탭 바 (ref/image.png 디자인 이식) */}
       <nav className="md:hidden fixed bottom-4 left-4 right-4 h-15 bg-white/95 dark:bg-slate-950/95 backdrop-blur border border-slate-100/80 rounded-full flex items-center justify-around z-45 shadow-[0_8px_30px_rgba(0,0,0,0.06)] px-2.5">
         {tabs.map((tab) => {
-          const Icon = icons[tab.id] || Search;
+          const Icon = tabIcons[tab.id] || Search;
           const isActive = isHome && value === tab.id;
 
           return (
@@ -218,25 +353,5 @@ export default function ResponsiveNav({
         })}
       </nav>
     </>
-  );
-}
-
-// Compass 아이콘
-function Compass({ className, ...props }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      {...props}
-    >
-      <circle cx="12" cy="12" r="10" />
-      <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
-    </svg>
   );
 }
