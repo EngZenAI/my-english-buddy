@@ -1,16 +1,57 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Bookmark,
+  CheckCircle2,
+  Loader2,
+  Plus,
+  Search,
+  Sparkles,
+  Tags,
+  X,
+} from "lucide-react";
 import { api } from "../api";
 import { queryKeys } from "../queryClient";
 import AudioButton from "../components/AudioButton";
 import { LoadingSpinner, SkeletonBlock } from "../components/AsyncState";
 import MemberNotice from "../components/MemberNotice";
 
-const LabelChip = ({ children }) => (
-  <span className="inline-flex items-center justify-center bg-brand-50 text-brand-600
-                   text-[13px] font-semibold px-3 py-[5px] rounded-full whitespace-nowrap">
+const DEBOUNCE_MS = 250;
+const RECENT_SEARCHES_KEY = "englishBuddy.recentSearches.v1";
+const MAX_RECENT_SEARCHES = 12;
+
+const isKoreanQuery = (value) => /[ㄱ-ㅎㅏ-ㅣ가-힣]/.test(value);
+
+const loadRecentSearches = () => {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(RECENT_SEARCHES_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed.slice(0, MAX_RECENT_SEARCHES) : [];
+  } catch {
+    return [];
+  }
+};
+
+const persistRecentSearches = (items) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(items));
+  } catch {
+    // Local browser history is best-effort only.
+  }
+};
+
+const getRecentKey = (entry) =>
+  `${entry.type}:${(entry.query || entry.word || "").trim().toLowerCase()}`;
+
+const IconButton = ({ children, className = "", ...props }) => (
+  <button
+    type="button"
+    className={`inline-flex h-10 w-10 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
+    {...props}
+  >
     {children}
-  </span>
+  </button>
 );
 
 const SaveButton = ({ saved, onClick, disabled }) => (
@@ -18,48 +59,135 @@ const SaveButton = ({ saved, onClick, disabled }) => (
     type="button"
     onClick={onClick}
     disabled={disabled}
-    className={`rounded-full text-[13px] font-medium px-3.5 h-8 border-[1.5px] transition-colors
-      ${saved
-        ? "text-slate-500 border-slate-200 bg-slate-50"
-        : "text-brand-600 border-brand-200 bg-white hover:bg-brand-50"}
-      disabled:opacity-60 disabled:cursor-not-allowed`}
+    className={`inline-flex h-9 min-w-[104px] items-center justify-center gap-1.5 rounded-full border px-3.5 text-sm font-semibold transition-colors
+      ${
+        saved
+          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+          : "border-[#b7dcd3] bg-[#e7f3ef] text-[#286d65] hover:bg-[#d7ebe5]"
+      }
+      disabled:cursor-not-allowed disabled:opacity-60`}
   >
-    {saved ? "✅ 저장됨" : "📥 단어장에 저장"}
+    {saved ? (
+      <>
+        <CheckCircle2 className="h-4 w-4" />
+        저장됨
+      </>
+    ) : (
+      <>
+        <Bookmark className="h-4 w-4" />
+        단어장에 저장
+      </>
+    )}
   </button>
 );
 
+const SECTION_CARD_CLASS = "rounded-md border border-slate-200 bg-white p-4";
+const SECTION_LABEL_CLASS = "text-sm font-semibold text-slate-800";
+
 const ReadOnlyField = ({ label, value, rows = 3, loading }) => (
-  <div className="mb-3">
-    <label className="block text-sm text-slate-500 mb-1">{label}</label>
+  <div className={SECTION_CARD_CLASS}>
+    <label className={`mb-3 block ${SECTION_LABEL_CLASS}`}>{label}</label>
     {loading ? (
       <SkeletonBlock className={rows >= 4 ? "h-28" : "h-24"} />
     ) : (
-    <textarea
-      readOnly
-      rows={rows}
-      value={value || ""}
-      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm
-                 text-slate-800 resize-none whitespace-pre-wrap"
-    />
+      <textarea
+        readOnly
+        rows={rows}
+        value={value || ""}
+        className="w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm leading-6 text-slate-900 outline-none"
+      />
     )}
   </div>
 );
 
-const DEBOUNCE_MS = 250;
+const SearchInputRow = ({
+  label,
+  value,
+  onChange,
+  onSearch,
+  placeholder,
+  audio,
+}) => (
+  <div className={SECTION_CARD_CLASS}>
+    <div className="mb-3 flex items-center justify-between gap-3">
+      <span className={SECTION_LABEL_CLASS}>{label}</span>
+      {audio}
+    </div>
+    <div className="flex items-center gap-2">
+      <input
+        value={value}
+        onChange={onChange}
+        onKeyDown={(e) => e.key === "Enter" && onSearch()}
+        placeholder={placeholder}
+        className="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-[#5ba79a] focus:ring-2 focus:ring-[#d7ebe5]"
+      />
+      <IconButton onClick={onSearch} aria-label={`${label} 검색`}>
+        <Search className="h-4 w-4" />
+      </IconButton>
+    </div>
+  </div>
+);
+
+function RecentSearchChips({ items, onSelect, onRemove }) {
+  if (items.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 pt-2">
+      <span className="mr-1 text-xs font-semibold text-slate-500">최근 검색</span>
+      {items.map((item) => {
+        const title = item.word || item.query;
+        const subtitle = item.korean || "";
+        return (
+          <span
+            key={getRecentKey(item)}
+            className="group inline-flex max-w-full items-center overflow-hidden rounded-full border border-slate-200 bg-white text-xs shadow-sm transition hover:border-[#b7dcd3] hover:bg-[#f4faf8]"
+          >
+            <button
+              type="button"
+              onClick={() => onSelect(item)}
+              className="inline-flex min-w-0 items-center gap-2 py-1.5 pl-3 pr-1 text-left"
+            >
+              <span className="min-w-0 truncate font-semibold text-slate-800">
+                {title}
+              </span>
+              {subtitle && (
+                <span className="hidden max-w-24 truncate text-slate-400 sm:inline">
+                  {subtitle}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              aria-label={`${title} 최근 검색 삭제`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemove(item);
+              }}
+              className="mr-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
 
 export default function SearchTab({ user, onRequireLogin }) {
   const queryClient = useQueryClient();
+  const [quickQuery, setQuickQuery] = useState("");
+  const [recentSearches, setRecentSearches] = useState(loadRecentSearches);
   const [eng, setEng] = useState("");
   const [kor, setKor] = useState("");
   const [engDef, setEngDef] = useState("");
   const [korDetail, setKorDetail] = useState("");
   const [example, setExample] = useState("");
-  const [customExample, setCustomExample] = useState(""); // 내 맞춤 예문 (편집/저장 대상)
+  const [customExample, setCustomExample] = useState("");
   const [phonetic, setPhonetic] = useState("");
-  const [gate, setGate] = useState(""); // 비회원 기능 안내 (표시할 기능명, "" = 숨김)
+  const [gate, setGate] = useState("");
 
-  // 태그(카테고리)
-  const [label, setLabel] = useState("미지정"); // 현재 선택된 태그 (기본: 미지정)
+  const [label, setLabel] = useState("미지정");
   const [newLabel, setNewLabel] = useState("");
   const [adding, setAdding] = useState(false);
   const [labelError, setLabelError] = useState("");
@@ -72,9 +200,7 @@ export default function SearchTab({ user, onRequireLogin }) {
   const reqSeq = useRef(0);
   const appliedSearchKey = useRef("");
   const [searchRequest, setSearchRequest] = useState(null);
-  const [appliedKey, setAppliedKey] = useState(""); // 현재 입력에 반영된 검색 결과 key (검색 완료 판정용)
-  // 가장 최근에 '완료된' 검색이 실제로 가리키는 영어 단어. 저장 대상(eng)과 일치할 때만 저장 허용.
-  // (디바운스 중엔 searchRequest가 이전 단어를 가리켜 '완료'처럼 보이는 레이스를 막는다.)
+  const [appliedKey, setAppliedKey] = useState("");
   const [settledWord, setSettledWord] = useState("");
 
   const labelsQuery = useQuery({
@@ -99,32 +225,57 @@ export default function SearchTab({ user, onRequireLogin }) {
     gcTime: 24 * 60 * 60_000,
   });
 
-  // 검색이 '현재 입력'에 대해 끝났는지 (로딩 중이거나 이전 결과면 false)
   const currentKey = searchRequest
     ? `${searchRequest.type}:${searchRequest.word}`
     : "";
   const searchSettled =
     !!searchRequest && !searchQuery.isFetching && appliedKey === currentKey;
 
-  // 저장 여부는 '실제로 저장할 단어(eng)' 기준으로, 검색이 끝난 뒤에만 조회한다.
   const savedWord = eng.trim();
   const userId = user?.id || "";
   const savedQuery = useQuery({
     queryKey: queryKeys.wordSaved(userId, savedWord),
     queryFn: ({ signal }) => api.wordSaved(savedWord, signal),
     enabled: !!userId && !!savedWord && searchSettled,
-    staleTime: 0, // 활성 단어가 바뀌면 항상 DB 저장여부를 재확인 (옛 false 캐시로 덮어쓰기 방지)
+    staleTime: 0,
   });
 
-  // 저장 여부는 savedQuery에서 '직접 파생'한다. (effect로 state에 복사하면 react-query의
-  // structural sharing 때문에 같은 단어 재검색 시 참조가 안 바뀌어 갱신이 안 되는 버그가 있음.)
   const saved = savedQuery.data?.saved === true;
+
+  const rememberSearch = (entry) => {
+    const query = (entry.query || entry.word || "").trim();
+    if (!query) return;
+    const normalized = {
+      type: entry.type,
+      query,
+      word: (entry.word || query).trim(),
+      korean: (entry.korean || "").trim(),
+      createdAt: Date.now(),
+    };
+    setRecentSearches((prev) => {
+      const key = getRecentKey(normalized);
+      const next = [
+        normalized,
+        ...prev.filter((item) => getRecentKey(item) !== key),
+      ].slice(0, MAX_RECENT_SEARCHES);
+      persistRecentSearches(next);
+      return next;
+    });
+  };
+
+  const removeRecentSearch = (entry) => {
+    const key = getRecentKey(entry);
+    setRecentSearches((prev) => {
+      const next = prev.filter((item) => getRecentKey(item) !== key);
+      persistRecentSearches(next);
+      return next;
+    });
+  };
 
   const saveWordMutation = useMutation({
     mutationFn: (payload) => api.saveWord(payload),
     onSuccess: (res, payload) => {
       if (!res.saved) return;
-      // 캐시를 true로 갱신 → saved가 파생적으로 true가 됨
       queryClient.setQueryData(queryKeys.wordSaved(userId, payload.word), { saved: true });
       queryClient.invalidateQueries({ queryKey: ["words"] });
       queryClient.invalidateQueries({ queryKey: queryKeys.labels });
@@ -150,7 +301,6 @@ export default function SearchTab({ user, onRequireLogin }) {
   const slangMutation = useMutation({
     mutationFn: ({ engWord, korWord }) => api.slang(engWord, korWord),
     onMutate: () => {
-      // 로딩 표시는 버튼에서만. 텍스트창엔 넣지 않음(편집/저장값 오염 방지) → 분석 중엔 창 숨김
       setSlangText("");
     },
     onSuccess: ({ explanation }, { engWord, korWord }) => {
@@ -167,7 +317,7 @@ export default function SearchTab({ user, onRequireLogin }) {
     setEngDef(r.english_def);
     setKorDetail(r.korean_detail);
     setExample(r.example);
-    setCustomExample(r.example); // 맞춤 예문 시작값 = 사전 예문
+    setCustomExample(r.example);
     setPhonetic(r.phonetic || "");
     setSlangVisible(!!r.english_word);
     setSlangText("");
@@ -192,8 +342,14 @@ export default function SearchTab({ user, onRequireLogin }) {
     setAppliedKey(key);
     if (!r.english_word && !r.korean_word && !r.english_def && !r.korean_detail) {
       resetResultState();
-      // 결과가 없어도(사전에 없는 단어) 사용자가 직접 적은 값으로 저장은 허용 → 저장 대상 단어를 확정.
-      setSettledWord(searchRequest.type === "en" ? searchRequest.word : eng.trim());
+      const nextWord = searchRequest.type === "en" ? searchRequest.word : eng.trim();
+      setSettledWord(nextWord);
+      rememberSearch({
+        type: searchRequest.type,
+        query: searchRequest.word,
+        word: nextWord || searchRequest.word,
+        korean: searchRequest.type === "ko" ? searchRequest.word : kor.trim(),
+      });
       return;
     }
     applyCommon(r);
@@ -201,10 +357,22 @@ export default function SearchTab({ user, onRequireLogin }) {
       lastSearched.current.ko = r.korean_word;
       setKor(r.korean_word);
       setSettledWord(searchRequest.word);
+      rememberSearch({
+        type: "en",
+        query: searchRequest.word,
+        word: searchRequest.word,
+        korean: r.korean_word,
+      });
     } else {
       lastSearched.current.en = r.english_word;
       setEng(r.english_word);
       setSettledWord(r.english_word);
+      rememberSearch({
+        type: "ko",
+        query: searchRequest.word,
+        word: r.english_word || searchRequest.word,
+        korean: searchRequest.word,
+      });
     }
   }, [searchQuery.data, searchRequest]);
 
@@ -214,8 +382,14 @@ export default function SearchTab({ user, onRequireLogin }) {
     const key = `${searchRequest.type}:${searchRequest.word}`;
     appliedSearchKey.current = key;
     setAppliedKey(key);
-    // 검색 실패 시에도 사용자가 입력한 단어로 저장은 허용 (영어 입력 기준).
-    setSettledWord(searchRequest.type === "en" ? searchRequest.word : eng.trim());
+    const nextWord = searchRequest.type === "en" ? searchRequest.word : eng.trim();
+    setSettledWord(nextWord);
+    rememberSearch({
+      type: searchRequest.type,
+      query: searchRequest.word,
+      word: nextWord || searchRequest.word,
+      korean: searchRequest.type === "ko" ? searchRequest.word : kor.trim(),
+    });
   }, [searchQuery.isError, searchRequest]);
 
   const runEnglish = (word) => {
@@ -225,8 +399,9 @@ export default function SearchTab({ user, onRequireLogin }) {
     reqSeq.current += 1;
     appliedSearchKey.current = "";
     setAppliedKey("");
-    setSettledWord(""); // 새 검색 시작 → 완료 전까지 저장 잠금
+    setSettledWord("");
     resetResultState();
+    setQuickQuery(w);
     setSearchRequest({ type: "en", word: w });
   };
 
@@ -237,9 +412,38 @@ export default function SearchTab({ user, onRequireLogin }) {
     reqSeq.current += 1;
     appliedSearchKey.current = "";
     setAppliedKey("");
-    setSettledWord(""); // 새 검색 시작 → 완료 전까지 저장 잠금
+    setSettledWord("");
     resetResultState();
+    setQuickQuery(w);
     setSearchRequest({ type: "ko", word: w });
+  };
+
+  const runSmartSearch = (value = quickQuery) => {
+    const q = value.trim();
+    if (!q) return;
+    if (isKoreanQuery(q)) {
+      source.current = "ko";
+      setKor(q);
+      runKorean(q);
+    } else {
+      source.current = "en";
+      setEng(q);
+      runEnglish(q);
+    }
+  };
+
+  const selectRecentSearch = (item) => {
+    const q = item.query || item.word;
+    if (!q) return;
+    if (item.type === "ko") {
+      source.current = "ko";
+      setKor(q);
+      runKorean(q);
+    } else {
+      source.current = "en";
+      setEng(item.word || q);
+      runEnglish(item.word || q);
+    }
   };
 
   useEffect(() => {
@@ -256,11 +460,7 @@ export default function SearchTab({ user, onRequireLogin }) {
     return () => clearTimeout(t);
   }, [kor]);
 
-  // 저장 버튼은 (1)검색 완료 (2)회원이면 저장여부 확인 완료 (3)미저장 (4)eng 존재 일 때만 활성화.
-  // 검색/확인이 끝나기 전 빠른 클릭으로 기존 단어를 덮어쓰는 레이스를 막는다.
   const savedCheckReady = !user || (savedQuery.isSuccess && !savedQuery.isFetching);
-  // 완료된 검색이 '지금 저장하려는 단어(eng)'와 정확히 같을 때만 저장 허용.
-  // 타이핑으로 단어가 바뀐 직후(디바운스 중)엔 이전 검색이 '완료'처럼 보여도 여기서 막힌다.
   const resultMatchesInput =
     !!settledWord.trim() &&
     settledWord.trim().toLowerCase() === eng.trim().toLowerCase();
@@ -273,9 +473,9 @@ export default function SearchTab({ user, onRequireLogin }) {
     savedCheckReady;
 
   const handleSave = async () => {
-    if (!canSave) return; // 모든 체크가 끝나기 전엔 저장 금지 (덮어쓰기 레이스 방지)
+    if (!canSave) return;
     if (!user) {
-      setGate("단어장 저장"); // 비회원 → 회원 기능 안내
+      setGate("단어장 저장");
       return;
     }
     saveWordMutation.mutate({
@@ -284,7 +484,7 @@ export default function SearchTab({ user, onRequireLogin }) {
       korean_detail: korDetail,
       english_def: engDef,
       example: customExample,
-      tag: label,
+      tag: label || "미지정",
       slang_def: slangText,
     });
   };
@@ -303,7 +503,7 @@ export default function SearchTab({ user, onRequireLogin }) {
     const engWord = eng.trim();
     const korWord = kor.trim();
     if (!user) {
-      setGate("AI 슬랭 설명"); // 비회원 → 회원 기능 안내
+      setGate("AI 슬랭 설명");
       return;
     }
     if (!engWord) {
@@ -315,212 +515,284 @@ export default function SearchTab({ user, onRequireLogin }) {
 
   const hasSearch = !!searchRequest;
   const searchLoading = searchQuery.isFetching && !searchQuery.data;
-  // 검색·저장여부 확인이 모두 끝나야 활성화 (canSave). 그 전엔 항상 비활성화.
   const saveDisabled = !canSave;
+  const isSearching = searchQuery.isFetching;
 
   return (
-    <div>
-      <h3 className="text-base font-semibold mb-3">
-        모르는 단어를 검색하고 단어장에 저장하세요!
-      </h3>
-
-      {/* 검색 카드 */}
-      <div className="bg-white border border-slate-200 rounded-lg shadow-sm px-4 py-3">
-        {/* 영어 헤더 */}
-        <div className="flex items-center justify-between min-h-[40px]">
-          <LabelChip>🇺🇸 영어</LabelChip>
-          <SaveButton
-            saved={saved}
-            onClick={handleSave}
-            disabled={saveDisabled}
-          />
-        </div>
-        <div className="flex items-center gap-2">
+    <div className="mx-auto max-w-[1180px] space-y-4">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          runSmartSearch();
+        }}
+        className="space-y-2"
+      >
+        <div className="relative flex h-14 items-center overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition focus-within:border-[#5ba79a] focus-within:ring-2 focus-within:ring-[#d7ebe5]">
+          <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#2f7d73]" />
           <input
-            value={eng}
-            onChange={(e) => {
-              source.current = "en";
-              setEng(e.target.value);
-            }}
-            onKeyDown={(e) => e.key === "Enter" && runEnglish(eng)}
-            placeholder="예: cardiovascular"
-            className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm
-                       focus:outline-none focus:ring-2 focus:ring-brand-200"
+            value={quickQuery}
+            onChange={(e) => setQuickQuery(e.target.value)}
+            placeholder="Type word, sentence, or Korean meaning"
+            className="h-full min-w-0 flex-1 bg-transparent pl-11 pr-3 text-base text-slate-950 outline-none placeholder:text-slate-400"
+            style={{ paddingLeft: "2.75rem" }}
           />
-          <button
-            onClick={() => runEnglish(eng)}
-            className="w-12 h-10 rounded-lg border border-slate-300 bg-white hover:bg-slate-50"
-          >
-            🔍
-          </button>
-        </div>
-        <div className="h-[30px] flex items-center">
-          <AudioButton word={eng} lang="en" phonetic={phonetic} />
-        </div>
-
-        {/* 한국어 헤더 */}
-        <div className="flex items-center justify-between min-h-[40px] mt-2 pt-2 border-t border-slate-100">
-          <LabelChip>🇰🇷 한국어</LabelChip>
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            value={kor}
-            onChange={(e) => {
-              source.current = "ko";
-              setKor(e.target.value);
-            }}
-            onKeyDown={(e) => e.key === "Enter" && runKorean(kor)}
-            placeholder="예: 심혈관"
-            className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm
-                       focus:outline-none focus:ring-2 focus:ring-brand-200"
-          />
-          <button
-            onClick={() => runKorean(kor)}
-            className="w-12 h-10 rounded-lg border border-slate-300 bg-white hover:bg-slate-50"
-          >
-            🔍
-          </button>
-        </div>
-        <div className="h-[30px] flex items-center">
-          {searchQuery.isFetching ? (
-            <LoadingSpinner label="검색 결과를 가져오는 중" />
-          ) : searchQuery.isError ? (
-            <span className="text-sm text-rose-500">검색 결과를 불러오지 못했습니다.</span>
-          ) : (
-            <AudioButton word={kor} lang="ko" />
+          {quickQuery && (
+            <button
+              type="button"
+              onClick={() => {
+                setQuickQuery("");
+              }}
+              className="hidden h-8 w-8 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700 sm:inline-flex"
+              aria-label="검색어 지우기"
+            >
+              <X className="h-4 w-4" />
+            </button>
           )}
-        </div>
-
-        {slangVisible && (
           <button
-            onClick={handleSlang}
-            disabled={slangMutation.isPending}
-            className="text-[11px] text-gray-400 underline hover:text-gray-600 mt-1"
+            type="submit"
+            className="inline-flex h-full items-center gap-2 border-l border-[#d7ebe5] bg-[#2f7d73] px-5 text-sm font-semibold text-white transition hover:bg-[#286d65] disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={!quickQuery.trim()}
           >
-            {slangMutation.isPending
-              ? "AI가 의미를 분석 중입니다..."
-              : "원하는 뜻이 아닌가요? AI에게 물어보기"}
+            {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+            검색
           </button>
-        )}
-        {slangText && (
-          <textarea
-            rows={10}
-            value={slangText}
-            onChange={(e) => setSlangText(e.target.value)}
-            placeholder="AI 설명을 내 표현에 맞게 고쳐서 저장할 수 있어요"
-            className="w-full mt-2 rounded-lg border border-slate-300 bg-white px-3 py-2
-                       text-sm text-slate-800 resize-none whitespace-pre-wrap
-                       focus:outline-none focus:ring-2 focus:ring-brand-200"
-          />
-        )}
-      </div>
+        </div>
+        <RecentSearchChips
+          items={recentSearches}
+          onSelect={selectRecentSearch}
+          onRemove={removeRecentSearch}
+        />
+      </form>
 
       {gate && !user && (
-        <div className="mt-3">
-          <MemberNotice feature={gate} onRequireLogin={onRequireLogin} />
-        </div>
+        <MemberNotice feature={gate} onRequireLogin={onRequireLogin} />
       )}
 
-      <hr className="my-4 border-slate-200" />
-
-      {!hasSearch && (
-        <p className="mb-3 text-sm text-slate-400">
-          영어 또는 한국어 단어를 입력하면 뜻과 예문이 여기에 표시됩니다.
-        </p>
-      )}
-      <ReadOnlyField label="📖 영어 뜻" value={engDef} rows={4} loading={searchLoading} />
-      <ReadOnlyField label="🇰🇷 한국어 뜻" value={korDetail} rows={3} loading={searchLoading} />
-
-      {/* 편집 가능한 내 맞춤 예문 */}
-      <div className="mb-3">
-        <label className="block text-sm text-slate-500 mb-1">
-          ✏️ 예문 — 사전 예문이 기본으로 들어가요. 클릭해서 내 상황에 맞게 고칠 수 있어요
-        </label>
-        <textarea
-          rows={3}
-          value={customExample}
-          onChange={(e) => setCustomExample(e.target.value)}
-          placeholder="내 상황에 맞는 예문을 직접 적어보세요"
-          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm
-                     resize-none whitespace-pre-wrap
-                     focus:outline-none focus:ring-2 focus:ring-brand-200"
-        />
-      </div>
-
-      {/* 태그(카테고리) 선택 — 회원만 (저장 기능과 연결됨) */}
-      {user && (
-        <div className="mb-3">
-          <label className="block text-sm text-slate-500 mb-1">
-            🏷️ 태그 (카테고리) — 단어장에서 태그별로 모아볼 수 있어요
-          </label>
-          <div className="flex flex-wrap items-center gap-2">
-            {labelsQuery.isPending && (
-              <>
-                <SkeletonBlock className="h-8 w-16 rounded-full" />
-                <SkeletonBlock className="h-8 w-20 rounded-full" />
-              </>
-            )}
-            {labels.map((name) => {
-              const active = label === name;
-              return (
-                <button
-                  key={name}
-                  type="button"
-                  onClick={() => setLabel(active ? "" : name)}
-                  className={`rounded-full text-[13px] font-medium px-3 h-8 border transition-colors
-                    ${active
-                      ? "bg-brand-600 text-white border-brand-600"
-                      : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"}`}
-                >
-                  {name}
-                </button>
-              );
-            })}
-
-            {adding ? (
-              <span className="inline-flex items-center gap-1">
-                <input
-                  autoFocus
-                  value={newLabel}
-                  onChange={(e) => setNewLabel(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleAddLabel();
-                    if (e.key === "Escape") {
-                      setAdding(false);
-                      setNewLabel("");
-                    }
-                  }}
-                  placeholder="새 태그"
-                  className="w-24 rounded-full border border-slate-300 px-3 h-8 text-[13px]
-                             focus:outline-none focus:ring-2 focus:ring-brand-200"
-                />
-                <button
-                  type="button"
-                  onClick={handleAddLabel}
-                  className="rounded-full text-[13px] font-medium px-3 h-8 bg-brand-50
-                             text-brand-600 border border-brand-200 hover:bg-brand-100"
-                >
-                  추가
-                </button>
-              </span>
-            ) : labels.length < 20 ? (
-              <button
-                type="button"
-                onClick={() => setAdding(true)}
-                className="rounded-full text-[13px] font-medium px-3 h-8 border border-dashed
-                           border-slate-300 text-slate-500 hover:bg-slate-50"
-              >
-                + 태그 추가
-              </button>
-            ) : (
-              <span className="text-[11px] text-slate-400">태그 최대 20개</span>
-            )}
+        <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div
+            className="border-b border-slate-100 px-5 py-5"
+            style={{
+              alignItems: "flex-start",
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "1rem",
+              justifyContent: "space-between",
+            }}
+          >
+            <div className="min-w-0 flex-1">
+              {eng.trim() && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="truncate text-2xl font-bold tracking-normal text-slate-950">
+                    {eng.trim()}
+                  </h2>
+                  <AudioButton word={eng} lang="en" phonetic={phonetic} />
+                </div>
+              )}
+              {phonetic && (
+                <p className="mt-1 text-sm text-slate-400">{phonetic}</p>
+              )}
+              {kor && (
+                <div className={eng.trim() || phonetic ? "mt-3" : ""}>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    한국어 뜻
+                  </p>
+                  <p className="mt-1 text-lg font-semibold leading-7 text-slate-900">
+                    {kor}
+                  </p>
+                </div>
+              )}
+            </div>
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              {searchQuery.isFetching ? (
+                <LoadingSpinner label="검색 중" />
+              ) : searchQuery.isError ? (
+                <span className="text-sm font-medium text-rose-500">검색 실패</span>
+              ) : null}
+              <SaveButton
+                saved={saved}
+                onClick={handleSave}
+                disabled={saveDisabled}
+              />
+            </div>
           </div>
-          {labelError && (
-            <p className="text-[11px] text-rose-500 mt-1">{labelError}</p>
+
+          <div className="grid gap-4 p-5 md:grid-cols-2">
+            <SearchInputRow
+              label="영어 단어"
+              value={eng}
+              onChange={(e) => {
+                source.current = "en";
+                setEng(e.target.value);
+              }}
+              onSearch={() => runEnglish(eng)}
+              placeholder="예: cardiovascular"
+              audio={<AudioButton word={eng} lang="en" phonetic={phonetic} />}
+            />
+            <SearchInputRow
+              label="한국어 뜻"
+              value={kor}
+              onChange={(e) => {
+                source.current = "ko";
+                setKor(e.target.value);
+              }}
+              onSearch={() => runKorean(kor)}
+              placeholder="예: 심혈관"
+              audio={<AudioButton word={kor} lang="ko" />}
+            />
+          </div>
+
+          {!hasSearch && (
+            <div className="mx-5 mb-5 rounded-md border border-slate-200 bg-white px-4 py-4 text-sm font-medium text-slate-600">
+              영어 단어나 한국어 뜻을 입력하면 사전 정의, 번역, 예문, 저장 옵션이 표시됩니다.
+            </div>
           )}
-        </div>
-      )}
+
+          <div className="space-y-5 border-t border-slate-100 p-5">
+            <div className={SECTION_CARD_CLASS}>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <label className={SECTION_LABEL_CLASS}>
+                  예문 편집
+                </label>
+                <span className="text-xs font-medium text-slate-500">
+                  {customExample.length}/200
+                </span>
+              </div>
+              <textarea
+                rows={4}
+                value={customExample}
+                onChange={(e) => setCustomExample(e.target.value)}
+                placeholder="내 상황에 맞는 예문을 직접 적어보세요"
+                className="w-full resize-none rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm leading-6 text-slate-900 outline-none transition focus:border-[#5ba79a] focus:ring-2 focus:ring-[#d7ebe5]"
+              />
+              {example && customExample !== example && (
+                <button
+                  type="button"
+                  onClick={() => setCustomExample(example)}
+                  className="mt-2 text-xs font-medium text-[#286d65] hover:text-[#184843]"
+                >
+                  사전 예문으로 되돌리기
+                </button>
+              )}
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <ReadOnlyField
+                label="사전 정의"
+                value={engDef}
+                rows={5}
+                loading={searchLoading}
+              />
+              <ReadOnlyField
+                label="한국어 상세"
+                value={korDetail}
+                rows={5}
+                loading={searchLoading}
+              />
+            </div>
+
+            <div className={SECTION_CARD_CLASS}>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-amber-500" />
+                  <span className={SECTION_LABEL_CLASS}>AI 의미 분석</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSlang}
+                  disabled={slangMutation.isPending || !eng.trim()}
+                  className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {slangMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" />
+                  )}
+                  AI에게 물어보기
+                </button>
+              </div>
+              {slangVisible || slangText ? (
+                <textarea
+                  rows={slangText ? 8 : 4}
+                  value={slangText}
+                  onChange={(e) => setSlangText(e.target.value)}
+                  placeholder="AI 답변을 받은 뒤 내 표현에 맞게 고쳐서 저장할 수 있어요"
+                  className="w-full resize-none rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm leading-6 text-slate-800 outline-none transition focus:border-[#5ba79a] focus:ring-2 focus:ring-[#d7ebe5]"
+                />
+              ) : (
+                <p className="text-sm font-medium leading-6 text-slate-600">
+                  검색 결과가 의도한 뜻과 다르면 AI 설명을 받아 저장 내용에 반영할 수 있습니다.
+                </p>
+              )}
+            </div>
+
+            {user && (
+              <div className={SECTION_CARD_CLASS}>
+                <div className="mb-3 flex items-center gap-2">
+                  <Tags className="h-4 w-4 text-[#2f7d73]" />
+                  <span className={SECTION_LABEL_CLASS}>태그</span>
+                </div>
+                <div className="flex flex-col gap-2 md:flex-row md:items-center">
+                  <select
+                    value={label}
+                    onChange={(e) => setLabel(e.target.value)}
+                    className="h-11 min-w-0 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-[#5ba79a] focus:ring-2 focus:ring-[#d7ebe5] md:w-56"
+                  >
+                    {labelsQuery.isPending && <option value="미지정">태그 불러오는 중</option>}
+                    {!labelsQuery.isPending &&
+                      labels.map((name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      ))}
+                  </select>
+
+                  {adding ? (
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      <input
+                        autoFocus
+                        value={newLabel}
+                        onChange={(e) => setNewLabel(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleAddLabel();
+                          if (e.key === "Escape") {
+                            setAdding(false);
+                            setNewLabel("");
+                          }
+                        }}
+                        placeholder="새 태그"
+                        className="h-11 min-w-0 flex-1 rounded-md border border-slate-300 px-3 text-sm outline-none transition focus:border-[#5ba79a] focus:ring-2 focus:ring-[#d7ebe5]"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddLabel}
+                        disabled={addLabelMutation.isPending}
+                        className="inline-flex h-11 items-center gap-2 rounded-md border border-[#b7dcd3] bg-[#e7f3ef] px-3 text-sm font-semibold text-[#286d65] transition hover:bg-[#d7ebe5] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Plus className="h-4 w-4" />
+                        추가
+                      </button>
+                    </div>
+                  ) : labels.length < 20 ? (
+                    <button
+                      type="button"
+                      onClick={() => setAdding(true)}
+                      className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-dashed border-slate-300 px-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                    >
+                      <Plus className="h-4 w-4" />
+                      태그 추가
+                    </button>
+                  ) : (
+                    <span className="text-xs text-slate-400">태그 최대 20개</span>
+                  )}
+                </div>
+                {labelError && (
+                  <p className="mt-2 text-xs text-rose-500">{labelError}</p>
+                )}
+              </div>
+            )}
+
+          </div>
+        </section>
     </div>
   );
 }
