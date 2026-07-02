@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import httpx
 from fastapi import Request
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
 from fastapi_users.authentication import AuthenticationBackend, CookieTransport
@@ -33,6 +34,94 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
         self, user: User, request: Optional[Request] = None
     ):
         logger.info("User %s has registered.", user.id)
+
+    async def oauth_callback(
+        self,
+        oauth_name: str,
+        access_token: str,
+        account_id: str,
+        account_email: str,
+        expires_at: int | None = None,
+        refresh_token: str | None = None,
+        request: Optional[Request] = None,
+        *,
+        associate_by_email: bool = False,
+        is_verified_by_default: bool = False,
+    ) -> User:
+        user = await super().oauth_callback(
+            oauth_name,
+            access_token,
+            account_id,
+            account_email,
+            expires_at,
+            refresh_token,
+            request,
+            associate_by_email=associate_by_email,
+            is_verified_by_default=is_verified_by_default,
+        )
+        await self._sync_google_avatar(user, oauth_name, access_token)
+        return user
+
+    async def oauth_associate_callback(
+        self,
+        user: User,
+        oauth_name: str,
+        access_token: str,
+        account_id: str,
+        account_email: str,
+        expires_at: int | None = None,
+        refresh_token: str | None = None,
+        request: Optional[Request] = None,
+    ) -> User:
+        user = await super().oauth_associate_callback(
+            user,
+            oauth_name,
+            access_token,
+            account_id,
+            account_email,
+            expires_at,
+            refresh_token,
+            request,
+        )
+        await self._sync_google_avatar(user, oauth_name, access_token)
+        return user
+
+    async def _sync_google_avatar(
+        self,
+        user: User,
+        oauth_name: str,
+        access_token: str,
+    ) -> None:
+        if oauth_name != "google" or not access_token:
+            return
+
+        try:
+            avatar_url = await fetch_google_avatar_url(access_token)
+        except Exception:
+            logger.warning("Failed to fetch Google avatar for user %s", user.id, exc_info=True)
+            return
+
+        if not avatar_url or avatar_url == getattr(user, "avatar_url", None):
+            return
+
+        await self.user_db.update(user, {"avatar_url": avatar_url})
+
+
+async def fetch_google_avatar_url(access_token: str) -> str | None:
+    async with httpx.AsyncClient(timeout=5) as client:
+        response = await client.get(
+            "https://people.googleapis.com/v1/people/me",
+            params={"personFields": "photos"},
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+    response.raise_for_status()
+    data = response.json()
+    photos = data.get("photos") or []
+    for photo in photos:
+        url = photo.get("url")
+        if url and photo.get("metadata", {}).get("primary", True):
+            return str(url)
+    return str(photos[0].get("url")) if photos and photos[0].get("url") else None
 
 
 async def get_user_manager(user_db: UserDatabaseDep):
@@ -80,7 +169,7 @@ async def get_current_user_from_token(
     token: str,
 ) -> dict[str, str | bool] | None:
     result = await session.execute(
-        select(User.id, User.email, User.is_superuser)
+        select(User.id, User.email, User.is_superuser, User.avatar_url)
         .join(AccessToken, User.id == AccessToken.user_id)
         .where(
             AccessToken.token == token,
@@ -95,6 +184,7 @@ async def get_current_user_from_token(
         "id": str(user.id),
         "email": user.email,
         "is_superuser": bool(user.is_superuser),
+        "avatar_url": user.avatar_url,
     } if user else None
 
 

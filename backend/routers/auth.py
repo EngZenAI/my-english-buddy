@@ -7,8 +7,10 @@ from fastapi_users.router.oauth import (
     generate_csrf_token,
     generate_state_token,
 )
+from sqlalchemy import func, select
 
 from backend.auth.cookies import clear_auth_cookie
+from backend.auth.models import User
 from backend.auth.password_reset import (
     PasswordResetError,
     confirm_password_reset as confirm_password_reset_service,
@@ -110,6 +112,20 @@ async def verify_password_reset_code(payload: PasswordResetVerify, session: Sess
         raise password_reset_http_exception(exc) from exc
 
     return {"ok": True}
+
+
+@router.get("/auth/email-exists", include_in_schema=False)
+async def email_exists(session: SessionDep, email: str = ""):
+    normalized = email.strip().lower()
+    if not normalized:
+        return {"exists": False}
+
+    result = await session.execute(
+        select(User.id)
+        .where(func.lower(User.email) == normalized)
+        .limit(1)
+    )
+    return {"exists": result.scalar_one_or_none() is not None}
 
 
 router.include_router(

@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import englishBuddyLogo from "@/assets/english-buddy-logo.svg";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import {
   DropdownMenu,
@@ -75,9 +75,9 @@ export default function ResponsiveNav({
     if (isHome) return "English Buddy";
     if (view === "login") return "로그인";
     if (view === "signup") return "회원가입";
-    if (view === "find-id") return "아이디 찾기";
     if (view === "forgot-password") return "비밀번호 찾기";
     if (view === "mypage") return "마이페이지";
+    if (view === "auth-complete") return "로그인 완료";
     if (view === "admin") return "관리자";
     return "";
   };
@@ -213,6 +213,13 @@ export default function ResponsiveNav({
                   aria-label="계정 메뉴"
                 >
                   <Avatar className="h-10 w-10 shrink-0 border border-[#e1ddd4]">
+                    {user.avatar_url && (
+                      <AvatarImage
+                        src={user.avatar_url}
+                        alt=""
+                        referrerPolicy="no-referrer"
+                      />
+                    )}
                     <AvatarFallback className="bg-[#e7f3ef] text-xs font-extrabold text-[#235f58]">
                       {getUserInitials()}
                     </AvatarFallback>
@@ -329,6 +336,13 @@ export default function ResponsiveNav({
                   className="h-9 w-9 rounded-full bg-slate-50 dark:bg-slate-900 border"
                 >
                   <Avatar className="h-8 w-8">
+                    {user.avatar_url && (
+                      <AvatarImage
+                        src={user.avatar_url}
+                        alt=""
+                        referrerPolicy="no-referrer"
+                      />
+                    )}
                     <AvatarFallback className="bg-[#e7f3ef] text-[#235f58] text-[10px] font-bold">
                       {getUserInitials()}
                     </AvatarFallback>

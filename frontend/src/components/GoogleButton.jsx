@@ -4,7 +4,12 @@ import { Button } from "@/components/ui/button";
 // Google OAuth 버튼 (기존 GOOGLE_LOGIN_HTML 재현)
 export default function GoogleButton({ label = "Google로 로그인", onStart, disabled = false }) {
   return (
-    <Button asChild variant="outline" className="w-full" aria-disabled={disabled}>
+    <Button
+      asChild
+      variant="outline"
+      className="h-12 w-full border-slate-300 bg-white text-base font-bold text-slate-700 hover:bg-slate-50"
+      aria-disabled={disabled}
+    >
       <a
         href={GOOGLE_LOGIN_URL}
         onClick={(event) => {

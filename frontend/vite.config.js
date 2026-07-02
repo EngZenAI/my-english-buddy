@@ -19,7 +19,7 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       proxy: {
         "/api": backendProxy,
-        "^/auth/(cookie|google|register|password-reset|logout)": backendProxy,
+        "^/auth/(cookie|google|register|password-reset|logout|email-exists)": backendProxy,
         "/users": backendProxy,
       },
     },
