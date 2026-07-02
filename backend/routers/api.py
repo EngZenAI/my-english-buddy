@@ -559,6 +559,8 @@ async def article_catalog(
     *,
     session: SessionDep,
 ):
+    if topic.strip().lower() == "opinion":
+        return {"articles": [], "page": max(1, int(page or 1)), "page_size": 12, "total": 0}
     return await list_published_articles(
         session,
         topic=topic.strip(),

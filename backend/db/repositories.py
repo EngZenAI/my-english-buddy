@@ -237,7 +237,6 @@ async def init_db() -> None:
                     published_at      TIMESTAMP,
                     topic             TEXT,
                     level             TEXT,
-                    estimated_minutes INTEGER DEFAULT 5,
                     is_published      BOOLEAN DEFAULT FALSE,
                     description       TEXT,
                     content_snippet   TEXT,
@@ -253,7 +252,7 @@ async def init_db() -> None:
                 "ALTER TABLE articles ADD COLUMN IF NOT EXISTS source_key TEXT",
                 "ALTER TABLE articles ADD COLUMN IF NOT EXISTS topic TEXT",
                 "ALTER TABLE articles ADD COLUMN IF NOT EXISTS level TEXT",
-                "ALTER TABLE articles ADD COLUMN IF NOT EXISTS estimated_minutes INTEGER DEFAULT 5",
+                "ALTER TABLE articles DROP COLUMN IF EXISTS estimated_minutes",
                 "ALTER TABLE articles ADD COLUMN IF NOT EXISTS is_published BOOLEAN DEFAULT FALSE",
                 "ALTER TABLE articles ADD COLUMN IF NOT EXISTS feed_entry_id TEXT",
                 "ALTER TABLE articles ADD COLUMN IF NOT EXISTS license_status TEXT DEFAULT 'pending'",
@@ -1877,11 +1876,11 @@ async def upsert_article_with_chunks(
         text(
             """INSERT INTO articles
                    (source_key, source, title, url, image_url, published_at, topic,
-                    level, estimated_minutes, is_published, description, content_snippet,
+                    level, is_published, description, content_snippet,
                     extracted_text, extraction_status, feed_entry_id, license_status,
                     collection_method, updated_at)
                VALUES (:source_key, :source, :title, :url, :image_url, :published_at, :topic,
-                       :level, :estimated_minutes, :is_published, :description,
+                       :level, :is_published, :description,
                        :content_snippet, :extracted_text, :extraction_status,
                        :feed_entry_id, :license_status, :collection_method, NOW())
                ON CONFLICT (url) DO UPDATE SET
@@ -1892,7 +1891,6 @@ async def upsert_article_with_chunks(
                    published_at = EXCLUDED.published_at,
                    topic = EXCLUDED.topic,
                    level = EXCLUDED.level,
-                   estimated_minutes = EXCLUDED.estimated_minutes,
                    is_published = CASE
                        WHEN :publish_provided THEN EXCLUDED.is_published
                        ELSE articles.is_published
@@ -1916,7 +1914,6 @@ async def upsert_article_with_chunks(
             "published_at": _parse_datetime(article.get("published_at")),
             "topic": (article.get("topic") or "").strip(),
             "level": (article.get("level") or "medium").strip(),
-            "estimated_minutes": int(article.get("estimated_minutes") or 5),
             "is_published": bool(publish) if publish is not None else bool(article.get("is_published")),
             "publish_provided": publish is not None,
             "description": (article.get("description") or "").strip(),
@@ -2008,6 +2005,7 @@ async def list_published_articles(
     per_topic_limit = max(1, min(int(per_topic_limit or 1), 5))
     clauses = [
         "is_published = TRUE",
+        "COALESCE(topic, '') <> 'opinion'",
         """EXISTS (
             SELECT 1 FROM article_sources src
             WHERE src.key = articles.source_key
@@ -2034,7 +2032,7 @@ async def list_published_articles(
         text(
             f"""WITH ranked AS (
                    SELECT id, source_key, source, title, url, image_url, published_at,
-                          topic, level, estimated_minutes, description, extraction_status,
+                          topic, level, description, extraction_status,
                           feed_entry_id, license_status, collection_method, created_at, updated_at,
                           ROW_NUMBER() OVER (
                               PARTITION BY
@@ -2046,7 +2044,7 @@ async def list_published_articles(
                    WHERE {where_sql}
                )
                SELECT id, source_key, source, title, url, image_url, published_at,
-                      topic, level, estimated_minutes, description, extraction_status,
+                      topic, level, description, extraction_status,
                       feed_entry_id, license_status, collection_method, created_at, updated_at
                FROM ranked
                WHERE topic_rank <= :per_topic_limit
@@ -2085,17 +2083,20 @@ async def list_admin_articles(
     result = await session.execute(
         text(
             """SELECT id, source_key, source, title, url, image_url, published_at,
-                      topic, level, estimated_minutes, is_published, description,
+                      topic, level, is_published, description,
                       extraction_status, feed_entry_id, license_status, collection_method,
                       created_at, updated_at
                FROM articles
+               WHERE COALESCE(topic, '') <> 'opinion'
                ORDER BY updated_at DESC, id DESC
                LIMIT :limit OFFSET :offset"""
         ),
         {"limit": page_size, "offset": (page - 1) * page_size},
     )
     rows = _rows(result)
-    count_result = await session.execute(text("SELECT COUNT(*)::int FROM articles"))
+    count_result = await session.execute(
+        text("SELECT COUNT(*)::int FROM articles WHERE COALESCE(topic, '') <> 'opinion'")
+    )
     return {
         "articles": rows,
         "page": page,
@@ -2244,6 +2245,7 @@ async def get_article_catalog_item(
     clauses = ["id = :article_id"]
     if not include_unpublished:
         clauses.append("is_published = TRUE")
+        clauses.append("COALESCE(topic, '') <> 'opinion'")
         clauses.append(
             """EXISTS (
                 SELECT 1 FROM article_sources src
@@ -2255,7 +2257,7 @@ async def get_article_catalog_item(
     result = await session.execute(
         text(
             f"""SELECT id, source_key, source, title, url, image_url, published_at,
-                      topic, level, estimated_minutes, is_published, description,
+                      topic, level, is_published, description,
                       content_snippet, extraction_status, feed_entry_id, license_status,
                       collection_method, created_at, updated_at
                FROM articles
@@ -2328,7 +2330,7 @@ async def get_article_session(session: AsyncSession, user_id: str, session_id: i
             """SELECT s.id, s.user_id, s.article_id, s.status, s.current_chunk,
                       s.study_json, s.completion_json, s.created_at, s.updated_at,
                       a.source_key, a.source, a.title, a.url, a.image_url, a.published_at,
-                      a.topic, a.level, a.estimated_minutes, a.description,
+                      a.topic, a.level, a.description,
                       a.content_snippet, a.extraction_status, a.feed_entry_id,
                       a.license_status, a.collection_method
                FROM article_sessions s
@@ -2336,6 +2338,7 @@ async def get_article_session(session: AsyncSession, user_id: str, session_id: i
                WHERE s.user_id = :user_id
                  AND s.id = :session_id
                  AND a.is_published = TRUE
+                 AND COALESCE(a.topic, '') <> 'opinion'
                  AND EXISTS (
                      SELECT 1 FROM article_sources src
                      WHERE src.key = a.source_key
@@ -2359,13 +2362,14 @@ async def get_article_sessions(session: AsyncSession, user_id: str) -> list[dict
             """SELECT s.id, s.article_id, s.status, s.current_chunk,
                       s.study_json, s.completion_json, s.created_at, s.updated_at,
                       a.source_key, a.source, a.title, a.url, a.image_url, a.published_at,
-                      a.topic, a.level, a.estimated_minutes, a.description,
+                      a.topic, a.level, a.description,
                       a.extraction_status, a.feed_entry_id, a.license_status,
                       a.collection_method
                FROM article_sessions s
                JOIN articles a ON a.id = s.article_id
                WHERE s.user_id = :user_id
                  AND a.is_published = TRUE
+                 AND COALESCE(a.topic, '') <> 'opinion'
                  AND EXISTS (
                      SELECT 1 FROM article_sources src
                      WHERE src.key = a.source_key
