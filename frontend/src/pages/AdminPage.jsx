@@ -883,7 +883,7 @@ function ArticlesTab({ enabled }) {
   const [articleForm, setArticleForm] = useState(EMPTY_ARTICLE_FORM);
   const [editArticleId, setEditArticleId] = useState(null);
   const [editForm, setEditForm] = useState(EMPTY_ARTICLE_FORM);
-  const editHydrationRef = useRef({ articleId: null, hydrated: false, dirty: false });
+  const editHydrationRef = useRef({ articleId: null, hydrated: false, dirtyFields: {} });
 
   const articlesQuery = useQuery({
     queryKey: queryKeys.articleAdminList(page),
@@ -933,7 +933,7 @@ function ArticlesTab({ enabled }) {
       setDetailOpen(false);
       setEditArticleId(null);
       setEditForm(EMPTY_ARTICLE_FORM);
-      editHydrationRef.current = { articleId: null, hydrated: false, dirty: false };
+      editHydrationRef.current = { articleId: null, hydrated: false, dirtyFields: {} };
       setPage(1);
       queryClient.invalidateQueries({ queryKey: ["articles", "admin-list"] });
       queryClient.invalidateQueries({ queryKey: ["articles", "catalog"] });
@@ -944,7 +944,7 @@ function ArticlesTab({ enabled }) {
     onSuccess: () => {
       setEditArticleId(null);
       setEditForm(EMPTY_ARTICLE_FORM);
-      editHydrationRef.current = { articleId: null, hydrated: false, dirty: false };
+      editHydrationRef.current = { articleId: null, hydrated: false, dirtyFields: {} };
       queryClient.invalidateQueries({ queryKey: ["articles", "admin-list"] });
       queryClient.invalidateQueries({ queryKey: ["articles", "admin-detail"] });
       queryClient.invalidateQueries({ queryKey: ["articles", "catalog"] });
@@ -958,7 +958,7 @@ function ArticlesTab({ enabled }) {
       setDetailOpen(false);
       setEditArticleId(null);
       setEditForm(EMPTY_ARTICLE_FORM);
-      editHydrationRef.current = { articleId: null, hydrated: false, dirty: false };
+      editHydrationRef.current = { articleId: null, hydrated: false, dirtyFields: {} };
       queryClient.invalidateQueries({ queryKey: ["articles", "admin-list"] });
       queryClient.invalidateQueries({ queryKey: ["articles", "admin-detail"] });
       queryClient.invalidateQueries({ queryKey: ["articles", "catalog"] });
@@ -983,10 +983,11 @@ function ArticlesTab({ enabled }) {
     const detail = editDetailQuery.data;
     if (!detail || !editArticleId) return;
     if (editHydrationRef.current.articleId !== editArticleId) {
-      editHydrationRef.current = { articleId: editArticleId, hydrated: false, dirty: false };
+      editHydrationRef.current = { articleId: editArticleId, hydrated: false, dirtyFields: {} };
     }
-    if (editHydrationRef.current.hydrated || editHydrationRef.current.dirty) return;
-    setEditForm({
+    if (editHydrationRef.current.hydrated) return;
+    const dirtyFields = editHydrationRef.current.dirtyFields || {};
+    const hydratedForm = {
       source: detail.source || "",
       title: detail.title || "",
       url: detail.url || "",
@@ -996,7 +997,11 @@ function ArticlesTab({ enabled }) {
       description: detail.description || "",
       content: (detail.chunks || []).map((chunk) => chunk.text).join("\n\n") || detail.content_snippet || "",
       is_published: Boolean(detail.is_published),
-    });
+    };
+    setEditForm((form) => ({
+      ...form,
+      ...Object.fromEntries(Object.entries(hydratedForm).filter(([key]) => !dirtyFields[key])),
+    }));
     editHydrationRef.current.hydrated = true;
   }, [editDetailQuery.data, editArticleId]);
 
@@ -1018,7 +1023,10 @@ function ArticlesTab({ enabled }) {
     setArticleForm((form) => ({ ...form, [key]: value }));
   };
   const updateEditForm = (key, value) => {
-    editHydrationRef.current.dirty = true;
+    editHydrationRef.current.dirtyFields = {
+      ...(editHydrationRef.current.dirtyFields || {}),
+      [key]: true,
+    };
     setEditForm((form) => ({ ...form, [key]: value }));
   };
   const submitArticleCreate = (event) => {
@@ -1030,6 +1038,7 @@ function ArticlesTab({ enabled }) {
     });
   };
   const canUpdateArticle = Boolean(
+    editDetailQuery.isSuccess &&
     editForm.source.trim() &&
     editForm.title.trim() &&
     editForm.url.trim() &&
@@ -1046,7 +1055,7 @@ function ArticlesTab({ enabled }) {
     setDetailOpen(false);
     setSelectedId(article.id);
     setEditArticleId(article.id);
-    editHydrationRef.current = { articleId: article.id, hydrated: false, dirty: false };
+    editHydrationRef.current = { articleId: article.id, hydrated: false, dirtyFields: {} };
     setEditForm({
       source: article.source || "",
       title: article.title || "",
@@ -1064,7 +1073,7 @@ function ArticlesTab({ enabled }) {
     setCreateOpen(false);
     setEditArticleId(null);
     setEditForm(EMPTY_ARTICLE_FORM);
-    editHydrationRef.current = { articleId: null, hydrated: false, dirty: false };
+    editHydrationRef.current = { articleId: null, hydrated: false, dirtyFields: {} };
     setSelectedId(article.id);
     setDetailOpen(true);
   };
@@ -1207,7 +1216,7 @@ function ArticlesTab({ enabled }) {
                     setDetailOpen(false);
                     setEditArticleId(null);
                     setEditForm(EMPTY_ARTICLE_FORM);
-                    editHydrationRef.current = { articleId: null, hydrated: false, dirty: false };
+                    editHydrationRef.current = { articleId: null, hydrated: false, dirtyFields: {} };
                   }
                   return next;
                 });
@@ -1346,7 +1355,7 @@ function ArticlesTab({ enabled }) {
                 onClick={() => {
                   setEditArticleId(null);
                   setEditForm(EMPTY_ARTICLE_FORM);
-                  editHydrationRef.current = { articleId: null, hydrated: false, dirty: false };
+                  editHydrationRef.current = { articleId: null, hydrated: false, dirtyFields: {} };
                 }}
               >
                 닫기
