@@ -16,7 +16,7 @@ import AudioButton from "../components/AudioButton";
 import { EmptyState, SkeletonBlock } from "../components/AsyncState";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Drawer,

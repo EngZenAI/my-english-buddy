@@ -1231,16 +1231,16 @@ async def list_admin_learners(
         clauses.append("u.email ILIKE :q")
         params["q"] = f"%{q}%"
     if status == "review_overdue":
-        clauses.append("COALESCE(w.due_review_count, 0) > 0")
+        clauses.append("COALESCE(u.due_review_count, 0) > 0")
     elif status == "quiz_down":
-        clauses.append("COALESCE(qz.latest_quiz_score, 100) < 70")
+        clauses.append("COALESCE(u.latest_quiz_score, 100) < 70")
     elif status == "roleplay_inactive":
-        clauses.append("COALESCE(rp.roleplay_turns, 0) = 0")
+        clauses.append("COALESCE(u.roleplay_turns, 0) = 0")
     elif status == "new":
-        clauses.append("activity.first_seen_at >= NOW() - INTERVAL '7 days'")
+        clauses.append("u.first_seen_at >= NOW() - INTERVAL '7 days'")
 
     where_sql = " AND ".join(clauses)
-    base_sql = f"""
+    base_sql = """
         WITH word_stats AS (
             SELECT user_id,
                    COUNT(*)::int AS word_count,

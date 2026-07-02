@@ -16,7 +16,7 @@ from _thread import LockType
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import Response, StreamingResponse
@@ -570,7 +570,7 @@ async def admin_api_usage(
     start_date: str = "",
     end_date: str = "",
     group_by: str = "hour",
-    range: str = "day",
+    range_key: str = Query("day", alias="range"),
     *,
     session: SessionDep,
     _user: CurrentUserDep,
@@ -597,7 +597,7 @@ async def admin_api_usage(
         session,
         date_value,
         group_by,
-        range,
+        range_key,
         start_date_value,
         end_date_value,
     )

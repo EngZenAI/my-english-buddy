@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -40,12 +40,6 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-
-const ADMIN_TABS = [
-  { id: "learners", label: "사용자", icon: Users },
-  { id: "usage", label: "API 사용량", icon: BarChart3 },
-  { id: "articles", label: "뉴스 자료", icon: Newspaper },
-];
 
 const ADMIN_TOP_TABS = [
   { id: "learners", label: "사용자" },
@@ -202,25 +196,6 @@ function AdminGate({ user, onRequireLogin }) {
     );
   }
   return null;
-}
-
-function TabButton({ item, active, onClick }) {
-  const Icon = item.icon;
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "inline-flex h-10 items-center gap-2 border-b-2 px-3 text-sm font-bold transition-colors",
-        active
-          ? "border-[#168f86] text-[#08766e]"
-          : "border-transparent text-slate-500 hover:text-slate-900"
-      )}
-    >
-      <Icon className="h-4 w-4" />
-      {item.label}
-    </button>
-  );
 }
 
 function AdminSideItem({ icon: Icon, label, active, count, danger, onClick, disabled }) {
@@ -388,7 +363,7 @@ function ApiUsageTab({ enabled }) {
   const selectedDays = inclusiveDayCount(startDate, endDate);
   const groupBy = selectedDays <= 1 ? "hour" : selectedDays > 120 ? "month" : "day";
   const usageQuery = useQuery({
-    queryKey: queryKeys.adminApiUsage(startDate, endDate, groupBy, range),
+    queryKey: queryKeys.adminApiUsage("", startDate, endDate, groupBy, range),
     queryFn: () => api.adminApiUsage({ startDate, endDate, groupBy, range }),
     enabled,
   });
@@ -638,12 +613,14 @@ function ApiUsageTab({ enabled }) {
 }
 
 function LearnersTab({ enabled }) {
+  const pageSize = 20;
   const [qInput, setQInput] = useState("");
   const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
   const [selectedId, setSelectedId] = useState("");
   const learnersQuery = useQuery({
-    queryKey: queryKeys.adminLearners(q, "", 1, 20),
-    queryFn: () => api.adminLearners({ q, page: 1, pageSize: 20 }),
+    queryKey: queryKeys.adminLearners(q, "", page, pageSize),
+    queryFn: () => api.adminLearners({ q, page, pageSize }),
     enabled,
   });
   const learners = learnersQuery.data?.learners || [];
@@ -743,6 +720,7 @@ function LearnersTab({ enabled }) {
               onSubmit={(event) => {
                 event.preventDefault();
                 setQ(qInput.trim());
+                setPage(1);
               }}
               className="relative w-full sm:w-80"
             >
@@ -757,12 +735,30 @@ function LearnersTab({ enabled }) {
               loading={learnersQuery.isPending}
               emptyTitle="학습자가 없습니다"
               emptyDescription="검색 조건에 맞는 학습자가 없습니다."
-              enablePagination
-              pageSize={10}
               minWidth="min-w-[1040px]"
               onRowClick={(learner) => setSelectedId(learner.learner_ref)}
               rowClassName={(learner) => selectedId === learner.learner_ref && "bg-[#e7f3ef]/60"}
             />
+          </div>
+          <div className="flex items-center justify-between border-t border-slate-200 px-4 py-3 text-sm text-slate-500">
+            <span>
+              {number(learnersQuery.data?.total)}명 중{" "}
+              {learners.length > 0 ? number((page - 1) * pageSize + 1) : 0}-
+              {number((page - 1) * pageSize + learners.length)} 표시
+            </span>
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="outline" size="sm" disabled={page <= 1 || learnersQuery.isFetching} onClick={() => setPage((value) => Math.max(1, value - 1))}>이전</Button>
+              <span>{page}</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!learnersQuery.data || page * pageSize >= learnersQuery.data.total || learnersQuery.isFetching}
+                onClick={() => setPage((value) => value + 1)}
+              >
+                다음
+              </Button>
+            </div>
           </div>
         </div>
       </div>
@@ -887,6 +883,7 @@ function ArticlesTab({ enabled }) {
   const [articleForm, setArticleForm] = useState(EMPTY_ARTICLE_FORM);
   const [editArticleId, setEditArticleId] = useState(null);
   const [editForm, setEditForm] = useState(EMPTY_ARTICLE_FORM);
+  const editHydrationRef = useRef({ articleId: null, hydrated: false, dirty: false });
 
   const articlesQuery = useQuery({
     queryKey: queryKeys.articleAdminList(page),
@@ -933,6 +930,10 @@ function ArticlesTab({ enabled }) {
     onSuccess: () => {
       setCreateOpen(false);
       setArticleForm(EMPTY_ARTICLE_FORM);
+      setDetailOpen(false);
+      setEditArticleId(null);
+      setEditForm(EMPTY_ARTICLE_FORM);
+      editHydrationRef.current = { articleId: null, hydrated: false, dirty: false };
       setPage(1);
       queryClient.invalidateQueries({ queryKey: ["articles", "admin-list"] });
       queryClient.invalidateQueries({ queryKey: ["articles", "catalog"] });
@@ -943,6 +944,7 @@ function ArticlesTab({ enabled }) {
     onSuccess: () => {
       setEditArticleId(null);
       setEditForm(EMPTY_ARTICLE_FORM);
+      editHydrationRef.current = { articleId: null, hydrated: false, dirty: false };
       queryClient.invalidateQueries({ queryKey: ["articles", "admin-list"] });
       queryClient.invalidateQueries({ queryKey: ["articles", "admin-detail"] });
       queryClient.invalidateQueries({ queryKey: ["articles", "catalog"] });
@@ -956,6 +958,7 @@ function ArticlesTab({ enabled }) {
       setDetailOpen(false);
       setEditArticleId(null);
       setEditForm(EMPTY_ARTICLE_FORM);
+      editHydrationRef.current = { articleId: null, hydrated: false, dirty: false };
       queryClient.invalidateQueries({ queryKey: ["articles", "admin-list"] });
       queryClient.invalidateQueries({ queryKey: ["articles", "admin-detail"] });
       queryClient.invalidateQueries({ queryKey: ["articles", "catalog"] });
@@ -979,6 +982,10 @@ function ArticlesTab({ enabled }) {
   useEffect(() => {
     const detail = editDetailQuery.data;
     if (!detail || !editArticleId) return;
+    if (editHydrationRef.current.articleId !== editArticleId) {
+      editHydrationRef.current = { articleId: editArticleId, hydrated: false, dirty: false };
+    }
+    if (editHydrationRef.current.hydrated || editHydrationRef.current.dirty) return;
     setEditForm({
       source: detail.source || "",
       title: detail.title || "",
@@ -990,6 +997,7 @@ function ArticlesTab({ enabled }) {
       content: (detail.chunks || []).map((chunk) => chunk.text).join("\n\n") || detail.content_snippet || "",
       is_published: Boolean(detail.is_published),
     });
+    editHydrationRef.current.hydrated = true;
   }, [editDetailQuery.data, editArticleId]);
 
   useEffect(() => {
@@ -1010,6 +1018,7 @@ function ArticlesTab({ enabled }) {
     setArticleForm((form) => ({ ...form, [key]: value }));
   };
   const updateEditForm = (key, value) => {
+    editHydrationRef.current.dirty = true;
     setEditForm((form) => ({ ...form, [key]: value }));
   };
   const submitArticleCreate = (event) => {
@@ -1037,6 +1046,7 @@ function ArticlesTab({ enabled }) {
     setDetailOpen(false);
     setSelectedId(article.id);
     setEditArticleId(article.id);
+    editHydrationRef.current = { articleId: article.id, hydrated: false, dirty: false };
     setEditForm({
       source: article.source || "",
       title: article.title || "",
@@ -1051,6 +1061,10 @@ function ArticlesTab({ enabled }) {
   };
   const openArticleDetail = (article) => {
     if (!article?.id) return;
+    setCreateOpen(false);
+    setEditArticleId(null);
+    setEditForm(EMPTY_ARTICLE_FORM);
+    editHydrationRef.current = { articleId: null, hydrated: false, dirty: false };
     setSelectedId(article.id);
     setDetailOpen(true);
   };
@@ -1183,7 +1197,22 @@ function ArticlesTab({ enabled }) {
               {refreshMutation.isPending ? <Loader2 className="animate-spin" /> : <Download />}
               뉴스 자료 가져오기
             </Button>
-            <Button type="button" variant="outline" onClick={() => setCreateOpen((open) => !open)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setCreateOpen((open) => {
+                  const next = !open;
+                  if (next) {
+                    setDetailOpen(false);
+                    setEditArticleId(null);
+                    setEditForm(EMPTY_ARTICLE_FORM);
+                    editHydrationRef.current = { articleId: null, hydrated: false, dirty: false };
+                  }
+                  return next;
+                });
+              }}
+            >
               + 새 자료 추가
             </Button>
           </div>
@@ -1317,6 +1346,7 @@ function ArticlesTab({ enabled }) {
                 onClick={() => {
                   setEditArticleId(null);
                   setEditForm(EMPTY_ARTICLE_FORM);
+                  editHydrationRef.current = { articleId: null, hydrated: false, dirty: false };
                 }}
               >
                 닫기

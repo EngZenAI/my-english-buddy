@@ -27,9 +27,10 @@ export const queryKeys = {
   articleRefreshJob: (jobId) => ["articles", "refresh-job", jobId],
   articleSession: (id) => ["articles", "session", id],
   articleSessions: ["articles", "sessions"],
-  adminApiUsage: (startDate = "", endDate = "", groupBy = "hour", range = "day") => [
+  adminApiUsage: (date = "", startDate = "", endDate = "", groupBy = "hour", range = "day") => [
     "admin",
     "api-usage",
+    date,
     startDate,
     endDate,
     groupBy,
