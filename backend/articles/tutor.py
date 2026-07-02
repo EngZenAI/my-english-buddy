@@ -45,13 +45,11 @@ Excerpt chunks JSON:
 JSON shape:
 {{
   "level": "easy|medium|hard",
-  "estimated_minutes": 5,
-  "headline_ko": "Korean title translation",
   "paragraphs": [
     {{
       "chunk_id": 1,
       "chunk_index": 0,
-      "explanation_ko": "리드문 핵심 해설",
+      "explanation_ko": "기사 핵심 해설",
       "key_expressions": [
         {{
           "word": "expression",
@@ -165,9 +163,9 @@ def generate_article_study(title: str, source: str, chunks: list[dict[str, Any]]
         }
     )
     raw = _invoke_tracked_llm("article", "study", prompt)
-    data = _json_from_text(raw, {"level": "medium", "estimated_minutes": 5, "paragraphs": []})
+    data = _json_from_text(raw, {"level": "medium", "paragraphs": []})
     if not isinstance(data, dict):
-        return {"level": "medium", "estimated_minutes": 5, "paragraphs": []}
+        return {"level": "medium", "paragraphs": []}
     data.setdefault("paragraphs", [])
     return data
 

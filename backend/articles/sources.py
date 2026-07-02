@@ -41,7 +41,6 @@ SUPPORTED_SOURCES = (
             ArticleFeed("https://feed.koreatimes.co.kr/k/economy.xml", topic="business", scan_limit=3),
             ArticleFeed("https://feed.koreatimes.co.kr/k/business.xml", topic="business", scan_limit=3),
             ArticleFeed("https://feed.koreatimes.co.kr/k/entertainment.xml", topic="entertainment", scan_limit=3),
-            ArticleFeed("https://feed.koreatimes.co.kr/k/opinion.xml", topic="opinion", scan_limit=3),
             ArticleFeed("https://feed.koreatimes.co.kr/k/lifestyle.xml", topic="lifestyle", scan_limit=3),
             ArticleFeed("https://feed.koreatimes.co.kr/k/sports.xml", topic="sports", scan_limit=3),
         ),

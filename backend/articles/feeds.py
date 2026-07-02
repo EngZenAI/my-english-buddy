@@ -32,7 +32,6 @@ ALLOWED_TOPICS = {
     "health",
     "education",
     "technology",
-    "opinion",
     "lifestyle",
     "sports",
 }
@@ -43,7 +42,6 @@ TOPIC_KEYWORDS = (
     ("health", ("health", "medical", "medicine", "disease")),
     ("education", ("education", "school", "university")),
     ("technology", ("technology", "tech", "ai", "digital", "internet")),
-    ("opinion", ("opinion", "editorial", "column")),
     ("lifestyle", ("lifestyle", "life", "travel", "culture")),
     ("sports", ("sports", "football", "baseball", "soccer")),
     ("world", ("world", "international", "foreign", "foreign affairs", "global", "south korea", "politics")),
@@ -117,45 +115,6 @@ def _lead_sentences(text: str, limit: int = 2, max_chars: int = 520) -> str:
 
 def lead_text(text: str, limit: int = 2, max_chars: int = 520) -> str:
     return _lead_sentences(text, limit=limit, max_chars=max_chars)
-
-
-def _estimate_reading_meta(title: str, lead: str, topic: str) -> dict[str, int | str]:
-    text = normalize_whitespace(f"{title} {lead}")
-    words = re.findall(r"[A-Za-z][A-Za-z'-]*", text)
-    word_count = len(words)
-    if not word_count:
-        return {"level": "medium", "estimated_minutes": 1}
-
-    sentences = [part for part in re.split(r"(?<=[.!?])\s+", lead) if part.strip()]
-    avg_sentence_words = word_count / max(1, len(sentences))
-    complex_words = [word for word in words if len(word.strip("-'")) >= 10]
-    complex_ratio = len(complex_words) / max(1, word_count)
-
-    score = 0
-    if word_count >= 55:
-        score += 1
-    if word_count >= 90:
-        score += 1
-    if avg_sentence_words >= 24:
-        score += 1
-    if avg_sentence_words >= 34:
-        score += 1
-    if complex_ratio >= 0.18:
-        score += 1
-    if complex_ratio >= 0.28:
-        score += 1
-    if topic in {"business", "opinion", "technology"}:
-        score += 1
-
-    if score >= 4:
-        level = "hard"
-    elif score >= 2:
-        level = "medium"
-    else:
-        level = "easy"
-
-    estimated_minutes = max(1, min(4, (word_count + 89) // 90))
-    return {"level": level, "estimated_minutes": estimated_minutes}
 
 
 def _parse_date(value: str) -> str:
@@ -342,7 +301,6 @@ def parse_feed_entries(
         topic = forced_topic or _topic_from_category(category, source.default_topic)
         if topic not in ALLOWED_TOPICS:
             continue
-        reading_meta = _estimate_reading_meta(title, lead, topic)
 
         entries.append(
             {
@@ -354,8 +312,7 @@ def parse_feed_entries(
                 "image_url": _valid_image_url(_item_image(item)),
                 "published_at": _parse_date(published),
                 "topic": topic,
-                "level": reading_meta["level"],
-                "estimated_minutes": reading_meta["estimated_minutes"],
+                "level": "medium",
                 "description": lead,
                 "content_snippet": lead,
                 "license_status": source.license_status,
