@@ -13,6 +13,7 @@ import logging
 import threading
 import uuid
 from _thread import LockType
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
@@ -41,12 +42,15 @@ from backend.db.repositories import (
     count_words_by_tag,
     create_article_refresh_job,
     delete_label,
+    delete_admin_article,
     delete_article_session,
     delete_word,
     disconnect_oauth_account,
     existing_words_lower,
     get_account_status,
     get_all_words,
+    get_admin_api_usage,
+    get_admin_learner_detail,
     get_article_session,
     get_article_sessions,
     get_article_refresh_job,
@@ -56,6 +60,7 @@ from backend.db.repositories import (
     get_user_password_hash,
     get_words_for_quiz,
     get_labels,
+    list_admin_learners,
     list_admin_articles,
     list_article_sources,
     list_published_articles,
@@ -72,11 +77,13 @@ from backend.db.repositories import (
     create_article_session,
     delete_roleplay_session,
     publish_article,
+    update_admin_article,
     trim_article_refresh_jobs,
     update_article_completion,
     update_article_refresh_job,
     update_article_study,
     upsert_feed_articles,
+    upsert_article_with_chunks,
     update_user_password_hash,
     update_word,
 )
@@ -126,6 +133,12 @@ async def require_user(request: Request, session: SessionDep) -> dict:
 
 
 CurrentUserDep = Annotated[dict, Depends(require_user)]
+
+
+def require_admin_user(user: dict) -> None:
+    if user.get("is_superuser"):
+        return
+    raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
 
 
 async def persist_usage_capture(token, user: dict | None) -> None:
@@ -260,6 +273,22 @@ class ArticleFeedRefreshIn(BaseModel):
     source_key: str = ""
     publish: bool = True
     max_items: int = Field(default=1, ge=1, le=3)
+
+
+class ArticleCreateIn(BaseModel):
+    source: str = ""
+    title: str
+    url: str
+    image_url: str = ""
+    topic: str = "General"
+    level: str = "B1"
+    description: str = ""
+    content: str
+    is_published: bool = False
+
+
+class ArticleUpdateIn(ArticleCreateIn):
+    pass
 
 
 class ArticleAskIn(BaseModel):
@@ -532,9 +561,69 @@ async def tts(
 
 # ── 기사 학습 ───────────────────────────────────────────────
 def _require_article_admin(user: dict) -> None:
-    if user.get("is_superuser"):
-        return
-    raise HTTPException(status_code=403, detail="기사 운영자 권한이 필요합니다.")
+    require_admin_user(user)
+
+
+@router.get("/admin/api-usage")
+async def admin_api_usage(
+    date: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    group_by: str = "hour",
+    range: str = "day",
+    *,
+    session: SessionDep,
+    _user: CurrentUserDep,
+):
+    require_admin_user(_user)
+    raw_date = (date or datetime.now().date().isoformat()).strip()
+    try:
+        date_value = datetime.strptime(raw_date, "%Y-%m-%d").date()
+    except ValueError:
+        date_value = datetime.now().date()
+
+    def parse_optional_date(value: str):
+        value = (value or "").strip()
+        if not value:
+            return None
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    start_date_value = parse_optional_date(start_date)
+    end_date_value = parse_optional_date(end_date)
+    return await get_admin_api_usage(
+        session,
+        date_value,
+        group_by,
+        range,
+        start_date_value,
+        end_date_value,
+    )
+
+
+@router.get("/admin/learners")
+async def admin_learners(
+    q: str = "",
+    status: str = "",
+    page: int = 1,
+    page_size: int = 20,
+    *,
+    session: SessionDep,
+    _user: CurrentUserDep,
+):
+    require_admin_user(_user)
+    return await list_admin_learners(session, q=q, status=status, page=page, page_size=page_size)
+
+
+@router.get("/admin/learners/{learner_ref}")
+async def admin_learner_detail(learner_ref: str, session: SessionDep, _user: CurrentUserDep):
+    require_admin_user(_user)
+    data = await get_admin_learner_detail(session, learner_ref)
+    if not data:
+        raise HTTPException(status_code=404, detail="학습자를 찾을 수 없습니다.")
+    return data
 
 
 @router.get("/article-sources")
@@ -596,6 +685,111 @@ async def article_admin_list(
 ):
     _require_article_admin(_user)
     return await list_admin_articles(session, page=page)
+
+
+@router.post("/admin/articles")
+async def article_admin_create(
+    payload: ArticleCreateIn,
+    *,
+    session: SessionDep,
+    _user: CurrentUserDep,
+):
+    _require_article_admin(_user)
+    title = payload.title.strip()
+    url = payload.url.strip()
+    content = payload.content.strip()
+    source_name = payload.source.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="제목을 입력해주세요.")
+    if not url:
+        raise HTTPException(status_code=400, detail="원본 URL을 입력해주세요.")
+    if not source_name:
+        raise HTTPException(status_code=400, detail="소스를 입력해주세요.")
+    if not content:
+        raise HTTPException(status_code=400, detail="본문을 입력해주세요.")
+    source_key = "manual-" + uuid.uuid5(uuid.NAMESPACE_URL, source_name.lower()).hex[:16]
+    chunks = [{"chunk_index": 0, "text": content, "token_count": max(1, len(content) // 4)}]
+    article_id = await upsert_article_with_chunks(
+        session,
+        {
+            "source_key": source_key,
+            "source": source_name,
+            "title": title,
+            "url": url,
+            "image_url": payload.image_url.strip(),
+            "topic": payload.topic.strip() or "General",
+            "level": payload.level.strip() or "B1",
+            "description": payload.description.strip() or content[:280],
+            "content_snippet": content[:700],
+            "license_status": "approved",
+            "collection_method": "manual",
+        },
+        chunks,
+        extracted_text=content,
+        extraction_status="manual",
+        publish=bool(payload.is_published),
+    )
+    return {"ok": True, "article_id": article_id}
+
+
+@router.get("/admin/articles/{article_id}")
+async def article_admin_detail(article_id: int, session: SessionDep, _user: CurrentUserDep):
+    _require_article_admin(_user)
+    data = await get_article_catalog_item(session, article_id, include_unpublished=True)
+    if not data:
+        raise HTTPException(status_code=404, detail="뉴스 자료를 찾을 수 없습니다.")
+    return data
+
+
+@router.patch("/admin/articles/{article_id}")
+async def article_admin_update(
+    article_id: int,
+    payload: ArticleUpdateIn,
+    session: SessionDep,
+    _user: CurrentUserDep,
+):
+    _require_article_admin(_user)
+    title = payload.title.strip()
+    url = payload.url.strip()
+    content = payload.content.strip()
+    source_name = payload.source.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="제목을 입력해주세요.")
+    if not url:
+        raise HTTPException(status_code=400, detail="원본 URL을 입력해주세요.")
+    if not source_name:
+        raise HTTPException(status_code=400, detail="소스를 입력해주세요.")
+    if not content:
+        raise HTTPException(status_code=400, detail="본문을 입력해주세요.")
+    source_key = "manual-" + uuid.uuid5(uuid.NAMESPACE_URL, source_name.lower()).hex[:16]
+    ok = await update_admin_article(
+        session,
+        article_id,
+        {
+            "source_key": source_key,
+            "source": source_name,
+            "title": title,
+            "url": url,
+            "image_url": payload.image_url.strip(),
+            "topic": payload.topic.strip() or "General",
+            "level": payload.level.strip() or "B1",
+            "description": payload.description.strip() or content[:280],
+            "is_published": bool(payload.is_published),
+        },
+        content,
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="뉴스 자료를 찾을 수 없습니다.")
+    return {"ok": True, "article_id": article_id}
+
+
+@router.delete("/admin/articles/{article_id}")
+async def article_admin_delete(article_id: int, session: SessionDep, _user: CurrentUserDep):
+    _require_article_admin(_user)
+    ok = await delete_admin_article(session, article_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="뉴스 자료를 찾을 수 없습니다.")
+    return {"ok": True}
 
 
 @router.post("/admin/article-feeds/refresh")

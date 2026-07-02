@@ -356,7 +356,20 @@ export const api = {
   },
   articleSources: () => jsonFetch("/api/article-sources"),
   articleAdminStatus: () => jsonFetch("/api/article-admin/status"),
-  articleAdminList: () => jsonFetch("/api/admin/articles"),
+  articleAdminList: (page = 1) => jsonFetch(`/api/admin/articles?page=${page}`),
+  articleAdminCreate: (payload) =>
+    jsonFetch("/api/admin/articles", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  articleAdminDetail: (id) => jsonFetch(`/api/admin/articles/${id}`),
+  articleAdminUpdate: (id, payload) =>
+    jsonFetch(`/api/admin/articles/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  articleAdminDelete: (id) =>
+    jsonFetch(`/api/admin/articles/${id}`, { method: "DELETE" }),
   articleDetail: (id) => jsonFetch(`/api/articles/${id}`),
   articleCreateSession: (articleId) =>
     jsonFetch(`/api/articles/${articleId}/sessions`, { method: "POST" }),
@@ -390,6 +403,27 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ is_published: isPublished }),
     }),
+
+  // ── 관리자 ──
+  adminApiUsage: ({ date = "", startDate = "", endDate = "", groupBy = "hour", range = "day" } = {}) => {
+    const params = new URLSearchParams();
+    if (date) params.set("date", date);
+    if (startDate) params.set("start_date", startDate);
+    if (endDate) params.set("end_date", endDate);
+    params.set("group_by", groupBy);
+    params.set("range", range);
+    return jsonFetch(`/api/admin/api-usage?${params.toString()}`);
+  },
+  adminLearners: ({ q = "", status = "", page = 1, pageSize = 20 } = {}) => {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (status) params.set("status", status);
+    params.set("page", String(page));
+    params.set("page_size", String(pageSize));
+    return jsonFetch(`/api/admin/learners?${params.toString()}`);
+  },
+  adminLearnerDetail: (learnerRef) =>
+    jsonFetch(`/api/admin/learners/${encodeURIComponent(learnerRef)}`),
 };
 
 export const GOOGLE_LOGIN_URL = `${BACKEND_ORIGIN}/auth/google/login`;

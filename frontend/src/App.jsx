@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "./api";
 import { queryKeys } from "./queryClient";
 import SearchTab from "./tabs/SearchTab";
@@ -12,6 +13,7 @@ import SignupPage from "./pages/SignupPage";
 import FindIdPage from "./pages/FindIdPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import MyPage from "./pages/MyPage";
+import AdminPage from "./pages/AdminPage";
 import AppShell from "@/components/layout/AppShell";
 import ResponsiveNav from "@/components/layout/ResponsiveNav";
 import LoadingPanel from "@/components/layout/LoadingPanel";
@@ -65,14 +67,12 @@ function getInitialView() {
   return "home";
 }
 
-function replaceUrl(path = "/") {
-  if (window.location.pathname !== path || window.location.search) {
-    window.history.replaceState(null, "", path);
-  }
-}
-
 function saveReturnTarget(target) {
   sessionStorage.setItem(AUTH_RETURN_KEY, JSON.stringify(target));
+}
+
+function hasReturnTarget() {
+  return Boolean(sessionStorage.getItem(AUTH_RETURN_KEY));
 }
 
 function popReturnTarget() {
@@ -88,6 +88,8 @@ function popReturnTarget() {
 
 export default function App() {
   const queryClient = useQueryClient();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [view, setView] = useState(getInitialView);
   const [tab, setTab] = useState("search");
   const [authCompleteFailed, setAuthCompleteFailed] = useState(false);
@@ -102,17 +104,33 @@ export default function App() {
     gcTime: 30 * 60_000,
   });
   const user = meData?.user || null;
+  const isAdminRoute = location.pathname.startsWith("/admin");
 
   const goToView = (nextView) => {
+    if (nextView === "admin") {
+      setView("home");
+      navigate("/admin/learners");
+      return;
+    }
     setView(nextView);
-    replaceUrl("/");
+    navigate("/", { replace: true });
   };
 
   const goToReturnTarget = () => {
     const target = popReturnTarget() || { view: "home", tab: "search" };
     if (target.tab) setTab(target.tab);
+    if (target.path) {
+      setView(target.view === "admin" ? "home" : target.view || "home");
+      navigate(target.path, { replace: true });
+      return;
+    }
+    if (target.view === "admin") {
+      setView("home");
+      navigate("/admin/learners", { replace: true });
+      return;
+    }
     setView(target.view || "home");
-    replaceUrl("/");
+    navigate("/", { replace: true });
   };
 
   const startLogin = (target = { view: "home", tab }) => {
@@ -121,7 +139,7 @@ export default function App() {
   };
 
   const startOAuth = () => {
-    saveReturnTarget({ view: "home", tab });
+    if (!hasReturnTarget()) saveReturnTarget({ view: "home", tab });
   };
 
   const goToHomeTab = (nextTab) => {
@@ -164,6 +182,7 @@ export default function App() {
     queryClient.removeQueries({ queryKey: ["word-saved"] });
     queryClient.removeQueries({ queryKey: ["label-word-count"] });
     queryClient.removeQueries({ queryKey: ["articles"] });
+    queryClient.removeQueries({ queryKey: ["admin"] });
     setQuizState(createInitialQuizState());
     setRoleplayInstanceKey((key) => key + 1);
     goToView("home");
@@ -234,18 +253,26 @@ export default function App() {
 
   return (
     <AppShell>
-      <ResponsiveNav
-        tabs={TABS}
-        value={tab}
-        onChange={changeTab}
-        user={user}
-        view={view}
-        setView={setView}
-        onLogin={() => startLogin({ view: "home", tab })}
-        onLogout={logout}
-      />
+      {!isAdminRoute && (
+        <ResponsiveNav
+          tabs={TABS}
+          value={tab}
+          onChange={changeTab}
+          user={user}
+          view={view}
+          setView={goToView}
+          onLogin={() => startLogin({ view: "home", tab })}
+          onLogout={logout}
+        />
+      )}
 
-      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-6 pb-24 md:px-8 md:pb-6">
+      <main
+        className={
+          isAdminRoute
+            ? "min-h-0 min-w-0 flex-1 overflow-hidden"
+            : "min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-6 pb-24 md:px-8 md:pb-6"
+        }
+      >
         {authLoading && (
           <LoadingPanel message="인증 상태를 확인하고 있습니다." />
         )}
@@ -298,7 +325,15 @@ export default function App() {
           />
         )}
 
-        {!authLoading && view === "home" && (
+        {!authLoading && isAdminRoute && (
+          <AdminPage
+            user={user}
+            onRequireLogin={() => startLogin({ view: "admin", path: location.pathname })}
+            onExit={() => goToView("home")}
+          />
+        )}
+
+        {!authLoading && !isAdminRoute && view === "home" && (
           <div className="h-full">
             {tab !== "roleplay" && (
               <ActiveTab
