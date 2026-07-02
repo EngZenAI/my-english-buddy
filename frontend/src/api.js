@@ -76,6 +76,9 @@ export const api = {
     return { ok: false, detail: data.detail };
   },
 
+  emailExists: (email, signal) =>
+    jsonFetch(`/auth/email-exists?email=${encodeURIComponent(email.trim())}`, { signal }),
+
   requestPasswordReset: async (email) => {
     const res = await fetch("/auth/password-reset/request", {
       method: "POST",

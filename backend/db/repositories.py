@@ -34,6 +34,7 @@ async def _exec_driver_statements(conn, statements: tuple[str, ...]) -> None:
 
 async def init_db() -> None:
     async with engine.begin() as conn:
+        await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT")
         await conn.exec_driver_sql(
             """
             DO $$

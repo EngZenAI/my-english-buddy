@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { api } from "./api";
 import { queryKeys } from "./queryClient";
 import SearchTab from "./tabs/SearchTab";
@@ -10,7 +10,6 @@ import RoleplayTab from "./tabs/RoleplayTab";
 import ArticleLearningTab from "./tabs/ArticleLearningTab";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
-import FindIdPage from "./pages/FindIdPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import MyPage from "./pages/MyPage";
 import AdminPage from "./pages/AdminPage";
@@ -35,6 +34,15 @@ const TABS = [
 ];
 
 const AUTH_RETURN_KEY = "englishBuddy.authReturn";
+const VIEW_PATHS = {
+  home: "/",
+  login: "/login",
+  signup: "/signup",
+  "forgot-password": "/forgot-password",
+  mypage: "/mypage",
+  "auth-complete": "/auth/complete",
+  admin: "/admin/learners",
+};
 
 function todayMinus(days) {
   const date = new Date();
@@ -62,8 +70,14 @@ function createInitialQuizState() {
   };
 }
 
-function getInitialView() {
-  if (window.location.pathname === "/auth/complete") return "auth-complete";
+function viewFromPath(pathname) {
+  if (pathname === "/") return "home";
+  if (pathname === "/login") return "login";
+  if (pathname === "/signup") return "signup";
+  if (pathname === "/forgot-password") return "forgot-password";
+  if (pathname === "/mypage") return "mypage";
+  if (pathname === "/auth/complete") return "auth-complete";
+  if (pathname.startsWith("/admin")) return "admin";
   return "home";
 }
 
@@ -86,16 +100,27 @@ function popReturnTarget() {
   }
 }
 
+function pathForTarget(target) {
+  if (target?.path) return target.path;
+  if (target?.view === "admin") return VIEW_PATHS.admin;
+  return VIEW_PATHS[target?.view] || VIEW_PATHS.home;
+}
+
 export default function App() {
   const queryClient = useQueryClient();
   const location = useLocation();
   const navigate = useNavigate();
-  const [view, setView] = useState(getInitialView);
   const [tab, setTab] = useState("search");
   const [authCompleteFailed, setAuthCompleteFailed] = useState(false);
   const [authCompleteChecked, setAuthCompleteChecked] = useState(false);
   const [quizState, setQuizState] = useState(createInitialQuizState);
   const [roleplayInstanceKey, setRoleplayInstanceKey] = useState(0);
+
+  const view = viewFromPath(location.pathname);
+  const isAdminRoute = view === "admin";
+  const isAuthCompleteRoute = view === "auth-complete";
+  const isAuthRoute = ["login", "signup", "forgot-password", "auth-complete"].includes(view);
+  const showMainNav = !isAdminRoute && !isAuthRoute;
 
   const { data: meData, isPending: authLoading } = useQuery({
     queryKey: queryKeys.me,
@@ -104,47 +129,55 @@ export default function App() {
     gcTime: 30 * 60_000,
   });
   const user = meData?.user || null;
-  const isAdminRoute = location.pathname.startsWith("/admin");
+
+  const tabQueryPrefetch = useMemo(
+    () => ({
+      wordbook: () => {
+        if (!user) return;
+        queryClient.prefetchQuery({
+          queryKey: queryKeys.labels,
+          queryFn: api.listLabels,
+          staleTime: 5 * 60_000,
+        });
+        queryClient.prefetchQuery({
+          queryKey: queryKeys.words(""),
+          queryFn: () => api.listWords(""),
+          staleTime: 30_000,
+        });
+      },
+    }),
+    [queryClient, user]
+  );
+
+  const currentReturnTarget = () => {
+    if (view === "home") return { path: VIEW_PATHS.home, tab };
+    if (view === "admin") return { path: location.pathname };
+    if (view === "mypage") return { path: VIEW_PATHS.mypage };
+    return { path: VIEW_PATHS.home, tab: "search" };
+  };
 
   const goToView = (nextView) => {
-    if (nextView === "admin") {
-      setView("home");
-      navigate("/admin/learners");
-      return;
-    }
-    setView(nextView);
-    navigate("/", { replace: true });
+    navigate(VIEW_PATHS[nextView] || VIEW_PATHS.home);
   };
 
   const goToReturnTarget = () => {
-    const target = popReturnTarget() || { view: "home", tab: "search" };
+    const target = popReturnTarget() || { path: VIEW_PATHS.home, tab: "search" };
     if (target.tab) setTab(target.tab);
-    if (target.path) {
-      setView(target.view === "admin" ? "home" : target.view || "home");
-      navigate(target.path, { replace: true });
-      return;
-    }
-    if (target.view === "admin") {
-      setView("home");
-      navigate("/admin/learners", { replace: true });
-      return;
-    }
-    setView(target.view || "home");
-    navigate("/", { replace: true });
+    navigate(pathForTarget(target), { replace: true });
   };
 
-  const startLogin = (target = { view: "home", tab }) => {
+  const startLogin = (target = currentReturnTarget()) => {
     saveReturnTarget(target);
-    goToView("login");
+    navigate(VIEW_PATHS.login);
   };
 
   const startOAuth = () => {
-    if (!hasReturnTarget()) saveReturnTarget({ view: "home", tab });
+    if (!hasReturnTarget()) saveReturnTarget(currentReturnTarget());
   };
 
   const goToHomeTab = (nextTab) => {
     setTab(nextTab);
-    goToView("home");
+    navigate(VIEW_PATHS.home);
   };
 
   const completeLogin = async () => {
@@ -185,11 +218,17 @@ export default function App() {
     queryClient.removeQueries({ queryKey: ["admin"] });
     setQuizState(createInitialQuizState());
     setRoleplayInstanceKey((key) => key + 1);
-    goToView("home");
+    navigate(VIEW_PATHS.home);
   };
 
   useEffect(() => {
-    if (getInitialView() !== "auth-complete" || authCompleteChecked) return undefined;
+    if (isAuthCompleteRoute) return;
+    setAuthCompleteChecked(false);
+    setAuthCompleteFailed(false);
+  }, [isAuthCompleteRoute]);
+
+  useEffect(() => {
+    if (!isAuthCompleteRoute || authCompleteChecked) return undefined;
 
     let cancelled = false;
     const verifyOAuthLogin = async () => {
@@ -221,39 +260,69 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [authCompleteChecked, queryClient]);
+  }, [authCompleteChecked, isAuthCompleteRoute, queryClient]);
 
   const ActiveTab = TABS.find((t) => t.id === tab)?.Comp || SearchTab;
-
-  const tabQueryPrefetch = useMemo(
-    () => ({
-      wordbook: () => {
-        if (!user) return;
-        queryClient.prefetchQuery({
-          queryKey: queryKeys.labels,
-          queryFn: api.listLabels,
-          staleTime: 5 * 60_000,
-        });
-        queryClient.prefetchQuery({
-          queryKey: queryKeys.words(""),
-          queryFn: () => api.listWords(""),
-          staleTime: 30_000,
-        });
-      }
-    }),
-    [queryClient, user]
-  );
-
-  const prefetchTab = (tabId) => tabQueryPrefetch[tabId]?.();
 
   const changeTab = (nextTab) => {
     tabQueryPrefetch[nextTab]?.();
     setTab(nextTab);
+    if (location.pathname !== VIEW_PATHS.home) navigate(VIEW_PATHS.home);
   };
 
+  const homeElement = authLoading ? (
+    <LoadingPanel message="인증 상태를 확인하고 있습니다." />
+  ) : (
+    <div className="h-full">
+      {tab !== "roleplay" && (
+        <ActiveTab
+          user={user}
+          onRequireLogin={() => startLogin({ path: VIEW_PATHS.home, tab })}
+          quizState={quizState}
+          setQuizState={setQuizState}
+        />
+      )}
+
+      <div className={tab === "roleplay" ? "h-full" : "hidden"}>
+        <RoleplayTab
+          key={roleplayInstanceKey}
+          user={user}
+          onRequireLogin={() => startLogin({ path: VIEW_PATHS.home, tab: "roleplay" })}
+        />
+      </div>
+    </div>
+  );
+
+  const authCompleteElement = authLoading ? (
+    <LoadingPanel message="로그인 완료 후 이동하고 있습니다." />
+  ) : authCompleteFailed ? (
+    <div className="py-10">
+      <Card className="mx-auto max-w-md">
+        <CardHeader>
+          <CardTitle>로그인 확인 실패</CardTitle>
+          <CardDescription>
+            Google 로그인 완료 상태를 확인하지 못했습니다.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-2">
+            <Button
+              type="button"
+              className="w-full"
+              onClick={() => startLogin({ path: VIEW_PATHS.home, tab })}
+            >
+              다시 로그인
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  ) : (
+    <LoadingPanel message="로그인 완료 후 이동하고 있습니다." />
+  );
   return (
     <AppShell>
-      {!isAdminRoute && (
+      {showMainNav && (
         <ResponsiveNav
           tabs={TABS}
           value={tab}
@@ -261,7 +330,7 @@ export default function App() {
           user={user}
           view={view}
           setView={goToView}
-          onLogin={() => startLogin({ view: "home", tab })}
+          onLogin={() => startLogin({ path: VIEW_PATHS.home, tab })}
           onLogout={logout}
         />
       )}
@@ -270,91 +339,72 @@ export default function App() {
         className={
           isAdminRoute
             ? "min-h-0 min-w-0 flex-1 overflow-hidden"
+            : isAuthRoute
+              ? "min-h-0 min-w-0 flex-1 overflow-y-auto"
             : "min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-6 pb-24 md:px-8 md:pb-6"
         }
       >
-        {authLoading && (
-          <LoadingPanel message="인증 상태를 확인하고 있습니다." />
-        )}
-
-        {!authLoading && view === "auth-complete" && (
-          authCompleteFailed ? (
-            <div className="py-10">
-              <Card className="mx-auto max-w-md">
-                <CardHeader>
-                  <CardTitle>로그인 확인 실패</CardTitle>
-                  <CardDescription>
-                    Google 로그인 완료 상태를 확인하지 못했습니다.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Button
-                    type="button"
-                    className="w-full"
-                    onClick={() => startLogin({ view: "home", tab })}
-                  >
-                    다시 로그인
-                  </Button>
-                </CardContent>
-              </Card>
-            </div>
-          ) : (
-            <LoadingPanel message="로그인 완료 후 이동하고 있습니다." />
-          )
-        )}
-
-        {view === "login" && (
-          <LoginPage
-            onNavigate={goToView}
-            onAuthenticated={completeLogin}
-            onOAuthStart={startOAuth}
-          />
-        )}
-        {view === "signup" && (
-          <SignupPage onNavigate={goToView} onOAuthStart={startOAuth} />
-        )}
-        {view === "find-id" && <FindIdPage onNavigate={goToView} />}
-        {view === "forgot-password" && <ForgotPasswordPage onNavigate={goToView} />}
-
-        {!authLoading && view === "mypage" && (
-          <MyPage
-            user={user}
-            onRequireLogin={() => startLogin({ view: "mypage" })}
-            onOAuthStart={() => saveReturnTarget({ view: "mypage" })}
-            onOpenTab={goToHomeTab}
-          />
-        )}
-
-        {!authLoading && isAdminRoute && (
-          <AdminPage
-            user={user}
-            onRequireLogin={() => startLogin({ view: "admin", path: location.pathname })}
-            onExit={() => goToView("home")}
-          />
-        )}
-
-        {!authLoading && !isAdminRoute && view === "home" && (
-          <div className="h-full">
-            {tab !== "roleplay" && (
-              <ActiveTab
-                user={user}
-                onRequireLogin={() => startLogin({ view: "home", tab })}
-                quizState={quizState}
-                setQuizState={setQuizState}
+        <Routes>
+          <Route path="/" element={homeElement} />
+          <Route
+            path="/login"
+            element={
+              <LoginPage
+                onNavigate={goToView}
+                onAuthenticated={completeLogin}
+                onOAuthStart={startOAuth}
+                onHome={() => goToView("home")}
               />
-            )}
-
-            <div className={tab === "roleplay" ? "h-full" : "hidden"}>
-              <RoleplayTab
-                key={roleplayInstanceKey}
-                user={user}
-                onRequireLogin={() => startLogin({ view: "home", tab: "roleplay" })}
+            }
+          />
+          <Route
+            path="/signup"
+            element={
+              <SignupPage
+                onNavigate={goToView}
+                onOAuthStart={startOAuth}
+                onHome={() => goToView("home")}
               />
-            </div>
-          </div>
-        )}
+            }
+          />
+          <Route path="/find-id" element={<Navigate to="/login" replace />} />
+          <Route
+            path="/forgot-password"
+            element={<ForgotPasswordPage onNavigate={goToView} onHome={() => goToView("home")} />}
+          />
+          <Route path="/auth/complete" element={authCompleteElement} />
+          <Route
+            path="/mypage"
+            element={
+              authLoading ? (
+                <LoadingPanel message="인증 상태를 확인하고 있습니다." />
+              ) : (
+                <MyPage
+                  user={user}
+                  onRequireLogin={() => startLogin({ path: VIEW_PATHS.mypage })}
+                  onOAuthStart={() => saveReturnTarget({ path: VIEW_PATHS.mypage })}
+                  onOpenTab={goToHomeTab}
+                />
+              )
+            }
+          />
+          <Route
+            path="/admin/*"
+            element={
+              authLoading ? (
+                <LoadingPanel message="인증 상태를 확인하고 있습니다." />
+              ) : (
+                <AdminPage
+                  user={user}
+                  onRequireLogin={() => startLogin({ path: location.pathname })}
+                  onExit={() => goToView("home")}
+                />
+              )
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
       </main>
     </AppShell>
   );
-
 }

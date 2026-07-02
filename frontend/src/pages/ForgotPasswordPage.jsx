@@ -169,7 +169,7 @@ function PasswordStep({ flow }) {
   );
 }
 
-export default function ForgotPasswordPage({ onNavigate }) {
+export default function ForgotPasswordPage({ onNavigate, onHome }) {
   const flow = usePasswordReset(() => onNavigate("login"));
 
   return (
@@ -181,6 +181,7 @@ export default function ForgotPasswordPage({ onNavigate }) {
           ? "메일함에서 인증 코드를 확인한 뒤 새 비밀번호를 설정합니다."
           : "가입 이메일을 확인하고 재설정 코드를 발송합니다."
       }
+      onHome={onHome}
       footer={
         <Button
           type="button"

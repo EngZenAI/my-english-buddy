@@ -17,7 +17,6 @@ export default function MobileHeader({
     if (isHome) return "English Buddy";
     if (view === "login") return "로그인";
     if (view === "signup") return "회원가입";
-    if (view === "find-id") return "아이디 찾기";
     if (view === "forgot-password") return "비밀번호 찾기";
     if (view === "mypage") return "마이페이지";
     return "";
