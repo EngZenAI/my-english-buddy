@@ -361,7 +361,7 @@ function AdminFeedPanel({
   );
 }
 
-function ReaderPlaceholder({ article, user, onStart, onRequireLogin }) {
+function ReaderPlaceholder({ article, user, onStart, onRequireLogin, pending }) {
   if (article) {
     return (
       <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
@@ -391,9 +391,10 @@ function ReaderPlaceholder({ article, user, onStart, onRequireLogin }) {
             <Button
               type="button"
               onClick={() => (user ? onStart?.(article.id) : onRequireLogin?.())}
+              disabled={pending}
               className="bg-brand-700 hover:bg-brand-800"
             >
-              {user ? "AI로 기사 분석" : "로그인하고 AI 분석"}
+              {pending ? "분석 준비 중" : user ? "AI로 기사 분석" : "로그인하고 AI 분석"}
             </Button>
             {article.url && (
               <Button type="button" variant="outline" asChild>
@@ -756,6 +757,7 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
   };
 
   const startArticle = (articleId) => {
+    if (startMutation.isPending) return;
     setSelectedArticleId(articleId);
     if (!user) {
       setViewMode("reader");
@@ -951,6 +953,7 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
             user={user}
             onStart={startArticle}
             onRequireLogin={onRequireLogin}
+            pending={startMutation.isPending}
           />
         )}
 

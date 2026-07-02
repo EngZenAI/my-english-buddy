@@ -2005,7 +2005,7 @@ async def list_published_articles(
     per_topic_limit = max(1, min(int(per_topic_limit or 1), 5))
     clauses = [
         "is_published = TRUE",
-        "COALESCE(topic, '') <> 'opinion'",
+        "LOWER(COALESCE(topic, '')) <> 'opinion'",
         """EXISTS (
             SELECT 1 FROM article_sources src
             WHERE src.key = articles.source_key
@@ -2087,7 +2087,7 @@ async def list_admin_articles(
                       extraction_status, feed_entry_id, license_status, collection_method,
                       created_at, updated_at
                FROM articles
-               WHERE COALESCE(topic, '') <> 'opinion'
+               WHERE LOWER(COALESCE(topic, '')) <> 'opinion'
                ORDER BY updated_at DESC, id DESC
                LIMIT :limit OFFSET :offset"""
         ),
@@ -2095,7 +2095,7 @@ async def list_admin_articles(
     )
     rows = _rows(result)
     count_result = await session.execute(
-        text("SELECT COUNT(*)::int FROM articles WHERE COALESCE(topic, '') <> 'opinion'")
+        text("SELECT COUNT(*)::int FROM articles WHERE LOWER(COALESCE(topic, '')) <> 'opinion'")
     )
     return {
         "articles": rows,
@@ -2245,7 +2245,7 @@ async def get_article_catalog_item(
     clauses = ["id = :article_id"]
     if not include_unpublished:
         clauses.append("is_published = TRUE")
-        clauses.append("COALESCE(topic, '') <> 'opinion'")
+        clauses.append("LOWER(COALESCE(topic, '')) <> 'opinion'")
         clauses.append(
             """EXISTS (
                 SELECT 1 FROM article_sources src
@@ -2338,7 +2338,7 @@ async def get_article_session(session: AsyncSession, user_id: str, session_id: i
                WHERE s.user_id = :user_id
                  AND s.id = :session_id
                  AND a.is_published = TRUE
-                 AND COALESCE(a.topic, '') <> 'opinion'
+                 AND LOWER(COALESCE(a.topic, '')) <> 'opinion'
                  AND EXISTS (
                      SELECT 1 FROM article_sources src
                      WHERE src.key = a.source_key
@@ -2369,7 +2369,7 @@ async def get_article_sessions(session: AsyncSession, user_id: str) -> list[dict
                JOIN articles a ON a.id = s.article_id
                WHERE s.user_id = :user_id
                  AND a.is_published = TRUE
-                 AND COALESCE(a.topic, '') <> 'opinion'
+                 AND LOWER(COALESCE(a.topic, '')) <> 'opinion'
                  AND EXISTS (
                      SELECT 1 FROM article_sources src
                      WHERE src.key = a.source_key
