@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   BookMarked,
   ChevronLeft,
@@ -13,6 +14,7 @@ import {
   PanelLeftOpen,
   Search,
   Settings,
+  ShieldCheck,
 } from "lucide-react";
 import englishBuddyLogo from "@/assets/english-buddy-logo.svg";
 import { Button } from "@/components/ui/button";
@@ -48,6 +50,7 @@ export default function ResponsiveNav({
   onLogin,
   onLogout,
 }) {
+  const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
     try {
@@ -75,6 +78,7 @@ export default function ResponsiveNav({
     if (view === "find-id") return "아이디 찾기";
     if (view === "forgot-password") return "비밀번호 찾기";
     if (view === "mypage") return "마이페이지";
+    if (view === "admin") return "관리자";
     return "";
   };
 
@@ -244,6 +248,15 @@ export default function ResponsiveNav({
                   <Settings className="h-4 w-4" />
                   계정 설정
                 </DropdownMenuItem>
+                {user.is_superuser && (
+                  <DropdownMenuItem
+                    onSelect={() => navigate("/admin/learners")}
+                    className="focus:bg-[#e7f3ef] focus:text-[#235f58]"
+                  >
+                    <ShieldCheck className="h-4 w-4" />
+                    관리자 페이지
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   onSelect={onLogout}
                   className="text-destructive focus:bg-[#f8e7e3] focus:text-destructive"
@@ -295,19 +308,33 @@ export default function ResponsiveNav({
         <div className="flex items-center gap-1">
           {user ? (
             isHome && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={() => setView("mypage")}
-                className="h-9 w-9 rounded-full bg-slate-50 dark:bg-slate-900 border"
-              >
-                <Avatar className="h-8 w-8">
-                  <AvatarFallback className="bg-[#e7f3ef] text-[#235f58] text-[10px] font-bold">
-                    {getUserInitials()}
-                  </AvatarFallback>
-                </Avatar>
-              </Button>
+              <>
+                {user.is_superuser && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => navigate("/admin/learners")}
+                    className="h-9 w-9 rounded-full border bg-slate-50 text-[#2f7d73]"
+                    aria-label="관리자 페이지"
+                  >
+                    <ShieldCheck className="h-4 w-4" />
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setView("mypage")}
+                  className="h-9 w-9 rounded-full bg-slate-50 dark:bg-slate-900 border"
+                >
+                  <Avatar className="h-8 w-8">
+                    <AvatarFallback className="bg-[#e7f3ef] text-[#235f58] text-[10px] font-bold">
+                      {getUserInitials()}
+                    </AvatarFallback>
+                  </Avatar>
+                </Button>
+              </>
             )
           ) : (
             isHome && (

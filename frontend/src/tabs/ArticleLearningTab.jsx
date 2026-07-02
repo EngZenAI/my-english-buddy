@@ -7,10 +7,8 @@ import {
   Highlighter,
   Loader2,
   PanelRightOpen,
-  RefreshCw,
   Save,
   Search,
-  Sparkles,
 } from "lucide-react";
 import { api } from "../api";
 import { queryKeys } from "../queryClient";
@@ -18,13 +16,7 @@ import AudioButton from "../components/AudioButton";
 import { EmptyState, SkeletonBlock } from "../components/AsyncState";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Drawer,
@@ -43,7 +35,6 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 
 const TOPICS = [
@@ -247,116 +238,6 @@ function ArticleListItem({ article, active, pending, onPreview, onStart }) {
           </div>
         </div>
       </div>
-    </Card>
-  );
-}
-
-function AdminFeedPanel({
-  sources,
-  adminArticles,
-  feedSourceKey,
-  setFeedSourceKey,
-  refreshFeeds,
-  isRefreshRunning,
-  refreshJob,
-  refreshProgress,
-  refreshCompleted,
-  refreshTotal,
-  refreshError,
-  refreshStatusError,
-  publishArticle,
-  publishPending,
-}) {
-  return (
-    <Card className="rounded-md border-brand-200 bg-brand-50/70 shadow-none">
-      <CardHeader className="p-4 pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <CardTitle className="text-base text-brand-900">콘텐츠 업데이트</CardTitle>
-            <CardDescription className="text-brand-700">
-              언론사별 주요 뉴스를 가져와 학습 목록에 반영합니다.
-            </CardDescription>
-          </div>
-          <Sparkles className="mt-0.5 h-5 w-5 text-brand-600" />
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3 p-4 pt-0">
-        <div className="flex flex-wrap gap-2">
-          <select
-            value={feedSourceKey}
-            onChange={(event) => setFeedSourceKey(event.target.value)}
-            className="h-10 min-w-[170px] rounded-md border border-brand-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-          >
-            <option value="">전체 언론사</option>
-            {(sources || [])
-              .filter((source) => source.license_status === "approved" && source.feed_url)
-              .map((source) => (
-                <option key={source.key} value={source.key}>
-                  {source.name}
-                </option>
-              ))}
-          </select>
-          <Button type="button" onClick={refreshFeeds} disabled={isRefreshRunning} className="bg-brand-700 hover:bg-brand-800">
-            {isRefreshRunning ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            {isRefreshRunning ? "업데이트 중" : "업데이트"}
-          </Button>
-        </div>
-
-        {refreshError && <p className="text-xs text-rose-600">업데이트 실패: {refreshError}</p>}
-        {refreshStatusError && <p className="text-xs text-rose-600">업데이트 상태 확인 실패: {refreshStatusError}</p>}
-
-        {refreshJob && (
-          <div className="rounded-md bg-white p-3">
-            <div className="flex items-center justify-between gap-2 text-xs">
-              <span className="font-semibold text-slate-700">
-                {refreshJob.status === "completed"
-                  ? "업데이트 완료"
-                  : refreshJob.status === "failed"
-                    ? "업데이트 실패"
-                    : refreshJob.current_source || refreshJob.message || "업데이트 준비 중"}
-              </span>
-              <span className="shrink-0 text-slate-500">
-                {refreshCompleted}/{refreshTotal || "-"} · 저장 {refreshJob.saved || 0}개
-              </span>
-            </div>
-            <Progress
-              value={refreshJob.status === "completed" ? 100 : refreshProgress}
-              className={cn("mt-2 bg-brand-100", refreshJob.status === "failed" && "bg-rose-100")}
-            />
-            {refreshJob.message && <p className="mt-1.5 text-xs text-slate-500">{refreshJob.message}</p>}
-            {refreshJob.results?.length > 0 && (
-              <div className="mt-2 space-y-1">
-                {refreshJob.results.map((item) => (
-                  <p key={item.source_key} className={cn("text-xs", item.ok ? "text-emerald-700" : "text-rose-600")}>
-                    {item.source}: {item.ok ? `${item.fetched}개 수집 · ${item.saved}개 저장` : item.error}
-                  </p>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {adminArticles?.length > 0 && (
-          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-            {adminArticles.slice(0, 6).map((item) => (
-              <div key={item.id} className="flex items-center justify-between gap-2 rounded-md bg-white px-3 py-2 text-xs">
-                <span className="min-w-0 flex-1 truncate text-slate-700">{item.title}</span>
-                <button
-                  type="button"
-                  disabled={publishPending}
-                  onClick={() => publishArticle({ id: item.id, isPublished: !item.is_published })}
-                  className={cn(
-                    "rounded-full px-2 py-0.5 font-semibold",
-                    item.is_published ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"
-                  )}
-                >
-                  {item.is_published ? "공개" : "비공개"}
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </CardContent>
     </Card>
   );
 }
@@ -575,8 +456,6 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
   const [selectedKeys, setSelectedKeys] = useState(() => new Set());
   const [viewMode, setViewMode] = useState("catalog");
   const [isExpressionsOpen, setExpressionsOpen] = useState(false);
-  const [feedSourceKey, setFeedSourceKey] = useState("");
-  const [refreshJobId, setRefreshJobId] = useState("");
   const [fontStep, setFontStep] = useState(1);
   const [showExplanations, setShowExplanations] = useState(true);
   const [showHighlights, setShowHighlights] = useState(true);
@@ -600,32 +479,6 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
     queryKey: queryKeys.words(""),
     queryFn: () => api.listWords(""),
     enabled: !!user,
-  });
-
-  const adminStatusQuery = useQuery({
-    queryKey: queryKeys.articleAdminStatus,
-    queryFn: api.articleAdminStatus,
-    enabled: !!user,
-  });
-  const isArticleAdmin = !!adminStatusQuery.data?.is_admin;
-  const sourcesQuery = useQuery({
-    queryKey: queryKeys.articleSources,
-    queryFn: api.articleSources,
-    enabled: !!user && isArticleAdmin,
-  });
-  const adminListQuery = useQuery({
-    queryKey: queryKeys.articleAdminList,
-    queryFn: api.articleAdminList,
-    enabled: !!user && isArticleAdmin,
-  });
-  const refreshJobQuery = useQuery({
-    queryKey: queryKeys.articleRefreshJob(refreshJobId),
-    queryFn: () => api.articleAdminFeedRefreshStatus(refreshJobId),
-    enabled: !!user && isArticleAdmin && !!refreshJobId,
-    refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      return status === "queued" || status === "running" ? 1000 : false;
-    },
   });
 
   const studyMutation = useMutation({
@@ -666,23 +519,6 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
     },
   });
 
-  const adminRefreshMutation = useMutation({
-    mutationFn: (payload) => api.articleAdminFeedRefresh(payload),
-    onSuccess: (data) => {
-      if (data?.job_id) {
-        queryClient.setQueryData(queryKeys.articleRefreshJob(data.job_id), data);
-        setRefreshJobId(data.job_id);
-      }
-    },
-  });
-  const adminPublishMutation = useMutation({
-    mutationFn: ({ id, isPublished }) => api.articleAdminPublish(id, isPublished),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.articleAdminList });
-      queryClient.invalidateQueries({ queryKey: ["articles", "catalog"] });
-    },
-  });
-
   useEffect(() => {
     if (!catalogQuery.data) return;
     if (catalogPage > catalogTotalPages) setCatalogPage(catalogTotalPages);
@@ -691,28 +527,10 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
   const sessionData = sessionQuery.data || null;
   const study = sessionData?.study_json || studyMutation.data?.study || {};
   const chunks = sessionData?.chunks || studyMutation.data?.chunks || [];
-  const mutationRefreshJob =
-    adminRefreshMutation.data?.job_id === refreshJobId ? adminRefreshMutation.data : null;
-  const refreshJob = refreshJobQuery.isError
-    ? null
-    : refreshJobQuery.data || mutationRefreshJob || null;
-  const isRefreshRunning =
-    adminRefreshMutation.isPending ||
-    (!refreshJobQuery.isError && (refreshJob?.status === "queued" || refreshJob?.status === "running"));
-  const refreshTotal = Number(refreshJob?.total_sources || 0);
-  const refreshCompleted = Number(refreshJob?.completed_sources || 0);
-  const refreshProgress = refreshTotal > 0 ? Math.round((refreshCompleted / refreshTotal) * 100) : 0;
   const chunkMap = useMemo(
     () => Object.fromEntries(chunks.map((chunk) => [chunk.id, chunk])),
     [chunks]
   );
-
-  useEffect(() => {
-    if (!refreshJob || refreshJob.job_id !== refreshJobId) return;
-    if (refreshJob.status !== "completed" && refreshJob.status !== "failed") return;
-    queryClient.invalidateQueries({ queryKey: queryKeys.articleAdminList });
-    queryClient.invalidateQueries({ queryKey: ["articles", "catalog"] });
-  }, [refreshJob?.status, refreshJob?.job_id, refreshJobId, queryClient]);
 
   const expressions = useMemo(() => {
     const out = [];
@@ -799,16 +617,6 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
       });
     }
     setExpressionsOpen(true);
-  };
-
-  const refreshFeeds = () => {
-    adminRefreshMutation.reset();
-    setRefreshJobId("");
-    adminRefreshMutation.mutate({
-      source_key: feedSourceKey,
-      publish: true,
-      max_items: 1,
-    });
   };
 
   const font = FONT_STEPS[fontStep];
@@ -1072,25 +880,6 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
           </div>
         )}
       </div>
-
-      {user && isArticleAdmin && (
-        <AdminFeedPanel
-          sources={sourcesQuery.data?.sources || []}
-          adminArticles={adminListQuery.data?.articles || []}
-          feedSourceKey={feedSourceKey}
-          setFeedSourceKey={setFeedSourceKey}
-          refreshFeeds={refreshFeeds}
-          isRefreshRunning={isRefreshRunning}
-          refreshJob={refreshJob}
-          refreshProgress={refreshProgress}
-          refreshCompleted={refreshCompleted}
-          refreshTotal={refreshTotal}
-          refreshError={adminRefreshMutation.error?.message}
-          refreshStatusError={refreshJobQuery.error?.message}
-          publishArticle={adminPublishMutation.mutate}
-          publishPending={adminPublishMutation.isPending}
-        />
-      )}
 
       {viewMode === "catalog" ? renderArticleList({ framed: true }) : renderReader()}
 
