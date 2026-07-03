@@ -9,7 +9,15 @@ import LearningNotesTab from "./LearningNotesTab";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Message } from "@/components/ui/message";
-import { MessageScroller } from "@/components/ui/message-scroller";
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+  useMessageScroller,
+} from "@/components/ui/message-scroller";
 import {
   getCachedRoleplayAudio,
   normalizeTtsText,
@@ -28,6 +36,19 @@ import {
 // 백엔드 history 항목은 [user, bot, coaching] (coaching은 봇 답변에 붙는 한국어 코칭).
 const ROLEPLAY_TTS_MODEL = "gemini-2.5-flash-preview-tts";
 const ROLEPLAY_TTS_VOICE = "Kore";
+
+function RoleplayScrollEffect({ signal }) {
+  const { scrollToEnd } = useMessageScroller();
+
+  useEffect(() => {
+    if (!signal) return;
+    requestAnimationFrame(() => {
+      scrollToEnd({ behavior: "auto" });
+    });
+  }, [scrollToEnd, signal]);
+
+  return null;
+}
 
 function pairsToMessages(pairs) {
   const out = [];
@@ -160,7 +181,7 @@ const GENERAL_CARDS = [
   },
 ];
 
-export default function RoleplayTab({ user, onRequireLogin }) {
+export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }) {
   const [subTab, setSubTab] = useState("play"); // play | voice | notes
   const [level, setLevel] = useState("intermediate");
   const [mode, setMode] = useState("opic");
@@ -180,7 +201,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
   const [savedCount, setSavedCount] = useState(null); // 저장 결과 안내
   const [finishNoticeDismissed, setFinishNoticeDismissed] = useState(false);
   const [streaming, setStreaming] = useState(false);
-  const scrollRef = useRef(null);
+  const [scrollSignal, setScrollSignal] = useState(0);
   const recognitionRef = useRef(null);
   const audioRef = useRef(null);
   const audioCleanupRef = useRef(null);
@@ -189,6 +210,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
   const requestSeqRef = useRef(0);
   const roleplayRequestInFlightRef = useRef(false);
   const summaryInFlightRef = useRef(false);
+  const agentLaunchIdRef = useRef(null);
 
   // 라벨은 태그 모드 칩 + 정리 페이지의 '단어장 추가' 태그 선택에 쓰이므로 로그인 시 로드.
   const labelsQuery = useQuery({
@@ -266,9 +288,7 @@ export default function RoleplayTab({ user, onRequireLogin }) {
             };
 
   const scrollToBottom = () => {
-    requestAnimationFrame(() => {
-      scrollRef.current?.scrollToBottom?.();
-    });
+    setScrollSignal((value) => value + 1);
   };
 
   const cancelRoleplayRequests = () => {
@@ -359,6 +379,44 @@ export default function RoleplayTab({ user, onRequireLogin }) {
     setFinishNoticeDismissed(false);
     startMutation.mutate({ cfg, requestId, signal: controller.signal });
   };
+
+  const startFromAgent = (launch) => {
+    if (!launch || !user || startMutation.isPending || roleplayRequestInFlightRef.current) return;
+    if (agentLaunchIdRef.current === launch.id) return;
+    agentLaunchIdRef.current = launch.id;
+    cancelRoleplayRequests();
+    stopListening();
+    stopSpeaking();
+    setSubTab("play");
+    const nextLevel = launch.level || "intermediate";
+    const nextMode = launch.scenario || "general";
+    const cfg = {
+      level: nextLevel,
+      scenario: nextMode,
+      tag: launch.tag || null,
+      situation: launch.situation || "",
+    };
+    setLevel(nextLevel);
+    setMode(nextMode);
+    setFreeTopic(launch.situation || "");
+    setSummary(null);
+    setPickedVocab(new Set());
+    setSavedCount(null);
+    setFinishNoticeDismissed(false);
+    roleplayRequestInFlightRef.current = true;
+    const controller = new AbortController();
+    const requestId = requestSeqRef.current + 1;
+    requestSeqRef.current = requestId;
+    startAbortRef.current = controller;
+    setSession({ ...cfg, title: launch.title || launch.tag || launch.situation || "Buddy 추천" });
+    setMessages([]);
+    setMsg("");
+    startMutation.mutate({ cfg, requestId, signal: controller.signal });
+  };
+
+  useEffect(() => {
+    startFromAgent(agentLaunch);
+  }, [agentLaunch, user]);
 
   const changeLevel = (l) => {
     setLevel(l);
@@ -1039,65 +1097,79 @@ export default function RoleplayTab({ user, onRequireLogin }) {
       )}
 
       {/* ── 채팅 영역 ─────────────────────────────────────── */}
-      <MessageScroller
-        ref={scrollRef}
-        className={isVoiceTab ? "h-[280px]" : "h-[420px]"}
-        contentClassName="min-h-full"
-      >
-        {starting && (
-          <div className="space-y-3">
-            <SkeletonBlock className="h-12 w-3/4 rounded-2xl" />
-            <SkeletonBlock className="ml-auto h-10 w-1/2 rounded-2xl" />
-            <SkeletonBlock className="h-16 w-5/6 rounded-2xl" />
-          </div>
-        )}
-        {!starting && !active && (
-          <div className="mt-24">
-            <EmptyState
-              title={user ? "상황을 골라 대화를 시작하세요" : "로그인이 필요합니다"}
-              description={
-                user
-                  ? "위에서 모드와 상황을 선택하면 AI가 첫 장면을 열어줍니다."
-                  : "로그인하면 원어민 AI와 영어로 대화할 수 있어요."
-              }
-            />
-          </div>
-        )}
-        {!starting &&
-          messages.map((m, i) => {
-            const canReplay =
-              isVoiceTab && m.role === "bot" && m.text && !m.streaming;
-            return (
-              <Message
-                key={`${m.role}-${i}`}
-                role={m.role === "user" ? "user" : "assistant"}
-                coaching={m.coaching}
-                loading={m.streaming && !m.text}
-              >
-                {canReplay ? (
-                  <div className="flex items-start gap-2">
-                    <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
-                      {m.text}
-                    </span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => playAssistantVoice(m.text, { force: true })}
-                      className="-mr-1 -mt-1 h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
-                      aria-label="이 답변 다시 듣기"
-                      title="다시 듣기"
-                    >
-                      <Volume2 className="h-4 w-4" />
-                    </Button>
+      <MessageScrollerProvider autoScroll defaultScrollPosition="end">
+        <RoleplayScrollEffect signal={scrollSignal} />
+        <MessageScroller className={isVoiceTab ? "h-[280px]" : "h-[420px]"}>
+          <MessageScrollerViewport aria-label="롤플레잉 대화 기록">
+            <MessageScrollerContent className="min-h-full">
+              {starting && (
+                <MessageScrollerItem messageId="roleplay-starting">
+                  <div className="space-y-3">
+                    <SkeletonBlock className="h-12 w-3/4 rounded-2xl" />
+                    <SkeletonBlock className="ml-auto h-10 w-1/2 rounded-2xl" />
+                    <SkeletonBlock className="h-16 w-5/6 rounded-2xl" />
                   </div>
-                ) : (
-                  m.text
-                )}
-              </Message>
-            );
-          })}
-      </MessageScroller>
+                </MessageScrollerItem>
+              )}
+              {!starting && !active && (
+                <MessageScrollerItem messageId="roleplay-empty">
+                  <div className="mt-24">
+                    <EmptyState
+                      title={user ? "상황을 골라 대화를 시작하세요" : "로그인이 필요합니다"}
+                      description={
+                        user
+                          ? "위에서 모드와 상황을 선택하면 AI가 첫 장면을 열어줍니다."
+                          : "로그인하면 원어민 AI와 영어로 대화할 수 있어요."
+                      }
+                    />
+                  </div>
+                </MessageScrollerItem>
+              )}
+              {!starting &&
+                messages.map((m, i) => {
+                  const canReplay =
+                    isVoiceTab && m.role === "bot" && m.text && !m.streaming;
+                  return (
+                    <MessageScrollerItem
+                      key={`${m.role}-${i}`}
+                      messageId={`roleplay-message-${i}`}
+                      scrollAnchor={m.role === "user"}
+                    >
+                      <Message
+                        role={m.role === "user" ? "user" : "assistant"}
+                        user={user}
+                        coaching={m.coaching}
+                        loading={m.streaming && !m.text}
+                      >
+                        {canReplay ? (
+                          <div className="flex items-start gap-2">
+                            <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
+                              {m.text}
+                            </span>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => playAssistantVoice(m.text, { force: true })}
+                              className="-mr-1 -mt-1 h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+                              aria-label="이 답변 다시 듣기"
+                              title="다시 듣기"
+                            >
+                              <Volume2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ) : (
+                          m.text
+                        )}
+                      </Message>
+                    </MessageScrollerItem>
+                  );
+                })}
+            </MessageScrollerContent>
+          </MessageScrollerViewport>
+          <MessageScrollerButton>최근 답변 보기</MessageScrollerButton>
+        </MessageScroller>
+      </MessageScrollerProvider>
 
       {/* 입력창: 대화 시작 후에만 활성화 (정리 화면에선 숨김) */}
       {!summary && !isVoiceTab && (

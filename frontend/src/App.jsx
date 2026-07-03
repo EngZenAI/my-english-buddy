@@ -13,6 +13,12 @@ import SignupPage from "./pages/SignupPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import MyPage from "./pages/MyPage";
 import AdminPage from "./pages/AdminPage";
+import AgentPanel from "@/components/agent/AgentPanel";
+import {
+  OPEN_TAB,
+  START_QUIZ_WITH_GOAL,
+  START_ROLEPLAY_WITH_SITUATION,
+} from "@/components/agent/actionTypes";
 import AppShell from "@/components/layout/AppShell";
 import ResponsiveNav from "@/components/layout/ResponsiveNav";
 import LoadingPanel from "@/components/layout/LoadingPanel";
@@ -90,6 +96,7 @@ export default function App() {
   const [authCompleteChecked, setAuthCompleteChecked] = useState(false);
   const [quizState, setQuizState] = useState(createInitialQuizState);
   const [roleplayInstanceKey, setRoleplayInstanceKey] = useState(0);
+  const [roleplayLaunch, setRoleplayLaunch] = useState(null);
 
   const view = viewFromPath(location.pathname);
   const isAdminRoute = view === "admin";
@@ -245,6 +252,45 @@ export default function App() {
     if (location.pathname !== VIEW_PATHS.home) navigate(VIEW_PATHS.home);
   };
 
+  const handleAgentAction = (action) => {
+    const payload = action?.payload || {};
+    if (action?.type === OPEN_TAB) {
+      changeTab(payload.tab || "search");
+      return;
+    }
+    if (action?.type === START_QUIZ_WITH_GOAL) {
+      const initial = createInitialQuizState();
+      const goalPatch = { ...payload };
+      if (goalPatch.scope_due || goalPatch.tag || goalPatch.scope_tags?.length) {
+        goalPatch.scope_all = false;
+      }
+      setQuizState({
+        ...initial,
+        goal: {
+          ...initial.goal,
+          ...goalPatch,
+          question_type_counts: {
+            ...initial.goal.question_type_counts,
+            ...(goalPatch.question_type_counts || {}),
+          },
+        },
+      });
+      changeTab("quiz");
+      return;
+    }
+    if (action?.type === START_ROLEPLAY_WITH_SITUATION) {
+      setRoleplayLaunch({
+        id: Date.now(),
+        level: payload.level || "intermediate",
+        scenario: payload.scenario || "general",
+        tag: payload.tag || null,
+        situation: payload.situation || "",
+        title: payload.title || payload.tag || payload.situation || "Buddy 추천",
+      });
+      changeTab("roleplay");
+    }
+  };
+
   const homeElement = authLoading ? (
     <LoadingPanel message="인증 상태를 확인하고 있습니다." />
   ) : (
@@ -263,6 +309,7 @@ export default function App() {
           key={roleplayInstanceKey}
           user={user}
           onRequireLogin={() => startLogin({ path: VIEW_PATHS.home, tab: "roleplay" })}
+          agentLaunch={roleplayLaunch}
         />
       </div>
     </div>
@@ -380,6 +427,13 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
+      <AgentPanel
+        user={user}
+        currentTab={tab}
+        hidden={!showMainNav || authLoading}
+        onRequireLogin={() => startLogin({ path: VIEW_PATHS.home, tab })}
+        onAction={handleAgentAction}
+      />
     </AppShell>
   );
 }

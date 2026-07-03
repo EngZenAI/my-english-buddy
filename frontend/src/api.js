@@ -355,6 +355,21 @@ export const api = {
   roleplayDeleteSession: (id) =>
     jsonFetch(`/api/roleplay/sessions/${id}`, { method: "DELETE" }),
 
+  // ── Buddy Agent ──
+  agentSuggestions: (tab = "search") =>
+    jsonFetch(`/api/agent/suggestions?tab=${encodeURIComponent(tab)}`),
+  agentChat: (message, currentTab = "search", recentMessages = []) =>
+    jsonFetch("/api/agent/chat", {
+      method: "POST",
+      body: JSON.stringify({ message, current_tab: currentTab, recent_messages: recentMessages }),
+    }),
+  agentConfirmAction: (action) =>
+    jsonFetch("/api/agent/actions/confirm", {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    }),
+  agentJob: (jobId) => jsonFetch(`/api/agent/jobs/${encodeURIComponent(jobId)}`),
+
   // ── 기사 학습 ──
   articleCatalog: ({ topic = "", level = "", q = "", page = 1 } = {}) => {
     const params = new URLSearchParams();

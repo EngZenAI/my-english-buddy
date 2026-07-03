@@ -144,3 +144,44 @@ class ApiUsageEvent(Base):
         DateTime,
         server_default=func.now(),
     )
+
+
+class AgentMemory(Base):
+    __tablename__ = "agent_memories"
+    __table_args__ = (
+        Index("ux_agent_memories_user_key", "user_id", "key", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(nullable=False)
+    key: Mapped[str] = mapped_column(Text, nullable=False)
+    value_json: Mapped[dict | list | str | int | float | bool | None] = mapped_column(JSONB)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+    )
+
+
+class AgentJob(Base):
+    __tablename__ = "agent_jobs"
+    __table_args__ = (
+        Index("ix_agent_jobs_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(nullable=False)
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'queued'"))
+    progress_current: Mapped[int | None] = mapped_column(Integer, server_default=text("0"))
+    progress_total: Mapped[int | None] = mapped_column(Integer, server_default=text("0"))
+    message: Mapped[str | None] = mapped_column(Text)
+    result_json: Mapped[dict | list | str | int | float | bool | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+    )
