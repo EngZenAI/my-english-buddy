@@ -2,6 +2,7 @@ from datetime import date, datetime
 from uuid import UUID
 
 from sqlalchemy import Boolean, Date, DateTime, Index, Integer, Numeric, Text, func, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.db.base import Base
@@ -64,6 +65,7 @@ class QuizSession(Base):
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
     review_applied_at: Mapped[datetime | None] = mapped_column(DateTime)
+    questions_json: Mapped[list | None] = mapped_column(JSONB)
 
 
 class QuizQuestionResult(Base):
@@ -79,12 +81,15 @@ class QuizQuestionResult(Base):
     word_id: Mapped[int | None] = mapped_column(Integer)
     source_word_id: Mapped[int | None] = mapped_column(Integer)
     source_word: Mapped[str | None] = mapped_column(Text)
+    question_id: Mapped[str | None] = mapped_column(Text)
     target_word: Mapped[str | None] = mapped_column(Text)
     question_type: Mapped[str | None] = mapped_column(Text)
     difficulty: Mapped[str | None] = mapped_column(Text)
     prompt: Mapped[str | None] = mapped_column(Text)
     user_answer: Mapped[str | None] = mapped_column(Text)
     correct_answer: Mapped[str | None] = mapped_column(Text)
+    selected_choice_id: Mapped[str | None] = mapped_column(Text)
+    correct_choice_id: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str | None] = mapped_column(Text)
     correct: Mapped[bool | None] = mapped_column(Boolean)
     score: Mapped[float | None] = mapped_column(Numeric, server_default=text("0"))

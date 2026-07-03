@@ -55,18 +55,27 @@ function createInitialQuizState() {
     goal: {
       mode: "random",
       tag: "",
+      scope_all: true,
+      scope_tags: [],
+      scope_saved_date: false,
+      scope_due: false,
       saved_from: todayMinus(30),
       saved_to: new Date().toISOString().slice(0, 10),
       instruction: "",
       question_count: 10,
+      question_type_counts: {
+        meaning_choice: 4,
+        context_choice: 4,
+        short_answer: 1,
+        sentence_answer: 1,
+      },
     },
     questions: [],
     answerToken: "",
     answers: {},
+    currentIndex: 0,
     gradeResult: null,
     message: "",
-    savedSuggestions: {},
-    reviewInterval: "1d",
   };
 }
 

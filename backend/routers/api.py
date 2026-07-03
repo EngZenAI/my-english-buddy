@@ -56,6 +56,7 @@ from backend.db.repositories import (
     get_article_refresh_job,
     get_article_catalog_item,
     get_activity_summary,
+    get_quiz_session_detail,
     get_quiz_stats,
     get_user_password_hash,
     get_words_for_quiz,
@@ -1260,14 +1261,23 @@ async def slang(payload: SlangIn, session: SessionDep, _user: CurrentUserDep):
 @router.post("/quiz/generate")
 async def quiz_generate(payload: QuizGenerateIn, session: SessionDep, _user: CurrentUserDep):
     # TODO: 복습 스케줄 기반 출제로 되돌릴 때 get_words_for_quiz에 next_review 조건을 추가한다.
+    type_total = sum(
+        max(0, int(value or 0))
+        for value in (payload.question_type_counts or {}).values()
+    )
+    question_count = max(1, min(int(type_total or payload.question_count or 10), 20))
     words = await get_words_for_quiz(
         session,
         _user["id"],
         mode=payload.mode,
         tag=payload.tag.strip(),
+        scope_all=payload.scope_all,
+        scope_tags=payload.scope_tags,
+        scope_saved_date=payload.scope_saved_date,
+        scope_due=payload.scope_due,
         saved_from=payload.saved_from.strip(),
         saved_to=payload.saved_to.strip(),
-        limit=max(payload.question_count * 3, payload.question_count),
+        limit=question_count * 3,
     )
     usage_token = start_usage_capture()
     try:
@@ -1310,8 +1320,21 @@ async def quiz_review_schedule_apply(
 
 
 @router.get("/quiz/stats")
-async def quiz_stats(session: SessionDep, _user: CurrentUserDep):
-    return await get_quiz_stats(session, _user["id"])
+async def quiz_stats(
+    session: SessionDep,
+    _user: CurrentUserDep,
+    start_date: str = "",
+    end_date: str = "",
+):
+    return await get_quiz_stats(session, _user["id"], start_date=start_date, end_date=end_date)
+
+
+@router.get("/quiz/sessions/{session_id}")
+async def quiz_session_detail(session_id: int, session: SessionDep, _user: CurrentUserDep):
+    detail = await get_quiz_session_detail(session, _user["id"], session_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="완료된 퀴즈 기록을 찾을 수 없습니다.")
+    return detail
 
 
 # ── 롤플레잉 — 회원 전용 ───────────────────────────────────

@@ -1,10 +1,17 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Bell,
+  ChevronDown,
+  ChevronRight,
+  LockKeyhole,
+  Mail,
+  UserMinus,
+} from "lucide-react";
 import { api, GOOGLE_LOGIN_URL } from "../api";
 import { queryKeys } from "../queryClient";
-import { EmptyState, LoadingSpinner, SkeletonBlock } from "../components/AsyncState";
+import { EmptyState, SkeletonBlock } from "../components/AsyncState";
 import MemberNotice from "../components/MemberNotice";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,7 +20,6 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const TABS = [
   { id: "account", label: "계정 관리" },
-  { id: "overview", label: "개요" },
   { id: "learning", label: "학습 현황" },
   { id: "activity", label: "이용 기록" },
 ];
@@ -53,14 +59,6 @@ function getErrorDetail(error, fallback) {
   return fallback;
 }
 
-function MethodChip({ children }) {
-  return (
-    <Badge variant="secondary" className="font-medium">
-      {children}
-    </Badge>
-  );
-}
-
 function StatCard({ label, value, helper }) {
   return (
     <Card>
@@ -73,19 +71,89 @@ function StatCard({ label, value, helper }) {
   );
 }
 
-function QuickAction({ label, description, onClick }) {
+function GoogleMark() {
   return (
-    <Button
-      type="button"
-      variant="outline"
-      onClick={onClick}
-      className="h-auto justify-start p-4 text-left"
+    <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-lg font-bold shadow-sm ring-1 ring-slate-200">
+      <span className="text-[#4285f4]">G</span>
+    </span>
+  );
+}
+
+function RowIcon({ children, tone = "default" }) {
+  const toneClass =
+    tone === "danger"
+      ? "bg-rose-50 text-rose-600 ring-rose-100"
+      : tone === "muted"
+        ? "bg-slate-50 text-slate-500 ring-slate-200"
+        : "bg-emerald-50 text-emerald-700 ring-emerald-100";
+
+  return (
+    <span className={`flex h-9 w-9 items-center justify-center rounded-full ring-1 ${toneClass}`}>
+      {children}
+    </span>
+  );
+}
+
+function StatusText({ children, tone = "default" }) {
+  const toneClass =
+    tone === "success"
+      ? "text-emerald-700"
+      : tone === "warning"
+        ? "text-amber-700"
+        : "text-slate-500";
+
+  return (
+    <span className={`whitespace-nowrap text-xs font-medium ${toneClass}`}>
+      {children}
+    </span>
+  );
+}
+
+function AccountRow({
+  icon,
+  title,
+  description,
+  meta,
+  metaTone = "muted",
+  action,
+  onClick,
+  expanded = false,
+  disabled = false,
+  danger = false,
+}) {
+  const clickable = Boolean(onClick) && !disabled;
+  const Comp = clickable ? "button" : "div";
+
+  return (
+    <Comp
+      type={clickable ? "button" : undefined}
+      onClick={clickable ? onClick : undefined}
+      className={`flex w-full items-center gap-3 px-5 py-4 text-left transition-colors ${
+        clickable ? "hover:bg-slate-50" : ""
+      } ${disabled ? "opacity-70" : ""}`}
     >
-      <span>
-        <span className="block text-sm font-semibold">{label}</span>
-        <span className="mt-1 block text-xs text-muted-foreground">{description}</span>
+      {icon}
+      <span className="min-w-0 flex-1">
+        <span className={`block text-sm font-semibold ${danger ? "text-rose-700" : "text-slate-900"}`}>
+          {title}
+        </span>
+        {description && (
+          <span className="mt-0.5 block truncate text-xs text-slate-500">
+            {description}
+          </span>
+        )}
       </span>
-    </Button>
+      {meta && <StatusText tone={metaTone}>{meta}</StatusText>}
+      {action || (
+        clickable ? (
+          expanded ? (
+            <ChevronDown className="h-4 w-4 text-slate-400" />
+          ) : (
+            <ChevronRight className="h-4 w-4 text-slate-400" />
+          )
+        ) : null
+      )}
+    </Comp>
   );
 }
 
@@ -94,58 +162,6 @@ function PanelSkeleton() {
     <div className="space-y-3">
       <SkeletonBlock className="h-24 w-full rounded-lg" />
       <SkeletonBlock className="h-36 w-full rounded-lg" />
-    </div>
-  );
-}
-
-function OverviewPanel({ data, loading, onOpenTab }) {
-  if (loading) return <PanelSkeleton />;
-
-  return (
-    <div className="space-y-4">
-      <section className="grid gap-3 sm:grid-cols-3">
-        <StatCard
-          label="복습 예정"
-          value={`${compactNumber(data.due_review_count)}개`}
-          helper="오늘까지 복습할 단어"
-        />
-        <StatCard
-          label="저장 단어"
-          value={`${compactNumber(data.word_count)}개`}
-          helper="내 단어장"
-        />
-        <StatCard
-          label="이번 달 이용"
-          value={`${compactNumber(data.month_activity_count)}회`}
-          helper="AI·번역·발음 기능"
-        />
-      </section>
-
-      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm shadow-slate-100/60">
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">바로 시작</h2>
-            <p className="mt-1 text-sm text-slate-500">자주 쓰는 학습 기능으로 이동합니다.</p>
-          </div>
-        </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <QuickAction
-            label="단어장"
-            description={`${compactNumber(data.word_count)}개 저장됨`}
-            onClick={() => onOpenTab("wordbook")}
-          />
-          <QuickAction
-            label="퀴즈"
-            description="저장 단어로 연습"
-            onClick={() => onOpenTab("quiz")}
-          />
-          <QuickAction
-            label="롤플레잉"
-            description={`${compactNumber(data.roleplay_session_count)}개 노트`}
-            onClick={() => onOpenTab("roleplay")}
-          />
-        </div>
-      </section>
     </div>
   );
 }
@@ -309,6 +325,7 @@ function AccountPanel({ user, onOAuthStart }) {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [status, setStatus] = useState("");
+  const [passwordOpen, setPasswordOpen] = useState(false);
   const accountQuery = useQuery({
     queryKey: queryKeys.accountStatus,
     queryFn: api.accountStatus,
@@ -319,6 +336,10 @@ function AccountPanel({ user, onOAuthStart }) {
   const hasPassword = Boolean(account.has_password);
   const googleConnected = Boolean(account.google_connected);
   const canDisconnectGoogle = Boolean(account.can_disconnect_google);
+  const googleAccount = (account.oauth_accounts || []).find(
+    (item) => item.provider === "google"
+  );
+  const accountEmail = account.email || user.email;
 
   const passwordMutation = useMutation({
     mutationFn: () =>
@@ -328,6 +349,7 @@ function AccountPanel({ user, onOAuthStart }) {
       setNewPassword("");
       setConfirmPassword("");
       setStatus(hasPassword ? "비밀번호가 변경되었습니다." : "비밀번호가 설정되었습니다.");
+      setPasswordOpen(false);
       await queryClient.invalidateQueries({ queryKey: queryKeys.accountStatus });
     },
     onError: (error) => {
@@ -375,128 +397,171 @@ function AccountPanel({ user, onOAuthStart }) {
 
   return (
     <div className="space-y-4">
-      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm shadow-slate-100/60">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-100/60">
+        <div className="border-b border-slate-100 px-5 py-4">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">계정 정보</h2>
-            <p className="mt-1 text-sm text-slate-500">로그인에 사용하는 기본 정보를 관리합니다.</p>
-          </div>
-          <span className="w-fit rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-            사용 중
-          </span>
-        </div>
-
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <div>
-            <p className="text-xs font-medium text-slate-500">이메일</p>
-            <p className="mt-1 truncate text-sm font-semibold text-slate-900">
-              {account.email || user.email}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs font-medium text-slate-500">로그인 방식</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {hasPassword && <MethodChip>이메일</MethodChip>}
-              {googleConnected && <MethodChip>Google</MethodChip>}
-              {!hasPassword && !googleConnected && <MethodChip>확인 필요</MethodChip>}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm shadow-slate-100/60">
-        <h2 className="text-base font-semibold text-slate-900">
-          {hasPassword ? "비밀번호 변경" : "비밀번호 설정"}
-        </h2>
-        <p className="mt-1 text-sm text-slate-500">
-          {hasPassword
-            ? "주기적으로 비밀번호를 바꾸면 계정을 더 안전하게 유지할 수 있습니다."
-            : "비밀번호를 설정하면 Google 연결 없이도 이메일로 로그인할 수 있습니다."}
-        </p>
-
-        <form onSubmit={submitPassword} className="mt-4 grid gap-3 md:max-w-md">
-          {hasPassword && (
-            <div className="space-y-1.5">
-              <Label htmlFor="current-password">현재 비밀번호</Label>
-              <Input
-                id="current-password"
-                type="password"
-                value={currentPassword}
-                onChange={(event) => setCurrentPassword(event.target.value)}
-                disabled={passwordMutation.isPending}
-              />
-            </div>
-          )}
-          <div className="space-y-1.5">
-            <Label htmlFor="new-password">새 비밀번호</Label>
-            <Input
-              id="new-password"
-              type="password"
-              value={newPassword}
-              onChange={(event) => setNewPassword(event.target.value)}
-              disabled={passwordMutation.isPending}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="confirm-password">새 비밀번호 확인</Label>
-            <Input
-              id="confirm-password"
-              type="password"
-              value={confirmPassword}
-              onChange={(event) => setConfirmPassword(event.target.value)}
-              disabled={passwordMutation.isPending}
-            />
-          </div>
-          <Button
-            type="submit"
-            disabled={passwordMutation.isPending}
-            className="mt-1"
-          >
-            {passwordMutation.isPending
-              ? "저장 중"
-              : hasPassword
-                ? "비밀번호 변경"
-                : "비밀번호 설정"}
-          </Button>
-        </form>
-      </section>
-
-      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm shadow-slate-100/60">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">Google 연결</h2>
+            <h2 className="text-base font-semibold text-slate-900">계정 관리</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Google 계정으로 로그인할 수 있는 연결 상태입니다.
+              로그인 방식과 보안 설정을 관리합니다.
             </p>
           </div>
-          {googleConnected ? (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => disconnectMutation.mutate()}
-              disabled={!canDisconnectGoogle || disconnectMutation.isPending}
-            >
-              {disconnectMutation.isPending ? "해제 중" : "연결 해제"}
-            </Button>
-          ) : (
-            <Button asChild variant="outline">
-              <a href={GOOGLE_LOGIN_URL} onClick={onOAuthStart}>
-                Google 연결
-              </a>
-            </Button>
-          )}
         </div>
-        <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
-          {googleConnected
-            ? canDisconnectGoogle
-              ? "Google 계정이 연결되어 있습니다."
-              : "비밀번호를 먼저 설정한 뒤 Google 연결을 해제할 수 있습니다."
-            : "아직 Google 계정이 연결되어 있지 않습니다."}
+
+        <div className="divide-y divide-slate-100">
+          <AccountRow
+            icon={<GoogleMark />}
+            title="Google 로그인"
+            description={
+              googleConnected
+                ? googleAccount?.email || "Google 계정이 연결되어 있습니다."
+                : "Google 계정으로 로그인할 수 있게 연결합니다."
+            }
+            meta={googleConnected ? "연결됨" : "미연결"}
+            metaTone={googleConnected ? "success" : "muted"}
+            action={
+              googleConnected ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => disconnectMutation.mutate()}
+                  disabled={!canDisconnectGoogle || disconnectMutation.isPending}
+                  className="text-slate-600 hover:text-slate-900"
+                >
+                  {disconnectMutation.isPending ? "해제 중" : "해제"}
+                </Button>
+              ) : (
+                <Button asChild variant="outline" size="sm">
+                  <a href={GOOGLE_LOGIN_URL} onClick={onOAuthStart}>
+                    연결
+                  </a>
+                </Button>
+              )
+            }
+          />
+          {googleConnected && !canDisconnectGoogle && (
+            <div className="bg-slate-50 px-5 py-2 text-xs text-slate-500">
+              Google 연결을 해제하려면 먼저 비밀번호를 설정해야 합니다.
+            </div>
+          )}
+
+          <AccountRow
+            icon={
+              <RowIcon>
+                <Mail className="h-4 w-4" />
+              </RowIcon>
+            }
+            title="이메일"
+            description={accountEmail}
+            meta="로그인 ID"
+          />
+
+          <AccountRow
+            icon={
+              <RowIcon>
+                <LockKeyhole className="h-4 w-4" />
+              </RowIcon>
+            }
+            title={hasPassword ? "비밀번호 변경" : "비밀번호 설정"}
+            description={
+              hasPassword
+                ? "현재 비밀번호 확인 후 새 비밀번호로 변경합니다."
+                : "이메일 로그인용 비밀번호를 추가합니다."
+            }
+            meta={hasPassword ? "설정됨" : "필요"}
+            metaTone={hasPassword ? "success" : "warning"}
+            onClick={() => setPasswordOpen((open) => !open)}
+            expanded={passwordOpen}
+          />
+
+          {passwordOpen && (
+            <div className="bg-slate-50 px-5 py-4">
+              <form onSubmit={submitPassword} className="grid gap-3 md:max-w-md">
+                {hasPassword && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="current-password">현재 비밀번호</Label>
+                    <Input
+                      id="current-password"
+                      type="password"
+                      value={currentPassword}
+                      onChange={(event) => setCurrentPassword(event.target.value)}
+                      disabled={passwordMutation.isPending}
+                      autoComplete="current-password"
+                    />
+                  </div>
+                )}
+                <div className="space-y-1.5">
+                  <Label htmlFor="new-password">새 비밀번호</Label>
+                  <Input
+                    id="new-password"
+                    type="password"
+                    value={newPassword}
+                    onChange={(event) => setNewPassword(event.target.value)}
+                    disabled={passwordMutation.isPending}
+                    autoComplete="new-password"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="confirm-password">새 비밀번호 확인</Label>
+                  <Input
+                    id="confirm-password"
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(event) => setConfirmPassword(event.target.value)}
+                    disabled={passwordMutation.isPending}
+                    autoComplete="new-password"
+                  />
+                </div>
+                <div className="flex flex-col gap-2 pt-1 sm:flex-row">
+                  <Button type="submit" disabled={passwordMutation.isPending}>
+                    {passwordMutation.isPending
+                      ? "저장 중"
+                      : hasPassword
+                        ? "비밀번호 변경"
+                        : "비밀번호 설정"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setPasswordOpen(false)}
+                    disabled={passwordMutation.isPending}
+                  >
+                    취소
+                  </Button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          <AccountRow
+            icon={
+              <RowIcon tone="muted">
+                <Bell className="h-4 w-4" />
+              </RowIcon>
+            }
+            title="알림 설정"
+            description="복습 알림과 서비스 안내 수신 설정"
+            meta="준비 중"
+            disabled
+          />
+
+          <AccountRow
+            icon={
+              <RowIcon tone="danger">
+                <UserMinus className="h-4 w-4" />
+              </RowIcon>
+            }
+            title="회원 탈퇴"
+            description="계정과 학습 데이터를 삭제하는 기능"
+            meta="준비 중"
+            disabled
+            danger
+          />
         </div>
       </section>
 
       {status && (
-        <p className="rounded-lg border bg-background px-4 py-3 text-sm text-muted-foreground">
+        <p className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 shadow-sm shadow-slate-100/60">
           {status}
         </p>
       )}
@@ -504,14 +569,8 @@ function AccountPanel({ user, onOAuthStart }) {
   );
 }
 
-export default function MyPage({ user, onRequireLogin, onOpenTab, onOAuthStart }) {
+export default function MyPage({ user, onRequireLogin, onOAuthStart }) {
   const [activeTab, setActiveTab] = useState("account");
-  const overviewQuery = useQuery({
-    queryKey: queryKeys.myPageOverview,
-    queryFn: api.myPageOverview,
-    enabled: Boolean(user) && activeTab === "overview",
-    staleTime: 30_000,
-  });
   const learningQuery = useQuery({
     queryKey: queryKeys.myPageLearning,
     queryFn: api.myPageLearning,
@@ -524,7 +583,6 @@ export default function MyPage({ user, onRequireLogin, onOpenTab, onOAuthStart }
     enabled: Boolean(user) && activeTab === "activity",
     staleTime: 30_000,
   });
-  const overview = overviewQuery.data || {};
 
   if (!user) {
     return (
@@ -544,40 +602,21 @@ export default function MyPage({ user, onRequireLogin, onOpenTab, onOAuthStart }
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-4">
         <TabsList className="h-auto w-full justify-start overflow-x-auto rounded-lg bg-muted p-1">
-        {TABS.map((tab) => (
-          <TabsTrigger
-            key={tab.id}
-            value={tab.id}
-          >
-            {tab.label}
-          </TabsTrigger>
-        ))}
+          {TABS.map((tab) => (
+            <TabsTrigger
+              key={tab.id}
+              value={tab.id}
+            >
+              {tab.label}
+            </TabsTrigger>
+          ))}
         </TabsList>
       </Tabs>
 
-      {overviewQuery.error && activeTab === "overview" && (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          마이페이지 정보를 불러오지 못했습니다.
-        </div>
-      )}
-
-      {activeTab === "overview" && (
-        <OverviewPanel
-          data={overview}
-          loading={overviewQuery.isPending}
-          onOpenTab={onOpenTab}
-        />
-      )}
       {activeTab === "learning" && <LearningPanel query={learningQuery} />}
       {activeTab === "activity" && <ActivityPanel query={activityQuery} />}
       {activeTab === "account" && (
         <AccountPanel user={user} onOAuthStart={onOAuthStart} />
-      )}
-
-      {overviewQuery.isFetching && !overviewQuery.isPending && activeTab === "overview" && (
-        <div className="mt-3">
-          <LoadingSpinner label="갱신 중" />
-        </div>
       )}
     </div>
   );
