@@ -467,6 +467,14 @@ def _question_signature(question: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
+def _question_type_totals(questions: list[dict[str, Any]]) -> dict[str, int]:
+    totals: dict[str, int] = {}
+    for question in questions:
+        qtype = _normalize_question_type(question.get("question_type"))
+        totals[qtype] = totals.get(qtype, 0) + 1
+    return totals
+
+
 def _reindex_questions(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for idx, question in enumerate(questions, start=1):
         question["id"] = f"q{idx}"
@@ -649,12 +657,19 @@ def _generate_llm_questions(
             continue
 
         normalized = _normalize_generated(generated, quiz_words, remaining)
+        produced = _question_type_totals(generated_questions)
         for question in normalized:
+            qtype = _normalize_question_type(question.get("question_type"))
+            if requested_type_counts:
+                target_type_count = int(requested_type_counts.get(qtype, 0) or 0)
+                if target_type_count <= 0 or produced.get(qtype, 0) >= target_type_count:
+                    continue
             signature = _question_signature(question)
             if signature in seen:
                 continue
             seen.add(signature)
             generated_questions.append(question)
+            produced[qtype] = produced.get(qtype, 0) + 1
             if len(generated_questions) >= count:
                 break
 

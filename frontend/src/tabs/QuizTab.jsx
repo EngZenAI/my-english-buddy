@@ -6,53 +6,18 @@ import MemberNotice from "../components/MemberNotice";
 import QuizStatsPanel from "@/components/quiz/QuizStatsPanel";
 import QuizConfig from "@/components/quiz/QuizConfig";
 import QuizScreen from "@/components/quiz/QuizScreen";
-
-function todayMinus(days) {
-  const date = new Date();
-  date.setDate(date.getDate() - days);
-  return date.toISOString().slice(0, 10);
-}
-
-function todayString() {
-  return new Date().toISOString().slice(0, 10);
-}
+import {
+  createInitialQuizState,
+  DEFAULT_QUESTION_TYPE_COUNTS,
+  todayMinus,
+  todayString,
+} from "@/components/quiz/quizState";
 
 function createInitialStatsRange() {
   return {
     preset: "week",
     startDate: todayMinus(6),
     endDate: todayString(),
-  };
-}
-
-const DEFAULT_QUESTION_TYPE_COUNTS = {
-  meaning_choice: 4,
-  context_choice: 4,
-  short_answer: 1,
-  sentence_answer: 1,
-};
-
-function createInitialQuizState() {
-  return {
-    goal: {
-      mode: "random",
-      tag: "",
-      scope_all: true,
-      scope_tags: [],
-      scope_saved_date: false,
-      scope_due: false,
-      saved_from: todayMinus(30),
-      saved_to: new Date().toISOString().slice(0, 10),
-      instruction: "",
-      question_count: 10,
-      question_type_counts: DEFAULT_QUESTION_TYPE_COUNTS,
-    },
-    questions: [],
-    answerToken: "",
-    answers: {},
-    currentIndex: 0,
-    gradeResult: null,
-    message: "",
   };
 }
 
@@ -100,7 +65,7 @@ export default function QuizTab({ user, onRequireLogin, quizState, setQuizState 
   const words = wordsQuery.data?.words || [];
 
   const statsQuery = useQuery({
-    queryKey: ["quiz-stats", statsRange.startDate, statsRange.endDate],
+    queryKey: queryKeys.quizStats(statsRange.startDate, statsRange.endDate),
     queryFn: () => api.quizStats({ startDate: statsRange.startDate, endDate: statsRange.endDate }),
     enabled: Boolean(user) && activeView === "stats",
     staleTime: 30_000,
@@ -294,9 +259,9 @@ export default function QuizTab({ user, onRequireLogin, quizState, setQuizState 
       {!user && <MemberNotice feature="퀴즈" onRequireLogin={onRequireLogin} />}
 
       {/* 에러 및 메시지 배너 */}
-      {(generateMutation.error || gradeMutation.error || openSessionMutation.error) && (
+      {(generateMutation.error || gradeMutation.error || openSessionMutation.error || saveSuggestedWordMutation.error) && (
         <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50/50 px-4 py-3 text-xs font-semibold text-rose-700">
-          {(generateMutation.error || gradeMutation.error || openSessionMutation.error).message}
+          {(generateMutation.error || gradeMutation.error || openSessionMutation.error || saveSuggestedWordMutation.error).message}
         </div>
       )}
 

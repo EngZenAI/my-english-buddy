@@ -16,6 +16,7 @@ import AdminPage from "./pages/AdminPage";
 import AppShell from "@/components/layout/AppShell";
 import ResponsiveNav from "@/components/layout/ResponsiveNav";
 import LoadingPanel from "@/components/layout/LoadingPanel";
+import { createInitialQuizState } from "@/components/quiz/quizState";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -43,41 +44,6 @@ const VIEW_PATHS = {
   "auth-complete": "/auth/complete",
   admin: "/admin/learners",
 };
-
-function todayMinus(days) {
-  const date = new Date();
-  date.setDate(date.getDate() - days);
-  return date.toISOString().slice(0, 10);
-}
-
-function createInitialQuizState() {
-  return {
-    goal: {
-      mode: "random",
-      tag: "",
-      scope_all: true,
-      scope_tags: [],
-      scope_saved_date: false,
-      scope_due: false,
-      saved_from: todayMinus(30),
-      saved_to: new Date().toISOString().slice(0, 10),
-      instruction: "",
-      question_count: 10,
-      question_type_counts: {
-        meaning_choice: 4,
-        context_choice: 4,
-        short_answer: 1,
-        sentence_answer: 1,
-      },
-    },
-    questions: [],
-    answerToken: "",
-    answers: {},
-    currentIndex: 0,
-    gradeResult: null,
-    message: "",
-  };
-}
 
 function viewFromPath(pathname) {
   if (pathname === "/") return "home";

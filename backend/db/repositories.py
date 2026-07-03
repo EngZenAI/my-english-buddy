@@ -17,6 +17,7 @@ from backend.db.session import SessionFactory, engine
 logger = logging.getLogger(__name__)
 DEFAULT_LABELS = ["미지정", "여행", "비즈니스", "일상", "IT·코딩", "학업"]
 MAX_LABELS = 20
+MAX_QUIZ_STATS_RANGE_DAYS = 366
 
 
 def _rows(result) -> list[dict[str, Any]]:
@@ -683,7 +684,7 @@ async def get_words_for_quiz(
     use_saved_date = bool(scope_saved_date or mode == "saved_date")
     use_due = bool(scope_due)
     has_explicit_scope = bool(tags or use_saved_date or use_due)
-    include_all = bool(scope_all or (mode == "random" and not has_explicit_scope))
+    include_all = bool(not has_explicit_scope and (scope_all or mode == "random"))
 
     scope_clauses: list[str] = []
     if tags:
@@ -912,6 +913,12 @@ async def get_quiz_stats(
     end_date = _date_param(end_date)
     if start_date and end_date and start_date > end_date:
         start_date, end_date = end_date, start_date
+    if start_date and not end_date:
+        end_date = date.today()
+    elif end_date and not start_date:
+        start_date = end_date - timedelta(days=6)
+    if start_date and end_date and (end_date - start_date).days + 1 > MAX_QUIZ_STATS_RANGE_DAYS:
+        start_date = end_date - timedelta(days=MAX_QUIZ_STATS_RANGE_DAYS - 1)
     params = {"user_id": user_id, "start_date": start_date, "end_date": end_date}
     result_date_clause = _quiz_stats_date_clause()
     q_date_clause = _quiz_stats_date_clause("q")

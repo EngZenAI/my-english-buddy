@@ -10,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { DEFAULT_QUESTION_TYPE_COUNTS } from "@/components/quiz/quizState";
 import { cn } from "@/lib/utils";
 
 const MAX_QUESTION_COUNT = 20;
@@ -35,13 +36,6 @@ const QUESTION_TYPE_OPTIONS = [
     description: "목표 단어로 짧은 문장 작성",
   },
 ];
-const DEFAULT_QUESTION_TYPE_COUNTS = {
-  meaning_choice: 4,
-  context_choice: 4,
-  short_answer: 1,
-  sentence_answer: 1,
-};
-
 function safeDate(value) {
   if (!value) return null;
   const date = new Date(value);

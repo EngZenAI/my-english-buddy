@@ -13,7 +13,7 @@ import logging
 import threading
 import uuid
 from _thread import LockType
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
@@ -123,6 +123,7 @@ _roleplay_lock_guard = threading.Lock()
 _roleplay_user_locks: dict[str, LockType] = {}
 
 ARTICLE_REFRESH_JOB_LIMIT = 20
+MAX_QUIZ_STATS_RANGE_DAYS = 366
 
 
 async def require_user(request: Request, session: SessionDep) -> dict:
@@ -1319,6 +1320,35 @@ async def quiz_review_schedule_apply(
     return result
 
 
+def _parse_quiz_stats_date(value: str):
+    value = (value or "").strip()
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="날짜 형식은 YYYY-MM-DD 이어야 합니다.")
+
+
+def _safe_quiz_stats_range(start_date: str, end_date: str) -> tuple[str, str]:
+    start = _parse_quiz_stats_date(start_date)
+    end = _parse_quiz_stats_date(end_date)
+    if not start and not end:
+        return "", ""
+    if start and not end:
+        end = datetime.now().date()
+    elif end and not start:
+        start = end - timedelta(days=6)
+    if start > end:
+        start, end = end, start
+    if (end - start).days + 1 > MAX_QUIZ_STATS_RANGE_DAYS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"퀴즈 통계 조회 기간은 최대 {MAX_QUIZ_STATS_RANGE_DAYS}일입니다.",
+        )
+    return start.isoformat(), end.isoformat()
+
+
 @router.get("/quiz/stats")
 async def quiz_stats(
     session: SessionDep,
@@ -1326,7 +1356,8 @@ async def quiz_stats(
     start_date: str = "",
     end_date: str = "",
 ):
-    return await get_quiz_stats(session, _user["id"], start_date=start_date, end_date=end_date)
+    safe_start_date, safe_end_date = _safe_quiz_stats_range(start_date, end_date)
+    return await get_quiz_stats(session, _user["id"], start_date=safe_start_date, end_date=safe_end_date)
 
 
 @router.get("/quiz/sessions/{session_id}")

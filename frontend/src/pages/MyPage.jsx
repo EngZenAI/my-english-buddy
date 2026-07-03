@@ -341,13 +341,22 @@ function AccountPanel({ user, onOAuthStart }) {
   );
   const accountEmail = account.email || user.email;
 
+  const resetPasswordFields = () => {
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+  };
+
+  const closePasswordPanel = () => {
+    resetPasswordFields();
+    setPasswordOpen(false);
+  };
+
   const passwordMutation = useMutation({
     mutationFn: () =>
       api.updateAccountPassword(hasPassword ? currentPassword : "", newPassword),
     onSuccess: async () => {
-      setCurrentPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
+      resetPasswordFields();
       setStatus(hasPassword ? "비밀번호가 변경되었습니다." : "비밀번호가 설정되었습니다.");
       setPasswordOpen(false);
       await queryClient.invalidateQueries({ queryKey: queryKeys.accountStatus });
@@ -470,7 +479,12 @@ function AccountPanel({ user, onOAuthStart }) {
             }
             meta={hasPassword ? "설정됨" : "필요"}
             metaTone={hasPassword ? "success" : "warning"}
-            onClick={() => setPasswordOpen((open) => !open)}
+            onClick={() => {
+              setPasswordOpen((open) => {
+                if (open) resetPasswordFields();
+                return !open;
+              });
+            }}
             expanded={passwordOpen}
           />
 
@@ -523,7 +537,7 @@ function AccountPanel({ user, onOAuthStart }) {
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => setPasswordOpen(false)}
+                    onClick={closePasswordPanel}
                     disabled={passwordMutation.isPending}
                   >
                     취소
