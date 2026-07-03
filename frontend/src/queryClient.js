@@ -11,6 +11,7 @@ export const queryKeys = {
   search: (type, word) => ["search", type, word.trim().toLowerCase()],
   wordSaved: (userId, word) => ["word-saved", userId, word.trim().toLowerCase()],
   labelWordCount: (userId, label) => ["label-word-count", userId, label],
+  quizStats: (startDate = "", endDate = "") => ["quiz-stats", startDate || "", endDate || ""],
   roleplaySessions: ["roleplay-sessions"],
   articleCatalog: (topic = "", level = "", q = "", page = 1) => [
     "articles",

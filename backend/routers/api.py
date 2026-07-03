@@ -13,7 +13,7 @@ import logging
 import threading
 import uuid
 from _thread import LockType
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
@@ -56,6 +56,7 @@ from backend.db.repositories import (
     get_article_refresh_job,
     get_article_catalog_item,
     get_activity_summary,
+    get_quiz_session_detail,
     get_quiz_stats,
     get_user_password_hash,
     get_words_for_quiz,
@@ -122,6 +123,7 @@ _roleplay_lock_guard = threading.Lock()
 _roleplay_user_locks: dict[str, LockType] = {}
 
 ARTICLE_REFRESH_JOB_LIMIT = 20
+MAX_QUIZ_STATS_RANGE_DAYS = 366
 
 
 async def require_user(request: Request, session: SessionDep) -> dict:
@@ -1260,14 +1262,23 @@ async def slang(payload: SlangIn, session: SessionDep, _user: CurrentUserDep):
 @router.post("/quiz/generate")
 async def quiz_generate(payload: QuizGenerateIn, session: SessionDep, _user: CurrentUserDep):
     # TODO: 복습 스케줄 기반 출제로 되돌릴 때 get_words_for_quiz에 next_review 조건을 추가한다.
+    type_total = sum(
+        max(0, int(value or 0))
+        for value in (payload.question_type_counts or {}).values()
+    )
+    question_count = max(1, min(int(type_total or payload.question_count or 10), 20))
     words = await get_words_for_quiz(
         session,
         _user["id"],
         mode=payload.mode,
         tag=payload.tag.strip(),
+        scope_all=payload.scope_all,
+        scope_tags=payload.scope_tags,
+        scope_saved_date=payload.scope_saved_date,
+        scope_due=payload.scope_due,
         saved_from=payload.saved_from.strip(),
         saved_to=payload.saved_to.strip(),
-        limit=max(payload.question_count * 3, payload.question_count),
+        limit=question_count * 3,
     )
     usage_token = start_usage_capture()
     try:
@@ -1309,9 +1320,52 @@ async def quiz_review_schedule_apply(
     return result
 
 
+def _parse_quiz_stats_date(value: str):
+    value = (value or "").strip()
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="날짜 형식은 YYYY-MM-DD 이어야 합니다.")
+
+
+def _safe_quiz_stats_range(start_date: str, end_date: str) -> tuple[str, str]:
+    start = _parse_quiz_stats_date(start_date)
+    end = _parse_quiz_stats_date(end_date)
+    if not start and not end:
+        return "", ""
+    if start and not end:
+        end = datetime.now().date()
+    elif end and not start:
+        start = end - timedelta(days=6)
+    if start > end:
+        start, end = end, start
+    if (end - start).days + 1 > MAX_QUIZ_STATS_RANGE_DAYS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"퀴즈 통계 조회 기간은 최대 {MAX_QUIZ_STATS_RANGE_DAYS}일입니다.",
+        )
+    return start.isoformat(), end.isoformat()
+
+
 @router.get("/quiz/stats")
-async def quiz_stats(session: SessionDep, _user: CurrentUserDep):
-    return await get_quiz_stats(session, _user["id"])
+async def quiz_stats(
+    session: SessionDep,
+    _user: CurrentUserDep,
+    start_date: str = "",
+    end_date: str = "",
+):
+    safe_start_date, safe_end_date = _safe_quiz_stats_range(start_date, end_date)
+    return await get_quiz_stats(session, _user["id"], start_date=safe_start_date, end_date=safe_end_date)
+
+
+@router.get("/quiz/sessions/{session_id}")
+async def quiz_session_detail(session_id: int, session: SessionDep, _user: CurrentUserDep):
+    detail = await get_quiz_session_detail(session, _user["id"], session_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="완료된 퀴즈 기록을 찾을 수 없습니다.")
+    return detail
 
 
 # ── 롤플레잉 — 회원 전용 ───────────────────────────────────

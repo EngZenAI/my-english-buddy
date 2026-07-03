@@ -9,10 +9,15 @@ class QuizChoice(BaseModel):
 class QuizGenerateIn(BaseModel):
     mode: str = "random"
     tag: str = ""
+    scope_all: bool = False
+    scope_tags: list[str] = Field(default_factory=list)
+    scope_saved_date: bool = False
+    scope_due: bool = False
     saved_from: str = ""
     saved_to: str = ""
     instruction: str = ""
     question_count: int = 10
+    question_type_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class QuizQuestion(BaseModel):

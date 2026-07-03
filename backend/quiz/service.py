@@ -117,6 +117,8 @@ Rules:
 - Use only provided word_id values as source_word_id/word_id anchors.
 - question_type must be one of: meaning_choice, context_choice,
   short_answer, sentence_answer.
+- If Goal.question_type_counts is present, create exactly that many questions
+  for each listed question_type. The sum is the requested question_count.
 - For context_choice, put the English sentence with the blank in passage and
   put only the Korean instruction/question in prompt.
 - Create fresh original contexts and sentences. Do not copy, lightly rewrite,
@@ -201,6 +203,15 @@ def _clamp_question_count(value: int | None) -> int:
     return max(1, min(count, MAX_QUESTION_COUNT))
 
 
+def _requested_question_count(goal: QuizGenerateIn) -> int:
+    type_total = sum(
+        max(0, int(value or 0))
+        for key, value in (goal.question_type_counts or {}).items()
+        if key in QUESTION_TYPES
+    )
+    return _clamp_question_count(type_total or goal.question_count)
+
+
 def _b64_encode(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
@@ -268,13 +279,19 @@ def _word_payload(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _goal_payload(goal: QuizGenerateIn) -> dict[str, Any]:
+    type_counts = {
+        key: max(0, int(value or 0))
+        for key, value in (goal.question_type_counts or {}).items()
+        if key in QUESTION_TYPES
+    }
     return {
         "mode": goal.mode or "random",
         "tag": goal.tag or "",
         "saved_from": goal.saved_from or "",
         "saved_to": goal.saved_to or "",
         "instruction": goal.instruction or "",
-        "question_count": _clamp_question_count(goal.question_count),
+        "question_count": _requested_question_count(goal),
+        "question_type_counts": type_counts,
     }
 
 
@@ -450,6 +467,14 @@ def _question_signature(question: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
+def _question_type_totals(questions: list[dict[str, Any]]) -> dict[str, int]:
+    totals: dict[str, int] = {}
+    for question in questions:
+        qtype = _normalize_question_type(question.get("question_type"))
+        totals[qtype] = totals.get(qtype, 0) + 1
+    return totals
+
+
 def _reindex_questions(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for idx, question in enumerate(questions, start=1):
         question["id"] = f"q{idx}"
@@ -577,11 +602,24 @@ def _generate_llm_questions(
     generated_questions: list[dict[str, Any]] = []
     seen: set[tuple[Any, ...]] = set()
     goal_payload = _goal_payload(goal)
+    requested_type_counts = goal_payload.get("question_type_counts") or {}
 
     for attempt in range(GENERATION_ATTEMPTS):
         remaining = count - len(generated_questions)
         if remaining <= 0:
             break
+        attempt_goal_payload = dict(goal_payload)
+        if requested_type_counts:
+            produced: dict[str, int] = {}
+            for question in generated_questions:
+                qtype = _normalize_question_type(question.get("question_type"))
+                produced[qtype] = produced.get(qtype, 0) + 1
+            attempt_goal_payload["question_type_counts"] = {
+                qtype: max(0, int(target_count) - produced.get(qtype, 0))
+                for qtype, target_count in requested_type_counts.items()
+                if max(0, int(target_count) - produced.get(qtype, 0)) > 0
+            }
+            attempt_goal_payload["question_count"] = sum(attempt_goal_payload["question_type_counts"].values()) or remaining
         generation_note = (
             "Initial generation. Create original questions and sentences with the LLM."
             if attempt == 0
@@ -597,7 +635,7 @@ def _generate_llm_questions(
             prompt_value = _quiz_prompt.invoke(
                 {
                     "question_count": remaining,
-                    "goal_json": json.dumps(goal_payload, ensure_ascii=False),
+                    "goal_json": json.dumps(attempt_goal_payload, ensure_ascii=False),
                     "wordbook_json": json.dumps(quiz_words, ensure_ascii=False),
                     "generation_note": generation_note,
                     "format_instructions": _quiz_parser.get_format_instructions(),
@@ -619,12 +657,19 @@ def _generate_llm_questions(
             continue
 
         normalized = _normalize_generated(generated, quiz_words, remaining)
+        produced = _question_type_totals(generated_questions)
         for question in normalized:
+            qtype = _normalize_question_type(question.get("question_type"))
+            if requested_type_counts:
+                target_type_count = int(requested_type_counts.get(qtype, 0) or 0)
+                if target_type_count <= 0 or produced.get(qtype, 0) >= target_type_count:
+                    continue
             signature = _question_signature(question)
             if signature in seen:
                 continue
             seen.add(signature)
             generated_questions.append(question)
+            produced[qtype] = produced.get(qtype, 0) + 1
             if len(generated_questions) >= count:
                 break
 
@@ -659,7 +704,7 @@ async def generate_assignment(
     words: list[dict[str, Any]],
     goal: QuizGenerateIn,
 ) -> QuizGenerateResponse:
-    count = _clamp_question_count(goal.question_count)
+    count = _requested_question_count(goal)
     quiz_words = _word_payload(words)
     if not quiz_words:
         return QuizGenerateResponse(
@@ -691,7 +736,13 @@ async def generate_assignment(
             "코드가 임의 문항을 보충하지 않았습니다."
         )
 
-    session_id = await create_quiz_session(session, user_id, _goal_payload(goal), count)
+    session_id = await create_quiz_session(
+        session,
+        user_id,
+        _goal_payload(goal),
+        count,
+        generated_questions,
+    )
     return QuizGenerateResponse(
         ok=True,
         message=message,
@@ -885,6 +936,7 @@ async def grade_assignment(
         results.append(result)
         records.append(
             {
+                "question_id": result.question_id,
                 "word_id": result.word_id,
                 "source_word_id": result.source_word_id,
                 "source_word": result.source_word,
@@ -894,6 +946,8 @@ async def grade_assignment(
                 "prompt": result.prompt,
                 "user_answer": result.text_answer or result.selected_text,
                 "correct_answer": result.correct_text or ", ".join(result.acceptable_answers),
+                "selected_choice_id": result.selected_choice_id,
+                "correct_choice_id": result.correct_choice_id,
                 "status": result.status,
                 "correct": result.correct,
                 "score": result.score,

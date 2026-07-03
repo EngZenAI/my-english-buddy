@@ -215,7 +215,14 @@ export const api = {
         incorrect_interval: incorrectInterval,
       }),
     }),
-  quizStats: () => jsonFetch("/api/quiz/stats"),
+  quizStats: ({ startDate = "", endDate = "" } = {}) => {
+    const params = new URLSearchParams();
+    if (startDate) params.set("start_date", startDate);
+    if (endDate) params.set("end_date", endDate);
+    const query = params.toString();
+    return jsonFetch(`/api/quiz/stats${query ? `?${query}` : ""}`);
+  },
+  quizSession: (sessionId) => jsonFetch(`/api/quiz/sessions/${sessionId}`),
 
   // ── 롤플레잉 ──
   // opts: { level, scenario, tag, situation } — 세션 설정. 매 턴 함께 전달해 일관 유지.
