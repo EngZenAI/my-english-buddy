@@ -26,8 +26,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, TypedDict
 
-import httpx
-import requests
 from dotenv import load_dotenv
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -35,18 +33,10 @@ from langchain_ollama import ChatOllama
 from langgraph.graph import END, StateGraph
 
 from backend.api_usage import track_llm_usage
+from backend.exceptions import JSON_PARSE_ERRORS, LLM_PROVIDER_ERRORS
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", encoding="utf-8-sig")
 logger = logging.getLogger(__name__)
-LLM_PROVIDER_ERRORS = (
-    httpx.HTTPError,
-    requests.RequestException,
-    ImportError,
-    OSError,
-    RuntimeError,
-    ValueError,
-)
-LLM_PARSE_ERRORS = (json.JSONDecodeError, TypeError, ValueError)
 
 
 class LLMConcurrencyLimitError(RuntimeError):
@@ -630,7 +620,7 @@ def _parse_coached(raw: str) -> dict:
     for c in candidates:
         try:
             obj = json.loads(c)
-        except LLM_PARSE_ERRORS:
+        except JSON_PARSE_ERRORS:
             continue
         if isinstance(obj, dict) and "reply" in obj:
             reply = str(obj.get("reply") or "").strip()
@@ -872,7 +862,7 @@ def _parse_summary(raw: str) -> dict:
     for c in candidates:
         try:
             parsed = json.loads(c)
-        except LLM_PARSE_ERRORS:
+        except JSON_PARSE_ERRORS:
             continue
         if isinstance(parsed, dict):
             data = parsed

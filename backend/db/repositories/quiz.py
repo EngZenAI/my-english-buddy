@@ -3,10 +3,10 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import Integer, bindparam, text
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.repositories.common import _rows
+from backend.exceptions import DATA_COERCION_ERRORS, JSON_PARSE_ERRORS, SQLALCHEMY_ERRORS
 
 MAX_QUIZ_STATS_RANGE_DAYS = 366
 
@@ -230,7 +230,7 @@ async def save_results_and_complete_session(
             },
         )
         await session.commit()
-    except SQLAlchemyError:
+    except SQLALCHEMY_ERRORS:
         await session.rollback()
         raise
 
@@ -465,7 +465,7 @@ def _json_payload(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, str) and value.strip():
         try:
             parsed = json.loads(value)
-        except json.JSONDecodeError:
+        except JSON_PARSE_ERRORS:
             return []
         return [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
     return []
@@ -641,7 +641,7 @@ def _review_schedule_preview_from_rows(rows) -> list[dict]:
     for row in rows:
         try:
             word_id = int(row["word_id"])
-        except (TypeError, ValueError):
+        except DATA_COERCION_ERRORS:
             continue
         bucket = buckets.setdefault(
             word_id,

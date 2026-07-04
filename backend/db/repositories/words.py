@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.models import QuizHistory, Word
 from backend.db.repositories.common import _rows, _uuid
+from backend.exceptions import DATA_COERCION_ERRORS, RECORD_MAPPING_ERRORS
 
 
 async def is_word_saved(session: AsyncSession, user_id: str, word: str) -> bool:
@@ -248,7 +249,7 @@ async def bulk_update_words(session: AsyncSession, user_id: str, items) -> dict:
     for item in items:
         try:
             word_id = int(item["id"])
-        except (KeyError, TypeError, ValueError):
+        except RECORD_MAPPING_ERRORS:
             continue
         parsed[word_id] = item
         order.append(word_id)
@@ -340,7 +341,7 @@ async def bulk_delete_words(session: AsyncSession, user_id: str, ids) -> int:
     for item in ids or []:
         try:
             clean.append(int(item))
-        except (TypeError, ValueError):
+        except DATA_COERCION_ERRORS:
             continue
     if not clean:
         return 0
@@ -357,7 +358,7 @@ async def reorder_words(session: AsyncSession, user_id: str, ordered_ids) -> int
     for raw_id in ordered_ids or []:
         try:
             word_id = int(raw_id)
-        except (TypeError, ValueError):
+        except DATA_COERCION_ERRORS:
             continue
         if word_id in seen:
             continue

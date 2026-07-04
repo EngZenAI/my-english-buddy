@@ -14,6 +14,7 @@ from backend.agents.context import build_agent_context
 from backend.agents.schemas import AgentCard, AgentResponse
 from backend.agents.safety.policy import filter_agent_actions
 from backend.agents.tools import execute_auto_safe_actions, normalize_action
+from backend.exceptions import AGENT_PLAN_ERRORS, JSON_PARSE_ERRORS
 from backend.llm import _invoke_tracked_llm
 
 
@@ -137,7 +138,7 @@ def _json_from_text(text: str) -> dict[str, Any]:
     try:
         data = json.loads(source)
         return data if isinstance(data, dict) else {}
-    except (json.JSONDecodeError, TypeError, ValueError):
+    except JSON_PARSE_ERRORS:
         return {}
 
 
@@ -172,7 +173,7 @@ async def _plan(state: AgentState) -> AgentState:
     try:
         raw = await run_in_threadpool(_invoke_tracked_llm, "agent", "chat", prompt_value)
         data = _json_from_text(raw)
-    except (RuntimeError, ValueError, json.JSONDecodeError):
+    except AGENT_PLAN_ERRORS:
         data = fallback_plan
     if not data:
         data = fallback_plan

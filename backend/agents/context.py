@@ -13,6 +13,7 @@ from backend.db.repositories import (
     get_mypage_learning,
     get_words_to_review,
 )
+from backend.exceptions import DATA_COERCION_ERRORS
 
 
 def _word_brief(word: dict[str, Any]) -> dict[str, Any]:
@@ -65,7 +66,7 @@ def build_rule_based_suggestions(context: dict[str, Any]) -> dict[str, Any]:
     raw_due_count = learning.get("due_review_count")
     try:
         due_count = int(raw_due_count) if raw_due_count is not None else len(due_words)
-    except (TypeError, ValueError):
+    except DATA_COERCION_ERRORS:
         due_count = len(due_words)
     tag_counts = [
         item for item in (context.get("tag_counts") or [])

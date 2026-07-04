@@ -13,7 +13,6 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 
 from gtts import gTTS
-from gtts.tts import gTTSError
 
 from backend.api_usage import track_external_usage
 from backend.dictionary import (
@@ -22,6 +21,7 @@ from backend.dictionary import (
     translate_korean,
     translate_many_korean,
 )
+from backend.exceptions import GTTS_ERRORS
 
 # 외부 API(HTTP) 병렬 호출용 스레드풀
 _executor = ThreadPoolExecutor(max_workers=8)
@@ -150,7 +150,7 @@ def synthesize_tts(word: str, lang: str = "en") -> str | None:
             output_value=audio,
         )
         return audio
-    except (gTTSError, OSError, ValueError):
+    except GTTS_ERRORS:
         track_external_usage(
             feature="tts",
             operation="synthesize",

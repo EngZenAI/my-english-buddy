@@ -8,10 +8,9 @@ import time
 from datetime import datetime, timedelta
 from typing import Any
 
-from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.exceptions import OutputParserException
 from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, Field, ValidationError
+from langchain_core.output_parsers import PydanticOutputParser
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api_usage import extract_token_usage, track_llm_usage
@@ -22,6 +21,7 @@ from backend.db.repositories import (
     existing_words_lower,
     save_results_and_complete_session,
 )
+from backend.exceptions import DATA_COERCION_ERRORS, QUIZ_LLM_ERRORS
 import backend.llm as llm_module
 from backend.quiz.schemas import (
     QuizChoice,
@@ -36,7 +36,6 @@ from backend.quiz.schemas import (
 
 logger = logging.getLogger(__name__)
 quiz_llm = llm_module.get_llm("quiz")
-QUIZ_LLM_ERRORS = (OSError, RuntimeError, ValueError, OutputParserException, ValidationError)
 
 DEFAULT_QUESTION_COUNT = 10
 MAX_QUESTION_COUNT = 20
@@ -200,7 +199,7 @@ Grade with this policy:
 def _clamp_question_count(value: int | None) -> int:
     try:
         count = int(value or DEFAULT_QUESTION_COUNT)
-    except (TypeError, ValueError):
+    except DATA_COERCION_ERRORS:
         count = DEFAULT_QUESTION_COUNT
     return max(1, min(count, MAX_QUESTION_COUNT))
 
@@ -792,7 +791,7 @@ def _review_schedule_preview(records: list[dict[str, Any]]) -> list[QuizReviewSc
     for record in records:
         try:
             word_id = int(record.get("source_word_id") or record.get("word_id"))
-        except (TypeError, ValueError):
+        except DATA_COERCION_ERRORS:
             continue
         bucket = buckets.setdefault(
             word_id,

@@ -8,6 +8,7 @@ from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
 
+from backend.exceptions import JSON_PARSE_ERRORS
 from backend.llm import _invoke_tracked_llm
 
 
@@ -22,7 +23,7 @@ def _json_from_text(raw: str, fallback: Any):
             text = text[start:]
     try:
         return json.loads(text)
-    except (json.JSONDecodeError, TypeError, ValueError):
+    except JSON_PARSE_ERRORS:
         return fallback
 
 

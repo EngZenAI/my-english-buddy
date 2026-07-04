@@ -3,7 +3,6 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.repositories.common import (
@@ -13,6 +12,7 @@ from backend.db.repositories.common import (
     _rows,
 )
 from backend.db.session import SessionFactory
+from backend.exceptions import SQLALCHEMY_ERRORS
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ async def record_api_usage_events(
                 ),
                 rows,
             )
-    except SQLAlchemyError as exc:
+    except SQLALCHEMY_ERRORS as exc:
         logger.warning("Failed to record API usage events: %s", exc)
 
 

@@ -17,11 +17,9 @@ import requests
 
 from backend.articles.chunking import normalize_whitespace
 from backend.articles.sources import ArticleFeed, ArticleSource
+from backend.exceptions import DATE_PARSE_ERRORS, FEED_FETCH_ERRORS, HTML_PARSE_ERRORS, PAGE_IMAGE_ERRORS
 
 logger = logging.getLogger(__name__)
-HTML_PARSE_ERRORS = (AssertionError, ValueError)
-DATE_PARSE_ERRORS = (TypeError, ValueError, IndexError, OverflowError)
-PAGE_IMAGE_ERRORS = (requests.RequestException, AssertionError, ValueError)
 
 MEDIA_NS = "{http://search.yahoo.com/mrss/}"
 ATOM_NS = "{http://www.w3.org/2005/Atom}"
@@ -378,7 +376,7 @@ def fetch_feed_entries(source: ArticleSource, timeout: int = 8, max_items: int =
                     forced_topic=feed.topic,
                 )
             )
-        except (requests.RequestException, ValueError) as exc:
+        except FEED_FETCH_ERRORS as exc:
             failed_feeds.append(feed.url)
             logger.warning(
                 "article_feed_fetch_failed source=%s feed_url=%s error=%s",

@@ -1,9 +1,7 @@
 import csv
 import io
-from zipfile import BadZipFile
 
 from fastapi import APIRouter, File, UploadFile
-from openpyxl.utils.exceptions import InvalidFileException
 from pydantic import BaseModel
 
 from backend.db.dependencies import SessionDep
@@ -24,6 +22,7 @@ from backend.db.repositories import (
     save_word,
     update_word,
 )
+from backend.exceptions import FILE_IMPORT_ERRORS
 from backend.routers.common import CurrentUserDep
 
 router = APIRouter(tags=["wordbook"])
@@ -313,7 +312,7 @@ async def import_preview(
     content = await file.read()
     try:
         rows = _parse_upload(file, content)
-    except (csv.Error, UnicodeError, OSError, BadZipFile, InvalidFileException, ValueError):
+    except FILE_IMPORT_ERRORS:
         return {"ok": False, "message": "파일을 읽지 못했어요. CSV 또는 XLSX인지, 첫 두 열이 영어/한국어인지 확인해주세요."}
 
     if not rows:

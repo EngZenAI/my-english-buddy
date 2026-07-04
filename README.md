@@ -193,6 +193,7 @@ english-learning-app/
 │   │   ├── api.py     # React용 REST 엔드포인트
 │   │   └── auth.py    # 인증 (FastAPI-Users)
 │   ├── db/            # SQLAlchemy 세션/도메인별 모델/Repository
+│   ├── exceptions/    # 공용 예외 분류와 로깅 helper
 │   ├── dictionary.py  # 사전 + 번역 API
 │   └── llm.py         # LLM 퀴즈/롤플레잉
 └── frontend/          # React + Vite + Tailwind
@@ -206,6 +207,20 @@ english-learning-app/
 ```
 
 백엔드는 시작 시 compact SQL 로그를 콘솔에 출력합니다. 파라미터는 기본적으로 출력하지 않습니다.
+
+### 예외 처리 규칙
+
+백엔드에서 반복되는 예외 분류는 `backend/exceptions`를 사용합니다.
+새 코드에서 `except Exception`을 직접 쓰지 말고, 필요한 예외 그룹을 `backend.exceptions`에서 가져와 사용합니다.
+
+예:
+
+```python
+from backend.exceptions import HTTP_JSON_ERRORS, SQLALCHEMY_ERRORS, log_exception
+```
+
+새로운 외부 API, 파일 파싱, DB 작업, LLM 작업의 예외 범위가 필요하면 각 파일에 임시 튜플을 만들지 말고
+`backend/exceptions/categories.py`에 도메인별 예외 그룹을 추가합니다.
 
 ---
 

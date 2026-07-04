@@ -5,8 +5,6 @@ from _thread import LockType
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
-from requests import RequestException
-from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import Response, StreamingResponse
 
@@ -35,6 +33,7 @@ from backend.roleplay_tts import (
     roleplay_tts_cache_key,
     synthesize_roleplay_tts,
 )
+from backend.exceptions import ROLEPLAY_CONTEXT_ERRORS, ROLEPLAY_RUNTIME_ERRORS, log_exception
 from backend.routers.common import CurrentUserDep, needs_translation, safe_persist_usage_capture
 
 router = APIRouter(tags=["roleplay"])
@@ -43,16 +42,6 @@ logger = logging.getLogger(__name__)
 ROLEPLAY_TTS_MAX_CHARS = 400
 ROLEPLAY_BUSY_MESSAGE = "이전 롤플레잉 AI 응답이 아직 끝나지 않았어요. 완료 후 다시 시도해주세요."
 ROLEPLAY_LIMIT_MESSAGE = "AI 롤플레잉 요청이 많아 잠시 대기 중입니다. 방금 전 요청이 끝난 뒤 다시 시도해주세요."
-ROLEPLAY_RUNTIME_ERRORS = (
-    RequestException,
-    SQLAlchemyError,
-    OSError,
-    RuntimeError,
-    ValueError,
-    KeyError,
-    IndexError,
-    TypeError,
-)
 
 _roleplay_lock_guard = threading.Lock()
 _roleplay_user_locks: dict[str, LockType] = {}
@@ -211,7 +200,7 @@ async def roleplay_continue_stream(
         # LLM 맥락용으로는 (user, bot)만 필요(코칭 제외).
         context = [(t[0], t[1]) for t in (_norm_turn(h) for h in payload.history)]
         words = await _roleplay_words(session, _user["id"], payload.scenario, payload.tag)
-    except (SQLAlchemyError, TypeError, ValueError):
+    except ROLEPLAY_CONTEXT_ERRORS:
         _release_roleplay_request_lock(request_lock)
         raise
 
@@ -267,7 +256,7 @@ async def roleplay_continue_stream(
         except LLMConcurrencyLimitError:
             yield _line({"type": "error", "message": ROLEPLAY_LIMIT_MESSAGE})
         except ROLEPLAY_RUNTIME_ERRORS:
-            logger.exception("Roleplay streaming failed")
+            log_exception(logger, "Roleplay streaming failed")
             yield _line({"type": "error", "message": "AI 답변을 생성하지 못했어요. 잠시 후 다시 시도해주세요."})
         finally:
             close = getattr(iterator, "close", None)
@@ -393,7 +382,7 @@ async def roleplay_tts(
             },
         )
     except ROLEPLAY_RUNTIME_ERRORS:
-        logger.exception("Roleplay TTS generation failed")
+        log_exception(logger, "Roleplay TTS generation failed")
         raise HTTPException(
             status_code=502,
             detail="AI 음성 생성에 실패했습니다. 잠시 후 다시 시도해주세요.",
