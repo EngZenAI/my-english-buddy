@@ -116,6 +116,13 @@ export default function AgentPanel({
     if (!text.trim() || busy) return;
     sendMessage(text);
   };
+  const scrollerItemCount =
+    messages.length +
+    (busy ? 1 : 0) +
+    (latestJob ? 1 : 0) +
+    (visibleActions.length ? 1 : 0) +
+    (!messages.length ? 1 : 0) +
+    (!messages.length && suggestions?.cards?.length ? 1 : 0);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -234,7 +241,7 @@ export default function AgentPanel({
             <AgentReaderPosition />
             <MessageScroller className="min-h-0 flex-1 rounded-none border-0 bg-slate-50">
               <MessageScrollerViewport aria-label="Buddy Agent 대화 기록">
-                <MessageScrollerContent className="space-y-0 p-4" aria-busy={busy}>
+                <MessageScrollerContent className="space-y-0 p-4" itemCount={scrollerItemCount} aria-busy={busy}>
                   {!messages.length && (
                     <MessageScrollerItem messageId="agent-suggestions-message">
                       <div className="rounded-lg bg-emerald-50 p-3 text-sm leading-6 text-emerald-950">

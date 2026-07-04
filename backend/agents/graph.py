@@ -151,6 +151,11 @@ async def _load_context(state: AgentState) -> AgentState:
 
 
 async def _plan(state: AgentState) -> AgentState:
+    fallback_plan = {
+        "message": "요청을 이해했지만 실행 계획을 만들지 못했어요. 조금 더 구체적으로 말해 주세요.",
+        "cards": [],
+        "actions": [],
+    }
     context_json = json.dumps(state.get("context") or {}, ensure_ascii=False, default=str)
     recent_messages_json = json.dumps(
         _compact_recent_messages(state.get("recent_messages")),
@@ -164,14 +169,13 @@ async def _plan(state: AgentState) -> AgentState:
         "recent_messages_json": recent_messages_json,
         "message": state.get("message") or "",
     })
-    raw = await run_in_threadpool(_invoke_tracked_llm, "agent", "chat", prompt_value)
-    data = _json_from_text(raw)
+    try:
+        raw = await run_in_threadpool(_invoke_tracked_llm, "agent", "chat", prompt_value)
+        data = _json_from_text(raw)
+    except Exception:
+        data = fallback_plan
     if not data:
-        data = {
-            "message": "요청을 이해했지만 실행 계획을 만들지 못했어요. 조금 더 구체적으로 말해 주세요.",
-            "cards": [],
-            "actions": [],
-        }
+        data = fallback_plan
     state["raw_plan"] = data
     return state
 

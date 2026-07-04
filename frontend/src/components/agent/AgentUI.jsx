@@ -88,18 +88,24 @@ export function AgentTypingMessage({ user }) {
 export function AgentJobProgress({ job }) {
   if (!job) return null;
   const active = isAgentJobActive(job);
+  const failed = job.status === "failed";
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm">
-      <div className="flex items-center gap-2 font-medium text-slate-900">
+      <div className={`flex items-center gap-2 font-medium ${failed ? "text-red-700" : "text-slate-900"}`}>
         {active ? (
           <Loader2 className="h-4 w-4 animate-spin" />
+        ) : failed ? (
+          <AlertTriangle className="h-4 w-4 text-red-600" />
         ) : (
           <CheckCircle2 className="h-4 w-4 text-emerald-600" />
         )}
         {job.message || "Agent 작업"}
       </div>
       <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
-        <div className="h-full bg-emerald-500 transition-all" style={{ width: `${agentJobProgressPercent(job)}%` }} />
+        <div
+          className={`h-full transition-all ${failed ? "bg-red-500" : "bg-emerald-500"}`}
+          style={{ width: `${agentJobProgressPercent(job)}%` }}
+        />
       </div>
       {job.status === "failed" && (
         <div className="mt-2 flex items-center gap-1 text-xs text-red-600">

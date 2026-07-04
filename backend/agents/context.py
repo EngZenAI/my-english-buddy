@@ -62,6 +62,11 @@ async def build_agent_context(
 def build_rule_based_suggestions(context: dict[str, Any]) -> dict[str, Any]:
     due_words = context.get("due_words") or []
     learning = context.get("learning") or {}
+    raw_due_count = learning.get("due_review_count")
+    try:
+        due_count = int(raw_due_count) if raw_due_count is not None else len(due_words)
+    except (TypeError, ValueError):
+        due_count = len(due_words)
     tag_counts = [
         item for item in (context.get("tag_counts") or [])
         if item.get("name") != "미지정" and int(item.get("count") or 0) > 0
@@ -72,17 +77,17 @@ def build_rule_based_suggestions(context: dict[str, Any]) -> dict[str, Any]:
     cards: list[dict[str, Any]] = []
     actions: list[dict[str, Any]] = []
 
-    if due_words:
-        count = len(due_words)
+    if due_count > 0:
+        preview = ", ".join(item["word"] for item in due_words[:5] if item.get("word"))
         cards.append({
-            "title": f"복습 예정 단어 {count}개",
-            "body": ", ".join(item["word"] for item in due_words[:5]),
+            "title": f"복습 예정 단어 {due_count}개",
+            "body": preview or "오늘까지 복습할 단어가 있습니다.",
             "kind": "review",
         })
         actions.append({
             "type": START_QUIZ_WITH_GOAL,
             "label": "복습 퀴즈 시작",
-            "payload": {"scope_due": True, "question_count": min(10, count)},
+            "payload": {"scope_due": True, "question_count": min(10, due_count)},
             "requires_confirmation": True,
         })
 
@@ -121,8 +126,8 @@ def build_rule_based_suggestions(context: dict[str, Any]) -> dict[str, Any]:
         })
 
     message = "오늘 학습 상태를 확인했어요."
-    if due_words:
-        message = f"복습할 단어가 {len(due_words)}개 있어요. 먼저 짧은 퀴즈로 시작하는 걸 추천합니다."
+    if due_count > 0:
+        message = f"복습할 단어가 {due_count}개 있어요. 먼저 짧은 퀴즈로 시작하는 걸 추천합니다."
     elif tag_counts:
         message = "복습 예정 단어는 없지만, 단어장 태그로 회화 연습을 만들 수 있어요."
 

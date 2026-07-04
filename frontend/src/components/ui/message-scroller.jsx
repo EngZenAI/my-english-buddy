@@ -61,6 +61,7 @@ function useMessageScroller() {
     return {
       atEnd: true,
       scrollToEnd: () => {},
+      shouldStickToEndRef: { current: true },
     };
   }
   return context;
@@ -114,21 +115,46 @@ function MessageScrollerViewport({ className, ...props }) {
   );
 }
 
-function MessageScrollerContent({ className, spacerClassName, ...props }) {
+function MessageScrollerContent({ children, className, itemCount, spacerClassName, ...props }) {
   const {
     autoScroll,
     defaultScrollPosition,
+    scrollPreviousItemPeek,
     scrollToEnd,
     shouldStickToEndRef,
     updatePosition,
+    viewportRef,
   } = useMessageScroller();
   const contentRef = React.useRef(null);
+  const contentVersion = itemCount ?? React.Children.count(children);
+
+  const scrollToLastAnchor = React.useCallback(() => {
+    const viewport = viewportRef?.current;
+    if (!viewport) return false;
+    const anchors = viewport.querySelectorAll("[data-scroll-anchor]");
+    const anchor = anchors[anchors.length - 1];
+    if (!anchor) return false;
+
+    const viewportRect = viewport.getBoundingClientRect();
+    const anchorRect = anchor.getBoundingClientRect();
+    const peek = Number(scrollPreviousItemPeek || 0);
+    const top = viewport.scrollTop + anchorRect.top - viewportRect.top - peek;
+    viewport.scrollTo({ top: Math.max(0, top), behavior: "auto" });
+    updatePosition?.();
+    return true;
+  }, [scrollPreviousItemPeek, updatePosition, viewportRef]);
 
   React.useLayoutEffect(() => {
-    if (defaultScrollPosition === "end" || defaultScrollPosition === "last-anchor") {
+    if (defaultScrollPosition === "last-anchor") {
+      if (!scrollToLastAnchor()) {
+        scrollToEnd({ behavior: "auto" });
+      }
+      return;
+    }
+    if (defaultScrollPosition === "end") {
       scrollToEnd({ behavior: "auto" });
     }
-  }, [defaultScrollPosition, scrollToEnd]);
+  }, [defaultScrollPosition, scrollToEnd, scrollToLastAnchor]);
 
   React.useLayoutEffect(() => {
     if (!autoScroll || !shouldStickToEndRef.current) {
@@ -136,7 +162,7 @@ function MessageScrollerContent({ className, spacerClassName, ...props }) {
       return;
     }
     scrollToEnd({ behavior: "auto" });
-  }, [autoScroll, props.children, scrollToEnd, updatePosition]);
+  }, [autoScroll, contentVersion, scrollToEnd, updatePosition]);
 
   return (
     <div
@@ -144,7 +170,7 @@ function MessageScrollerContent({ className, spacerClassName, ...props }) {
       className={cn("flex flex-col gap-3 p-3", className)}
       {...props}
     >
-      {props.children}
+      {children}
       <div aria-hidden="true" className={cn("shrink-0", spacerClassName)} />
     </div>
   );

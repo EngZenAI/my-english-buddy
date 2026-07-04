@@ -73,17 +73,19 @@ export function useAgent({ user, currentTab, hidden, onRequireLogin, onAction })
 
   const chatMutation = useMutation({
     mutationFn: ({ message, recentMessages }) => api.agentChat(message, currentTab, recentMessages),
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       setMessages((prev) => [...prev, createMessage("agent", data)]);
+      setInput((current) => (current === variables?.draftText ? "" : current));
       markUnreadIfClosed();
       if (data?.job_id) setJobId(data.job_id);
       queryClient.invalidateQueries({ queryKey: ["agent", "suggestions"] });
     },
-    onError: (error) => {
+    onError: (error, variables) => {
       setMessages((prev) => [
         ...prev,
         createMessage("agent", agentMessage(error?.message || "Agent 응답을 가져오지 못했어요.")),
       ]);
+      setInput((current) => current || variables?.draftText || "");
       markUnreadIfClosed();
     },
   });
@@ -124,8 +126,11 @@ export function useAgent({ user, currentTab, hidden, onRequireLogin, onAction })
       return;
     }
     setMessages((prev) => [...prev, createMessage("user", { message: clean })]);
-    setInput("");
-    chatMutation.mutate({ message: clean, recentMessages: buildRecentMessages(messages) });
+    chatMutation.mutate({
+      message: clean,
+      draftText: text,
+      recentMessages: buildRecentMessages(messages),
+    });
   };
 
   const runAction = (action) => {

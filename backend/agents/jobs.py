@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from backend.db.repositories import (
@@ -9,6 +10,8 @@ from backend.db.repositories import (
     update_agent_job,
 )
 from backend.db.session import SessionFactory
+
+logger = logging.getLogger(__name__)
 
 
 async def create_wordbook_audit_job(user_id: str) -> str:
@@ -72,13 +75,15 @@ async def run_wordbook_audit_job(user_id: str, job_id: str) -> None:
                 message="단어장 점검이 완료되었습니다.",
                 result=result,
             )
-        except Exception as exc:
+        except Exception:
+            await session.rollback()
+            logger.exception("Wordbook audit job failed job_id=%s user_id=%s", job_id, user_id)
             await update_agent_job(
                 session,
                 user_id,
                 job_id,
                 status="failed",
                 message="단어장 점검에 실패했습니다.",
-                error=str(exc),
+                error="단어장 점검 중 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.",
             )
 

@@ -38,14 +38,15 @@ const ROLEPLAY_TTS_MODEL = "gemini-2.5-flash-preview-tts";
 const ROLEPLAY_TTS_VOICE = "Kore";
 
 function RoleplayScrollEffect({ signal }) {
-  const { scrollToEnd } = useMessageScroller();
+  const { scrollToEnd, shouldStickToEndRef } = useMessageScroller();
 
   useEffect(() => {
     if (!signal) return;
     requestAnimationFrame(() => {
+      if (!shouldStickToEndRef?.current) return;
       scrollToEnd({ behavior: "auto" });
     });
-  }, [scrollToEnd, signal]);
+  }, [scrollToEnd, shouldStickToEndRef, signal]);
 
   return null;
 }
@@ -290,6 +291,8 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
   const scrollToBottom = () => {
     setScrollSignal((value) => value + 1);
   };
+  const scrollerItemCount =
+    messages.length + (starting ? 1 : 0) + (!starting && !active ? 1 : 0);
 
   const cancelRoleplayRequests = () => {
     requestSeqRef.current += 1;
@@ -1101,7 +1104,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
         <RoleplayScrollEffect signal={scrollSignal} />
         <MessageScroller className={isVoiceTab ? "h-[280px]" : "h-[420px]"}>
           <MessageScrollerViewport aria-label="롤플레잉 대화 기록">
-            <MessageScrollerContent className="min-h-full">
+            <MessageScrollerContent className="min-h-full" itemCount={scrollerItemCount}>
               {starting && (
                 <MessageScrollerItem messageId="roleplay-starting">
                   <div className="space-y-3">
