@@ -4,6 +4,8 @@ from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from backend.exceptions import DATA_COERCION_ERRORS
+
 
 @dataclass
 class ApiUsageRecord:
@@ -59,13 +61,13 @@ def _usage_value(usage: Any, *keys: str) -> int | None:
         if isinstance(usage, dict) and usage.get(key) is not None:
             try:
                 return int(usage.get(key))
-            except (TypeError, ValueError):
+            except DATA_COERCION_ERRORS:
                 return None
         value = getattr(usage, key, None)
         if value is not None:
             try:
                 return int(value)
-            except (TypeError, ValueError):
+            except DATA_COERCION_ERRORS:
                 return None
     return None
 

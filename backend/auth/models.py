@@ -1,11 +1,10 @@
 import uuid
 from datetime import datetime
 
-from fastapi_users.db import SQLAlchemyBaseUserTableUUID
-from fastapi_users.db import SQLAlchemyBaseOAuthAccountTableUUID
+from fastapi_users.db import SQLAlchemyBaseOAuthAccountTableUUID, SQLAlchemyBaseUserTableUUID
 from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyBaseAccessTokenTable
 from fastapi_users_db_sqlalchemy.generics import GUID
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.db.base import Base
@@ -22,7 +21,7 @@ class OAuthAccount(SQLAlchemyBaseOAuthAccountTableUUID, Base):
 class User(SQLAlchemyBaseUserTableUUID, Base):
     __tablename__ = "users"
 
-    avatar_url: Mapped[str | None] = mapped_column(String(length=1024), nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     oauth_accounts: Mapped[list[OAuthAccount]] = relationship(
         "OAuthAccount", lazy="joined"

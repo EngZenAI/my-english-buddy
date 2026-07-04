@@ -33,6 +33,7 @@ from langchain_ollama import ChatOllama
 from langgraph.graph import END, StateGraph
 
 from backend.api_usage import track_llm_usage
+from backend.exceptions import JSON_PARSE_ERRORS, LLM_PROVIDER_ERRORS
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", encoding="utf-8-sig")
 logger = logging.getLogger(__name__)
@@ -158,7 +159,7 @@ def get_llm(feature: str = "default"):
             _active_model_names[cache_key] = f"watsonx:{profile['model_id']}"
             logger.info("[OK] WatsonX 연결됨 (%s)", cache_key)
             return model
-        except Exception as e:
+        except LLM_PROVIDER_ERRORS as e:
             # 모델 미프로비저닝·키 만료 등 → 폴백으로 넘어간다(서버는 계속 동작).
             WATSONX_INIT_ERRORS[cache_key] = str(e)
             logger.warning("[WARN] WatsonX 연결 실패 (%s): %s", cache_key, e)
@@ -185,7 +186,7 @@ watson_llm = None
 if WATSONX_CONFIGURED:
     try:
         watson_llm = get_llm("default")
-    except Exception as e:
+    except LLM_PROVIDER_ERRORS as e:
         logger.warning("[WARN] WatsonX 연결 실패: %s", e)
 else:
     logger.warning("[WARN] WatsonX 환경변수 없음 -> Ollama(qwen)로 대체")
@@ -231,7 +232,7 @@ def _invoke_tracked_llm(feature: str, operation: str, prompt_value) -> str:
     try:
         with _llm_concurrency_slot(feature):
             response = get_llm(feature).invoke(prompt_value)
-    except Exception:
+    except LLM_PROVIDER_ERRORS:
         track_llm_usage(
             feature=feature,
             operation=operation,
@@ -301,7 +302,7 @@ def _stream_tracked_llm(feature: str, operation: str, prompt_value) -> Iterator[
                     continue
                 chunks.append(text)
                 yield text
-    except Exception:
+    except LLM_PROVIDER_ERRORS:
         output = "".join(chunks)
         track_llm_usage(
             feature=feature,
@@ -619,7 +620,7 @@ def _parse_coached(raw: str) -> dict:
     for c in candidates:
         try:
             obj = json.loads(c)
-        except Exception:
+        except JSON_PARSE_ERRORS:
             continue
         if isinstance(obj, dict) and "reply" in obj:
             reply = str(obj.get("reply") or "").strip()
@@ -861,7 +862,7 @@ def _parse_summary(raw: str) -> dict:
     for c in candidates:
         try:
             parsed = json.loads(c)
-        except Exception:
+        except JSON_PARSE_ERRORS:
             continue
         if isinstance(parsed, dict):
             data = parsed

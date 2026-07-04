@@ -32,8 +32,8 @@ LLM 기반 나만의 영어 학습 앱
 ```bash
 conda create -n english-app python=3.11
 conda activate english-app
-pip install -r backend/requirements.txt
-# pip install --upgrade -r backend/requirements.txt
+python -m pip install -r backend/requirements.txt
+# python -m pip install --upgrade -r backend/requirements.txt
 ```
 
 ### 2. 환경변수 설정
@@ -84,6 +84,24 @@ cd frontend
 npm install
 ```
 
+### 5. 개발 도구 설치 (선택)
+백엔드 lint/import 정리는 Ruff를 사용합니다. 팀 공통 문서는 pip 기준으로 유지합니다.
+
+```bash
+python -m pip install -r backend/requirements-dev.txt
+python -m ruff check backend
+```
+
+자동 수정은 범위를 확인한 뒤 실행합니다.
+
+```bash
+python -m ruff check backend --select F401,I --fix
+python -m compileall backend
+```
+
+VS Code에서 Ruff 확장을 쓰는 경우 `.vscode.example/settings.json` 내용을 각자 로컬
+`.vscode/settings.json`에 복사해서 사용합니다. `.vscode/`는 개인 설정으로 취급해 커밋하지 않습니다.
+
 ---
 
 ## 실행 방법 (중요)
@@ -95,10 +113,25 @@ npm install
 > 구성은 두 조각입니다 — **백엔드(8000) = 데이터/두뇌**, **프론트(화면) = 껍데기**.
 > 화면을 띄우는 방법에 따라 아래 두 가지 실행 방식이 있습니다.
 
+### DB 마이그레이션
+
+DB 스키마는 Alembic으로 관리합니다. 새 DB를 만들거나 migration 파일이 추가된 뒤에는 백엔드 서버를 켜기 전에 아래 명령을 실행합니다.
+
+```bash
+alembic upgrade head
+```
+
+기존 DB에 Alembic을 처음 도입하는 경우에는 현재 스키마를 baseline으로 기록해야 합니다.
+
+```bash
+alembic stamp head
+```
+
 ### 평소 실행 (개발 표준) — 터미널 2개, **5173으로 접속**
 
 ```bash
 # 터미널 1 — 백엔드 (항상 켜둘 것)
+alembic upgrade head
 uvicorn backend.main:app --reload          # localhost:8000  (API·인증·DB)
 
 # 터미널 2 — 프론트 dev 서버
@@ -117,7 +150,8 @@ cd frontend && npm run dev                 # localhost:5173  ← 여기로 접�
 
 ```bash
 cd frontend && npm run build               # frontend/dist 생성 (반드시 서버 시작 '전'에)
-cd .. && uvicorn backend.main:app --reload # http://localhost:8000 접속
+cd .. && alembic upgrade head
+uvicorn backend.main:app --reload          # http://localhost:8000 접속
 ```
 
 > `main.py`는 **시작 시점**에 `frontend/dist` 유무를 검사해 있을 때만 SPA를 서빙합니다.
@@ -169,14 +203,18 @@ npm run build
 ```
 english-learning-app/
 ├── .env.example
+├── pyproject.toml      # Ruff 등 Python 개발 도구 공통 설정
 ├── backend/
 │   ├── requirements.txt
+│   ├── requirements-dev.txt
 │   ├── main.py        # FastAPI 엔트리 (REST API + React 정적 서빙)
 │   ├── services.py    # 검색/포맷/TTS 순수 로직 (UI 비의존)
 │   ├── routers/
 │   │   ├── api.py     # React용 REST 엔드포인트
 │   │   └── auth.py    # 인증 (FastAPI-Users)
-│   ├── db/            # SQLAlchemy 세션/모델/Repository
+│   ├── db/            # SQLAlchemy 세션/도메인별 모델/Repository
+│   ├── exceptions/    # 공용 예외 분류와 로깅 helper
+│   ├── schemas/       # API 요청/응답 Pydantic schema
 │   ├── dictionary.py  # 사전 + 번역 API
 │   └── llm.py         # LLM 퀴즈/롤플레잉
 └── frontend/          # React + Vite + Tailwind
@@ -190,6 +228,45 @@ english-learning-app/
 ```
 
 백엔드는 시작 시 compact SQL 로그를 콘솔에 출력합니다. 파라미터는 기본적으로 출력하지 않습니다.
+
+### Schema 규칙
+
+API 요청/응답용 Pydantic 모델은 `backend/schemas`에 둡니다. 라우터 파일에는 새 `BaseModel` 클래스를 직접 만들지 않고,
+도메인별 schema 파일에서 import합니다.
+
+예:
+
+```python
+from backend.schemas.wordbook import SaveWordIn
+```
+
+LLM 파서나 서비스 내부에서만 쓰는 private 모델은 해당 도메인 내부에 둘 수 있습니다.
+
+### 예외 처리 규칙
+
+백엔드에서 반복되는 예외 분류는 `backend/exceptions`를 사용합니다.
+새 코드에서 `except Exception`을 직접 쓰지 말고, 필요한 예외 그룹을 `backend.exceptions`에서 가져와 사용합니다.
+
+예:
+
+```python
+from backend.exceptions import HTTP_JSON_ERRORS, SQLALCHEMY_ERRORS, log_exception
+```
+
+새로운 외부 API, 파일 파싱, DB 작업, LLM 작업의 예외 범위가 필요하면 각 파일에 임시 튜플을 만들지 말고
+`backend/exceptions/categories.py`에 도메인별 예외 그룹을 추가합니다.
+
+### Ruff 규칙
+
+Python lint/import 정리는 루트 `pyproject.toml`의 Ruff 설정을 기준으로 합니다.
+새 코드에서는 사용하지 않는 import를 남기지 않고, import 정렬은 Ruff에 맡깁니다.
+
+```bash
+python -m ruff check backend
+python -m ruff check backend --select F401,I --fix
+```
+
+전체 자동 수정이나 포맷은 변경 범위가 커질 수 있으므로 별도 PR에서 실행합니다.
 
 ---
 

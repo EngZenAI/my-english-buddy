@@ -18,6 +18,7 @@ from backend.auth.dependencies import AccessTokenDatabaseDep, UserDatabaseDep
 from backend.auth.models import AccessToken, User
 from backend.auth.transports import OAuthCookieTransport
 from backend.config import settings
+from backend.exceptions import GOOGLE_AVATAR_SYNC_ERRORS
 
 logger = logging.getLogger(__name__)
 password_helper = PasswordHelper(PasswordHash.recommended())
@@ -97,7 +98,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
 
         try:
             avatar_url = await fetch_google_avatar_url(access_token)
-        except Exception:
+        except GOOGLE_AVATAR_SYNC_ERRORS:
             logger.warning("Failed to fetch Google avatar for user %s", user.id, exc_info=True)
             return
 

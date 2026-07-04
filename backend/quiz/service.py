@@ -1,9 +1,9 @@
 import base64
+import errno
 import hashlib
 import hmac
 import json
 import logging
-import errno
 import time
 from datetime import datetime, timedelta
 from typing import Any
@@ -13,6 +13,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import backend.llm as llm_module
 from backend.api_usage import extract_token_usage, track_llm_usage
 from backend.config import settings
 from backend.db.repositories import (
@@ -21,7 +22,7 @@ from backend.db.repositories import (
     existing_words_lower,
     save_results_and_complete_session,
 )
-import backend.llm as llm_module
+from backend.exceptions import DATA_COERCION_ERRORS, QUIZ_LLM_ERRORS
 from backend.quiz.schemas import (
     QuizChoice,
     QuizGenerateIn,
@@ -198,7 +199,7 @@ Grade with this policy:
 def _clamp_question_count(value: int | None) -> int:
     try:
         count = int(value or DEFAULT_QUESTION_COUNT)
-    except (TypeError, ValueError):
+    except DATA_COERCION_ERRORS:
         count = DEFAULT_QUESTION_COUNT
     return max(1, min(count, MAX_QUESTION_COUNT))
 
@@ -505,7 +506,7 @@ def _invoke_quiz_llm(operation: str, prompt_value: Any) -> Any:
     model_name = _active_model_name()
     try:
         response = _quiz_llm().invoke(prompt_value)
-    except Exception:
+    except QUIZ_LLM_ERRORS:
         track_llm_usage(
             feature="quiz",
             operation=operation,
@@ -643,7 +644,7 @@ def _generate_llm_questions(
             )
             raw_generated = _invoke_quiz_llm("generate_quiz", prompt_value)
             generated = _parse_generated_quiz(raw_generated)
-        except Exception as exc:
+        except QUIZ_LLM_ERRORS as exc:
             raw_preview = _raw_text(raw_generated).strip()[:500]
             logger.warning(
                 "LLM quiz generation attempt %s failed on model %s: %s; raw_preview=%r",
@@ -772,7 +773,7 @@ def _grade_subjective(question: dict[str, Any], user_answer: str) -> _Subjective
         )
         response = _invoke_quiz_llm("grade_subjective", prompt_value)
         return _subjective_parser.parse(_raw_text(response))
-    except Exception as exc:
+    except QUIZ_LLM_ERRORS as exc:
         logger.warning("LLM subjective grading failed; using fallback grade: %s", exc)
         expected = [a.lower() for a in question.get("acceptable_answers", [])]
         answer = user_answer.lower()
@@ -790,7 +791,7 @@ def _review_schedule_preview(records: list[dict[str, Any]]) -> list[QuizReviewSc
     for record in records:
         try:
             word_id = int(record.get("source_word_id") or record.get("word_id"))
-        except (TypeError, ValueError):
+        except DATA_COERCION_ERRORS:
             continue
         bucket = buckets.setdefault(
             word_id,

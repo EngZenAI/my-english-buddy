@@ -10,6 +10,7 @@ from backend.db.repositories import (
     update_agent_job,
 )
 from backend.db.session import SessionFactory
+from backend.exceptions import AGENT_JOB_ERRORS, log_exception
 
 logger = logging.getLogger(__name__)
 
@@ -75,9 +76,9 @@ async def run_wordbook_audit_job(user_id: str, job_id: str) -> None:
                 message="단어장 점검이 완료되었습니다.",
                 result=result,
             )
-        except Exception:
+        except AGENT_JOB_ERRORS:
             await session.rollback()
-            logger.exception("Wordbook audit job failed job_id=%s user_id=%s", job_id, user_id)
+            log_exception(logger, "Wordbook audit job failed job_id=%s user_id=%s", job_id, user_id)
             await update_agent_job(
                 session,
                 user_id,

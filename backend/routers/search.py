@@ -1,0 +1,66 @@
+from fastapi import APIRouter, BackgroundTasks, Request
+from starlette.concurrency import run_in_threadpool
+
+from backend.api_usage import start_usage_capture
+from backend.auth.users import get_current_user_from_cookie
+from backend.db.dependencies import SessionDep
+from backend.routers.common import defer_usage_capture
+from backend.services import search_from_english, search_from_korean, synthesize_tts
+
+router = APIRouter(tags=["search"])
+
+
+@router.get("/me")
+async def me(request: Request, session: SessionDep):
+    user = await get_current_user_from_cookie(request, session)
+    return {"user": user}
+
+
+@router.get("/search/english")
+async def search_english(
+    word: str = "",
+    *,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    session: SessionDep,
+):
+    user = await get_current_user_from_cookie(request, session)
+    usage_token = start_usage_capture()
+    try:
+        return await run_in_threadpool(search_from_english, word)
+    finally:
+        defer_usage_capture(background_tasks, usage_token, user)
+
+
+@router.get("/search/korean")
+async def search_korean(
+    word: str = "",
+    *,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    session: SessionDep,
+):
+    user = await get_current_user_from_cookie(request, session)
+    usage_token = start_usage_capture()
+    try:
+        return await run_in_threadpool(search_from_korean, word)
+    finally:
+        defer_usage_capture(background_tasks, usage_token, user)
+
+
+@router.get("/tts")
+async def tts(
+    word: str = "",
+    lang: str = "en",
+    *,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    session: SessionDep,
+):
+    user = await get_current_user_from_cookie(request, session)
+    usage_token = start_usage_capture()
+    try:
+        audio_b64 = await run_in_threadpool(synthesize_tts, word, lang)
+        return {"audio": audio_b64}
+    finally:
+        defer_usage_capture(background_tasks, usage_token, user)

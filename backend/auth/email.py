@@ -4,6 +4,7 @@ import smtplib
 from email.message import EmailMessage
 
 from backend.config import settings
+from backend.exceptions import EMAIL_SEND_ERRORS
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ def _send_email_sync(to_email: str, subject: str, body: str) -> None:
             if settings.smtp_username:
                 smtp.login(settings.smtp_username, settings.smtp_password)
             smtp.send_message(message)
-    except (OSError, smtplib.SMTPException) as exc:
+    except EMAIL_SEND_ERRORS as exc:
         raise EmailSendError(str(exc)) from exc
 
 

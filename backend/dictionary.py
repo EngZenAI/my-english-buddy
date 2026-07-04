@@ -6,6 +6,7 @@ import requests
 from dotenv import load_dotenv
 
 from backend.api_usage import track_external_usage
+from backend.exceptions import HTTP_JSON_ERRORS
 
 load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_TRANSLATE_API_KEY")
@@ -38,8 +39,6 @@ class LRUCache:
 
 _DICT_CACHE = LRUCache(maxsize=2000)
 _TR_CACHE = LRUCache(maxsize=5000)
-
-
 def search_word(word: str) -> dict:
     key = word.strip().lower()
     if not key:
@@ -50,10 +49,12 @@ def search_word(word: str) -> dict:
         return cached
 
     try:
-        res = requests.get(
+        response = requests.get(
             f"https://api.dictionaryapi.dev/api/v2/entries/en/{key}",
             timeout=5,
-        ).json()
+        )
+        response.raise_for_status()
+        res = response.json()
         track_external_usage(
             feature="dictionary",
             operation="lookup",
@@ -103,7 +104,7 @@ def search_word(word: str) -> dict:
         }
         _DICT_CACHE.set(key, result)
         return result
-    except Exception as e:
+    except HTTP_JSON_ERRORS as e:
         # 네트워크 오류 등 일시적 실패는 캐시하지 않음
         track_external_usage(
             feature="dictionary",
@@ -126,12 +127,14 @@ def _translate(text: str, source: str, target: str) -> str:
         return cached
 
     try:
-        res = requests.post(
+        response = requests.post(
             "https://translation.googleapis.com/language/translate/v2",
             params={"key": GOOGLE_API_KEY},
             json={"q": text, "source": source, "target": target, "format": "text"},
             timeout=5,
-        ).json()
+        )
+        response.raise_for_status()
+        res = response.json()
         if "error" in res:
             track_external_usage(
                 feature="translate",
@@ -153,7 +156,7 @@ def _translate(text: str, source: str, target: str) -> str:
         )
         _TR_CACHE.set(key, translated)
         return translated
-    except Exception as e:
+    except HTTP_JSON_ERRORS as e:
         track_external_usage(
             feature="translate",
             operation=f"{source}_to_{target}",
@@ -192,7 +195,7 @@ def _translate_many(texts: list[str], source: str, target: str) -> list[str]:
         return results
 
     try:
-        res = requests.post(
+        response = requests.post(
             "https://translation.googleapis.com/language/translate/v2",
             params={"key": GOOGLE_API_KEY},
             json={
@@ -202,7 +205,9 @@ def _translate_many(texts: list[str], source: str, target: str) -> list[str]:
                 "format": "text",
             },
             timeout=5,
-        ).json()
+        )
+        response.raise_for_status()
+        res = response.json()
         if "error" in res:
             track_external_usage(
                 feature="translate",
@@ -239,7 +244,7 @@ def _translate_many(texts: list[str], source: str, target: str) -> list[str]:
             units=len(missing),
         )
         return results
-    except Exception as e:
+    except HTTP_JSON_ERRORS as e:
         track_external_usage(
             feature="translate",
             operation=f"{source}_to_{target}",
