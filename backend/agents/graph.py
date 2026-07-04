@@ -137,7 +137,7 @@ def _json_from_text(text: str) -> dict[str, Any]:
     try:
         data = json.loads(source)
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except (json.JSONDecodeError, TypeError, ValueError):
         return {}
 
 
@@ -172,7 +172,7 @@ async def _plan(state: AgentState) -> AgentState:
     try:
         raw = await run_in_threadpool(_invoke_tracked_llm, "agent", "chat", prompt_value)
         data = _json_from_text(raw)
-    except Exception:
+    except (RuntimeError, ValueError, json.JSONDecodeError):
         data = fallback_plan
     if not data:
         data = fallback_plan

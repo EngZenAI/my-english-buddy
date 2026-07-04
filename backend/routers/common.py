@@ -2,6 +2,7 @@ import logging
 from typing import Annotated
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Request
+from sqlalchemy.exc import SQLAlchemyError
 
 from backend.api_usage import stop_usage_capture
 from backend.auth.users import get_current_user_from_cookie
@@ -36,7 +37,7 @@ async def persist_usage_capture(token, user: dict | None) -> None:
 async def safe_persist_usage_capture(token, user: dict | None) -> None:
     try:
         await persist_usage_capture(token, user)
-    except Exception:
+    except SQLAlchemyError:
         logger.exception("Failed to persist API usage events")
 
 

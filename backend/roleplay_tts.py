@@ -1,4 +1,5 @@
 import base64
+import binascii
 import hashlib
 import os
 import re
@@ -106,7 +107,15 @@ def synthesize_roleplay_tts(
         audio_b64 = inline["data"]
         mime_type = inline.get("mimeType") or inline.get("mime_type") or "audio/L16;rate=24000"
         wav_bytes = _audio_payload_to_wav(audio_b64, mime_type)
-    except Exception:
+    except (
+        requests.RequestException,
+        ValueError,
+        KeyError,
+        IndexError,
+        TypeError,
+        binascii.Error,
+        wave.Error,
+    ):
         track_external_usage(
             feature="roleplay",
             operation="tts",

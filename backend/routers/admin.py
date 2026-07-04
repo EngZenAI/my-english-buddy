@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel, Field
+from requests import RequestException
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 
 from backend.articles.feeds import fetch_feed_entries
@@ -33,6 +35,7 @@ from backend.routers.common import CurrentUserDep, require_admin_user
 router = APIRouter(tags=["admin"])
 logger = logging.getLogger(__name__)
 ARTICLE_REFRESH_JOB_LIMIT = 20
+ARTICLE_REFRESH_ERRORS = (RequestException, SQLAlchemyError, ValueError, OSError)
 
 
 class ArticleFeedRefreshIn(BaseModel):
@@ -127,7 +130,7 @@ async def _run_article_feed_refresh_job(
                             "error": "",
                         }
                     )
-                except Exception as exc:
+                except ARTICLE_REFRESH_ERRORS as exc:
                     await job_session.rollback()
                     results.append(
                         {
@@ -169,7 +172,7 @@ async def _run_article_feed_refresh_job(
                 ),
                 ok=has_success,
             )
-    except Exception as exc:
+    except (SQLAlchemyError, RuntimeError, ValueError) as exc:
         logger.exception("Article feed refresh job failed job_id=%s", job_id)
         async with SessionFactory() as job_session:
             await update_article_refresh_job(

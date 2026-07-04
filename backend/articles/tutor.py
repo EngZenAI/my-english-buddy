@@ -22,7 +22,7 @@ def _json_from_text(raw: str, fallback: Any):
             text = text[start:]
     try:
         return json.loads(text)
-    except Exception:
+    except (json.JSONDecodeError, TypeError, ValueError):
         return fallback
 
 

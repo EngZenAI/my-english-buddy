@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import Integer, bindparam, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.repositories.common import _rows
@@ -229,7 +230,7 @@ async def save_results_and_complete_session(
             },
         )
         await session.commit()
-    except Exception:
+    except SQLAlchemyError:
         await session.rollback()
         raise
 

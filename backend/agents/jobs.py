@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from backend.db.repositories import (
     create_agent_job,
     get_all_words,
@@ -75,7 +77,7 @@ async def run_wordbook_audit_job(user_id: str, job_id: str) -> None:
                 message="단어장 점검이 완료되었습니다.",
                 result=result,
             )
-        except Exception:
+        except (SQLAlchemyError, KeyError, TypeError, ValueError):
             await session.rollback()
             logger.exception("Wordbook audit job failed job_id=%s user_id=%s", job_id, user_id)
             await update_agent_job(

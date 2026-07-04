@@ -97,7 +97,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
 
         try:
             avatar_url = await fetch_google_avatar_url(access_token)
-        except Exception:
+        except (httpx.HTTPError, ValueError, KeyError, TypeError):
             logger.warning("Failed to fetch Google avatar for user %s", user.id, exc_info=True)
             return
 

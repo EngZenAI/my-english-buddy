@@ -13,6 +13,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 
 from gtts import gTTS
+from gtts.tts import gTTSError
 
 from backend.api_usage import track_external_usage
 from backend.dictionary import (
@@ -149,7 +150,7 @@ def synthesize_tts(word: str, lang: str = "en") -> str | None:
             output_value=audio,
         )
         return audio
-    except Exception:
+    except (gTTSError, OSError, ValueError):
         track_external_usage(
             feature="tts",
             operation="synthesize",

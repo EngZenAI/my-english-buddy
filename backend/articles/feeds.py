@@ -19,6 +19,9 @@ from backend.articles.chunking import normalize_whitespace
 from backend.articles.sources import ArticleFeed, ArticleSource
 
 logger = logging.getLogger(__name__)
+HTML_PARSE_ERRORS = (AssertionError, ValueError)
+DATE_PARSE_ERRORS = (TypeError, ValueError, IndexError, OverflowError)
+PAGE_IMAGE_ERRORS = (requests.RequestException, AssertionError, ValueError)
 
 MEDIA_NS = "{http://search.yahoo.com/mrss/}"
 ATOM_NS = "{http://www.w3.org/2005/Atom}"
@@ -95,7 +98,7 @@ def _strip_html(value: str) -> str:
     parser = _HTMLTextParser()
     try:
         parser.feed(value or "")
-    except Exception:
+    except HTML_PARSE_ERRORS:
         return normalize_whitespace(re.sub(r"<[^>]+>", " ", unescape(value or "")))
     return normalize_whitespace(" ".join(parser.parts))
 
@@ -124,11 +127,11 @@ def _parse_date(value: str) -> str:
     try:
         parsed = parsedate_to_datetime(raw)
         return parsed.isoformat()
-    except Exception:
+    except DATE_PARSE_ERRORS:
         pass
     try:
         return datetime.fromisoformat(raw.replace("Z", "+00:00")).isoformat()
-    except Exception:
+    except DATE_PARSE_ERRORS:
         return ""
 
 
@@ -240,7 +243,7 @@ def _fetch_page_image(url: str, timeout: int = 5) -> str:
         parser = _MetaImageParser()
         parser.feed(response.text[:120000])
         return _valid_image_url(parser.image_url)
-    except Exception as exc:
+    except PAGE_IMAGE_ERRORS as exc:
         logger.info("article_image_metadata_failed url=%s error=%s", url, exc)
         return ""
 

@@ -9,8 +9,9 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.exceptions import OutputParserException
 from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api_usage import extract_token_usage, track_llm_usage
@@ -35,6 +36,7 @@ from backend.quiz.schemas import (
 
 logger = logging.getLogger(__name__)
 quiz_llm = llm_module.get_llm("quiz")
+QUIZ_LLM_ERRORS = (OSError, RuntimeError, ValueError, OutputParserException, ValidationError)
 
 DEFAULT_QUESTION_COUNT = 10
 MAX_QUESTION_COUNT = 20
@@ -505,7 +507,7 @@ def _invoke_quiz_llm(operation: str, prompt_value: Any) -> Any:
     model_name = _active_model_name()
     try:
         response = _quiz_llm().invoke(prompt_value)
-    except Exception:
+    except QUIZ_LLM_ERRORS:
         track_llm_usage(
             feature="quiz",
             operation=operation,
@@ -643,7 +645,7 @@ def _generate_llm_questions(
             )
             raw_generated = _invoke_quiz_llm("generate_quiz", prompt_value)
             generated = _parse_generated_quiz(raw_generated)
-        except Exception as exc:
+        except QUIZ_LLM_ERRORS as exc:
             raw_preview = _raw_text(raw_generated).strip()[:500]
             logger.warning(
                 "LLM quiz generation attempt %s failed on model %s: %s; raw_preview=%r",
@@ -772,7 +774,7 @@ def _grade_subjective(question: dict[str, Any], user_answer: str) -> _Subjective
         )
         response = _invoke_quiz_llm("grade_subjective", prompt_value)
         return _subjective_parser.parse(_raw_text(response))
-    except Exception as exc:
+    except QUIZ_LLM_ERRORS as exc:
         logger.warning("LLM subjective grading failed; using fallback grade: %s", exc)
         expected = [a.lower() for a in question.get("acceptable_answers", [])]
         answer = user_answer.lower()
