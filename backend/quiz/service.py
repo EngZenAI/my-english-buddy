@@ -1,18 +1,19 @@
 import base64
+import errno
 import hashlib
 import hmac
 import json
 import logging
-import errno
 import time
 from datetime import datetime, timedelta
 from typing import Any
 
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import backend.llm as llm_module
 from backend.api_usage import extract_token_usage, track_llm_usage
 from backend.config import settings
 from backend.db.repositories import (
@@ -22,7 +23,6 @@ from backend.db.repositories import (
     save_results_and_complete_session,
 )
 from backend.exceptions import DATA_COERCION_ERRORS, QUIZ_LLM_ERRORS
-import backend.llm as llm_module
 from backend.quiz.schemas import (
     QuizChoice,
     QuizGenerateIn,

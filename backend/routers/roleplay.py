@@ -8,7 +8,6 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import Response, StreamingResponse
 
 from backend.api_usage import start_usage_capture
-from backend.dictionary import translate_korean
 from backend.db.dependencies import SessionDep
 from backend.db.repositories import (
     delete_roleplay_session,
@@ -17,6 +16,8 @@ from backend.db.repositories import (
     insert_words,
     save_roleplay_session,
 )
+from backend.dictionary import translate_korean
+from backend.exceptions import ROLEPLAY_CONTEXT_ERRORS, ROLEPLAY_RUNTIME_ERRORS, log_exception
 from backend.llm import (
     LLMConcurrencyLimitError,
     coach_roleplay_turn,
@@ -32,7 +33,6 @@ from backend.roleplay_tts import (
     roleplay_tts_cache_key,
     synthesize_roleplay_tts,
 )
-from backend.exceptions import ROLEPLAY_CONTEXT_ERRORS, ROLEPLAY_RUNTIME_ERRORS, log_exception
 from backend.routers.common import CurrentUserDep, needs_translation, safe_persist_usage_capture
 from backend.schemas.roleplay import (
     RoleplayContinueIn,

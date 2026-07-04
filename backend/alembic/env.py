@@ -3,15 +3,14 @@ from __future__ import annotations
 import asyncio
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from backend.config import settings
-from backend.db.base import Base
-
 import backend.auth.models  # noqa: F401
 import backend.db.models  # noqa: F401
+from alembic import context
+from backend.config import settings
+from backend.db.base import Base
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.async_database_url.replace("%", "%%"))

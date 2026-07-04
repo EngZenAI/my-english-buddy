@@ -1,13 +1,11 @@
-import json
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from starlette.concurrency import run_in_threadpool
 
 from backend.articles.feeds import fetch_feed_entries
-from backend.articles.retrieval import select_relevant_chunks
 from backend.articles.sources import SUPPORTED_SOURCES
 from backend.db.dependencies import SessionDep
 from backend.db.repositories import (

@@ -17,7 +17,12 @@ import requests
 
 from backend.articles.chunking import normalize_whitespace
 from backend.articles.sources import ArticleFeed, ArticleSource
-from backend.exceptions import DATE_PARSE_ERRORS, FEED_FETCH_ERRORS, HTML_PARSE_ERRORS, PAGE_IMAGE_ERRORS
+from backend.exceptions import (
+    DATE_PARSE_ERRORS,
+    FEED_FETCH_ERRORS,
+    HTML_PARSE_ERRORS,
+    PAGE_IMAGE_ERRORS,
+)
 
 logger = logging.getLogger(__name__)
 

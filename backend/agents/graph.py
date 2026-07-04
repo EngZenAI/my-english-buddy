@@ -11,8 +11,8 @@ from starlette.concurrency import run_in_threadpool
 
 from backend.agents.action_types import ALLOWED_ACTION_PROMPT_LINES, START_QUIZ_WITH_GOAL
 from backend.agents.context import build_agent_context
-from backend.agents.schemas import AgentCard, AgentResponse
 from backend.agents.safety.policy import filter_agent_actions
+from backend.agents.schemas import AgentCard, AgentResponse
 from backend.agents.tools import execute_auto_safe_actions, normalize_action
 from backend.exceptions import AGENT_PLAN_ERRORS, JSON_PARSE_ERRORS
 from backend.llm import _invoke_tracked_llm

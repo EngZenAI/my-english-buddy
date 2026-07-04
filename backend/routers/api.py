@@ -3,8 +3,8 @@
 from fastapi import APIRouter
 
 from backend.routers.account import router as account_router
-from backend.routers.agent import router as agent_router
 from backend.routers.admin import router as admin_router
+from backend.routers.agent import router as agent_router
 from backend.routers.articles import router as articles_router
 from backend.routers.quiz import router as quiz_router
 from backend.routers.roleplay import router as roleplay_router

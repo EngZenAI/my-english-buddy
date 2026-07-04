@@ -146,6 +146,9 @@ cd frontend && npm run dev              # 5173 (여기로 접속; /api·/auth는
 - **예외 처리는 `backend.exceptions`를 사용한다.** 새 코드에서 `except Exception`이나 파일별 임시 예외 튜플을 만들지 않는다.
   외부 HTTP/JSON/파일/DB/LLM/입력 변환 예외는 `backend.exceptions.categories`의 공용 그룹을 import해서 사용하고,
   새 분류가 필요하면 `backend/exceptions/categories.py`에 추가한다. 반복 로깅은 `log_exception()` helper를 사용한다.
+- **Python lint/import 정리는 Ruff를 사용한다.** 기준 설정은 루트 `pyproject.toml`이며,
+  팀 공통 명령은 `python -m ruff check backend`이다. 자동 수정은 우선 `--select F401,I --fix`처럼
+  사용하지 않는 import와 import 정렬에 한정하고, 대규모 포맷 변경은 별도 변경으로 분리한다.
 - **`uvicorn --reload`는 코드 변경 시 자동 재시작**되므로 백엔드 수정은 보통 자동 반영(안 되면 수동 재시작).
 - **WatsonX 키 만료 가능**: 만료 시 시작 로그에 인증 경고가 뜨지만 치명적 아님 → `llm.py`가 로컬
   **Ollama(qwen2.5)** 로 자동 대체. 단 퀴즈/롤플레잉/슬랭 등 LLM 기능을 쓰려면 `ollama serve` + 모델

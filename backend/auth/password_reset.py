@@ -8,13 +8,13 @@ from pwdlib import PasswordHash
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.auth.models import PasswordResetCode, User
 from backend.auth.email import (
     EmailSendError,
     get_smtp_sender,
     log_password_reset_code,
     send_password_reset_code_email,
 )
+from backend.auth.models import PasswordResetCode, User
 from backend.config import settings
 
 password_helper = PasswordHelper(PasswordHash.recommended())

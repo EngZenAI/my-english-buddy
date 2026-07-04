@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import text

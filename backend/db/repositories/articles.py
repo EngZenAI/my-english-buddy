@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import bindparam, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.repositories.common import _rows

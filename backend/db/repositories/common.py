@@ -1,7 +1,6 @@
 from typing import Any
 from uuid import UUID
 
-
 DEFAULT_LABELS = ["미지정", "여행", "비즈니스", "일상", "IT·코딩", "학업"]
 MAX_LABELS = 20
 

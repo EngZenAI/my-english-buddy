@@ -1,55 +1,35 @@
-import json
 import logging
-import uuid
-from datetime import datetime, timedelta
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 from starlette.concurrency import run_in_threadpool
 
 from backend.api_usage import start_usage_capture
-from backend.articles.feeds import fetch_feed_entries
 from backend.articles.retrieval import select_relevant_chunks
-from backend.articles.sources import SUPPORTED_SOURCES
 from backend.articles.tutor import (
     answer_article_question,
     complete_article,
     generate_article_study,
 )
-from backend.dictionary import translate_korean
 from backend.db.dependencies import SessionDep
 from backend.db.repositories import (
     add_label,
-    create_article_refresh_job,
     create_article_session,
-    delete_admin_article,
     delete_article_session,
-    get_admin_api_usage,
-    get_admin_learner_detail,
     get_article_catalog_item,
-    get_article_refresh_job,
     get_article_session,
     get_article_sessions,
     get_labels,
     insert_words,
-    list_admin_articles,
-    list_admin_learners,
     list_article_sources,
     list_published_articles,
-    publish_article,
-    trim_article_refresh_jobs,
-    update_admin_article,
     update_article_completion,
-    update_article_refresh_job,
     update_article_study,
-    upsert_article_with_chunks,
-    upsert_feed_articles,
 )
-from backend.db.session import SessionFactory
+from backend.dictionary import translate_korean
 from backend.routers.common import (
     CurrentUserDep,
     needs_translation,
     persist_usage_capture,
-    require_admin_user,
 )
 from backend.schemas.articles import ArticleAskIn, ArticleSaveWordsIn
 

@@ -84,6 +84,24 @@ cd frontend
 npm install
 ```
 
+### 5. 개발 도구 설치 (선택)
+백엔드 lint/import 정리는 Ruff를 사용합니다. 팀 공통 문서는 pip 기준으로 유지합니다.
+
+```bash
+python -m pip install -r backend/requirements-dev.txt
+python -m ruff check backend
+```
+
+자동 수정은 범위를 확인한 뒤 실행합니다.
+
+```bash
+python -m ruff check backend --select F401,I --fix
+python -m compileall backend
+```
+
+VS Code에서 Ruff 확장을 쓰는 경우 `.vscode.example/settings.json` 내용을 각자 로컬
+`.vscode/settings.json`에 복사해서 사용합니다. `.vscode/`는 개인 설정으로 취급해 커밋하지 않습니다.
+
 ---
 
 ## 실행 방법 (중요)
@@ -185,8 +203,10 @@ npm run build
 ```
 english-learning-app/
 ├── .env.example
+├── pyproject.toml      # Ruff 등 Python 개발 도구 공통 설정
 ├── backend/
 │   ├── requirements.txt
+│   ├── requirements-dev.txt
 │   ├── main.py        # FastAPI 엔트리 (REST API + React 정적 서빙)
 │   ├── services.py    # 검색/포맷/TTS 순수 로직 (UI 비의존)
 │   ├── routers/
@@ -235,6 +255,18 @@ from backend.exceptions import HTTP_JSON_ERRORS, SQLALCHEMY_ERRORS, log_exceptio
 
 새로운 외부 API, 파일 파싱, DB 작업, LLM 작업의 예외 범위가 필요하면 각 파일에 임시 튜플을 만들지 말고
 `backend/exceptions/categories.py`에 도메인별 예외 그룹을 추가합니다.
+
+### Ruff 규칙
+
+Python lint/import 정리는 루트 `pyproject.toml`의 Ruff 설정을 기준으로 합니다.
+새 코드에서는 사용하지 않는 import를 남기지 않고, import 정렬은 Ruff에 맡깁니다.
+
+```bash
+python -m ruff check backend
+python -m ruff check backend --select F401,I --fix
+```
+
+전체 자동 수정이나 포맷은 변경 범위가 커질 수 있으므로 별도 PR에서 실행합니다.
 
 ---
 

@@ -1,5 +1,4 @@
-from fastapi import APIRouter, Request
-from fastapi import HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi_users.router.oauth import (
     CSRF_TOKEN_COOKIE_NAME,
@@ -13,8 +12,14 @@ from backend.auth.cookies import clear_auth_cookie
 from backend.auth.models import User
 from backend.auth.password_reset import (
     PasswordResetError,
+)
+from backend.auth.password_reset import (
     confirm_password_reset as confirm_password_reset_service,
+)
+from backend.auth.password_reset import (
     request_password_reset as request_password_reset_service,
+)
+from backend.auth.password_reset import (
     verify_password_reset as verify_password_reset_service,
 )
 from backend.auth.users import (

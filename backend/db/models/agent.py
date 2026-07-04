@@ -8,7 +8,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.db.base import Base
 
-
 JsonValue = dict[str, Any] | list[Any] | str | int | float | bool | None
 
 

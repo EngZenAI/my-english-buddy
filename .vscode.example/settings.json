@@ -1,0 +1,12 @@
+{
+  "python.defaultInterpreterPath": ".venv\\Scripts\\python.exe",
+  "ruff.configuration": "pyproject.toml",
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": false,
+    "editor.codeActionsOnSave": {
+      "source.organizeImports.ruff": "explicit",
+      "source.fixAll.ruff": "explicit"
+    }
+  }
+}
