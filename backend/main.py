@@ -1,4 +1,3 @@
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -7,8 +6,6 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.db.logging import enable_sql_logging
-from backend.db.repositories import init_db
-from backend.db.schema import create_db_schema
 from backend.routers.api import router as api_router
 from backend.routers.auth import router as auth_router
 
@@ -18,14 +15,7 @@ enable_sql_logging()
 FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    await create_db_schema()
-    await init_db()
-    yield
-
-
-app = FastAPI(lifespan=lifespan)
+app = FastAPI()
 
 # ── CORS (개발 중 Vite dev 서버: localhost:5173) ───────────
 app.add_middleware(

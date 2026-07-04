@@ -24,7 +24,7 @@ english-app/
 │   │   └── auth.py          # 인증 (FastAPI-Users: 이메일+구글 OAuth, 비번재설정 등)
 │   ├── services.py          # UI 비의존 순수 로직 (검색 조합, 포맷, gTTS) — 병렬 호출
 │   ├── dictionary.py        # 외부 API: 사전(dictionaryapi.dev) + 번역(Google) + LRU 캐시
-│   ├── db/                  # SQLAlchemy 2 async 세션/모델/Repository + 스키마 초기화
+│   ├── db/                  # SQLAlchemy 2 async 세션/도메인별 모델/Repository
 │   ├── llm.py               # LangChain/LangGraph: 퀴즈 생성·채점, 롤플레잉, 슬랭 설명
 │   └── auth/                # FastAPI-Users 모델/매니저/의존성 (User, AccessToken, OAuthAccount)
 └── frontend/                # React + Vite + Tailwind (구버전 Gradio는 제거됨)
@@ -132,14 +132,14 @@ cd frontend && npm run dev              # 5173 (여기로 접속; /api·/auth는
 
 ## 주의할 점 (개발 시 자주 걸림)
 
-- **백엔드 코드 바꾸면 uvicorn 재시작 필요.** 특히 `init_db()`(스키마/마이그레이션)는 시작 시 1회 실행.
+- **백엔드 코드 바꾸면 uvicorn 재시작 필요.** DB 스키마 변경은 서버 시작 전에 `alembic upgrade head`로 적용한다.
 - **프론트 코드 바꾸면 `npm run build` 다시 해야** 8000에서 반영(또는 dev 서버는 자동).
 - **api.py ↔ db/repositories.py 시그니처 동기화 주의.** repository 함수는 `AsyncSession`과
   `user_id`를 받는다. 라우터는 `SessionDep`로 세션을 받고 `_user["id"]`와 함께 넘긴다.
-- **DB 마이그레이션은 Alembic 없이 init_db 안에서 `ALTER TABLE ... IF EXISTS / 가드 DO 블록`으로 처리.**
-  과거 변경 이력: context→tag 컬럼명 변경, phonetic 제거, korean_detail 추가, words/labels에
-  user_id 추가 및 유니크 인덱스 전환, next_review 기본값 7일, **`sort_order` INTEGER 추가 + 기존행
-  created_at 기준 백필**(드래그 정렬용). 새 컬럼은 같은 패턴으로 추가.
+- **DB 마이그레이션은 Alembic으로 처리.** 서버 시작 시 `create_all()`이나 수동 DDL을 실행하지 않는다.
+  새 스키마 변경은 `backend/alembic/versions`에 revision을 추가하고 `alembic upgrade head`로 적용한다.
+  기존 DB에 Alembic을 처음 연결할 때만 `alembic stamp head`로 baseline을 기록한다.
+  raw SQL repository 테이블도 있으므로 `alembic revision --autogenerate` 결과는 그대로 믿지 말고 반드시 검토한다.
 - **`uvicorn --reload`는 코드 변경 시 자동 재시작**되므로 백엔드 수정은 보통 자동 반영(안 되면 수동 재시작).
 - **WatsonX 키 만료 가능**: 만료 시 시작 로그에 인증 경고가 뜨지만 치명적 아님 → `llm.py`가 로컬
   **Ollama(qwen2.5)** 로 자동 대체. 단 퀴즈/롤플레잉/슬랭 등 LLM 기능을 쓰려면 `ollama serve` + 모델

@@ -80,9 +80,3 @@ from backend.db.repositories.words import (
     update_review,
     update_word,
 )
-
-
-async def init_db() -> None:
-    from backend.db.schema_migrations import init_db as run_schema_migrations
-
-    await run_schema_migrations()

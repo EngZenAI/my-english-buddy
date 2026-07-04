@@ -32,8 +32,8 @@ LLM 기반 나만의 영어 학습 앱
 ```bash
 conda create -n english-app python=3.11
 conda activate english-app
-pip install -r backend/requirements.txt
-# pip install --upgrade -r backend/requirements.txt
+python -m pip install -r backend/requirements.txt
+# python -m pip install --upgrade -r backend/requirements.txt
 ```
 
 ### 2. 환경변수 설정
@@ -95,10 +95,25 @@ npm install
 > 구성은 두 조각입니다 — **백엔드(8000) = 데이터/두뇌**, **프론트(화면) = 껍데기**.
 > 화면을 띄우는 방법에 따라 아래 두 가지 실행 방식이 있습니다.
 
+### DB 마이그레이션
+
+DB 스키마는 Alembic으로 관리합니다. 새 DB를 만들거나 migration 파일이 추가된 뒤에는 백엔드 서버를 켜기 전에 아래 명령을 실행합니다.
+
+```bash
+alembic upgrade head
+```
+
+기존 DB에 Alembic을 처음 도입하는 경우에는 현재 스키마를 baseline으로 기록해야 합니다.
+
+```bash
+alembic stamp head
+```
+
 ### 평소 실행 (개발 표준) — 터미널 2개, **5173으로 접속**
 
 ```bash
 # 터미널 1 — 백엔드 (항상 켜둘 것)
+alembic upgrade head
 uvicorn backend.main:app --reload          # localhost:8000  (API·인증·DB)
 
 # 터미널 2 — 프론트 dev 서버
@@ -117,7 +132,8 @@ cd frontend && npm run dev                 # localhost:5173  ← 여기로 접�
 
 ```bash
 cd frontend && npm run build               # frontend/dist 생성 (반드시 서버 시작 '전'에)
-cd .. && uvicorn backend.main:app --reload # http://localhost:8000 접속
+cd .. && alembic upgrade head
+uvicorn backend.main:app --reload          # http://localhost:8000 접속
 ```
 
 > `main.py`는 **시작 시점**에 `frontend/dist` 유무를 검사해 있을 때만 SPA를 서빙합니다.
@@ -176,7 +192,7 @@ english-learning-app/
 │   ├── routers/
 │   │   ├── api.py     # React용 REST 엔드포인트
 │   │   └── auth.py    # 인증 (FastAPI-Users)
-│   ├── db/            # SQLAlchemy 세션/모델/Repository
+│   ├── db/            # SQLAlchemy 세션/도메인별 모델/Repository
 │   ├── dictionary.py  # 사전 + 번역 API
 │   └── llm.py         # LLM 퀴즈/롤플레잉
 └── frontend/          # React + Vite + Tailwind
