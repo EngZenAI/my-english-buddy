@@ -136,6 +136,9 @@ cd frontend && npm run dev              # 5173 (여기로 접속; /api·/auth는
 - **프론트 코드 바꾸면 `npm run build` 다시 해야** 8000에서 반영(또는 dev 서버는 자동).
 - **api.py ↔ db/repositories.py 시그니처 동기화 주의.** repository 함수는 `AsyncSession`과
   `user_id`를 받는다. 라우터는 `SessionDep`로 세션을 받고 `_user["id"]`와 함께 넘긴다.
+- **API Pydantic schema는 `backend/schemas`에 둔다.** 새 라우터 요청/응답 모델을 라우터 파일 안에 만들지 않는다.
+  도메인별 schema 파일(`backend/schemas/wordbook.py`, `roleplay.py` 등)에서 import한다.
+  LLM 파서나 서비스 내부 전용 모델만 도메인 내부에 둘 수 있다.
 - **DB 마이그레이션은 Alembic으로 처리.** 서버 시작 시 `create_all()`이나 수동 DDL을 실행하지 않는다.
   새 스키마 변경은 `backend/alembic/versions`에 revision을 추가하고 `alembic upgrade head`로 적용한다.
   기존 DB에 Alembic을 처음 연결할 때만 `alembic stamp head`로 baseline을 기록한다.

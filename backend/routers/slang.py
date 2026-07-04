@@ -1,18 +1,13 @@
 from fastapi import APIRouter
-from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from backend.api_usage import start_usage_capture
 from backend.db.dependencies import SessionDep
 from backend.llm import explain_slang
 from backend.routers.common import CurrentUserDep, safe_persist_usage_capture
+from backend.schemas.slang import SlangIn
 
 router = APIRouter(tags=["slang"])
-
-
-class SlangIn(BaseModel):
-    word: str
-    korean: str = ""
 
 
 @router.post("/slang")

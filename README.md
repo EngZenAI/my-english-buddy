@@ -194,6 +194,7 @@ english-learning-app/
 │   │   └── auth.py    # 인증 (FastAPI-Users)
 │   ├── db/            # SQLAlchemy 세션/도메인별 모델/Repository
 │   ├── exceptions/    # 공용 예외 분류와 로깅 helper
+│   ├── schemas/       # API 요청/응답 Pydantic schema
 │   ├── dictionary.py  # 사전 + 번역 API
 │   └── llm.py         # LLM 퀴즈/롤플레잉
 └── frontend/          # React + Vite + Tailwind
@@ -207,6 +208,19 @@ english-learning-app/
 ```
 
 백엔드는 시작 시 compact SQL 로그를 콘솔에 출력합니다. 파라미터는 기본적으로 출력하지 않습니다.
+
+### Schema 규칙
+
+API 요청/응답용 Pydantic 모델은 `backend/schemas`에 둡니다. 라우터 파일에는 새 `BaseModel` 클래스를 직접 만들지 않고,
+도메인별 schema 파일에서 import합니다.
+
+예:
+
+```python
+from backend.schemas.wordbook import SaveWordIn
+```
+
+LLM 파서나 서비스 내부에서만 쓰는 private 모델은 해당 도메인 내부에 둘 수 있습니다.
 
 ### 예외 처리 규칙
 

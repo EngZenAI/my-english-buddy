@@ -2,7 +2,6 @@ import csv
 import io
 
 from fastapi import APIRouter, File, UploadFile
-from pydantic import BaseModel
 
 from backend.db.dependencies import SessionDep
 from backend.db.repositories import (
@@ -24,67 +23,17 @@ from backend.db.repositories import (
 )
 from backend.exceptions import FILE_IMPORT_ERRORS
 from backend.routers.common import CurrentUserDep
+from backend.schemas.wordbook import (
+    BulkUpdateIn,
+    IdsIn,
+    ImportCommitIn,
+    LabelIn,
+    RenameLabelIn,
+    SaveWordIn,
+    UpdateWordIn,
+)
 
 router = APIRouter(tags=["wordbook"])
-
-
-class SaveWordIn(BaseModel):
-    word: str
-    korean: str = ""
-    korean_detail: str = ""
-    english_def: str = ""
-    example: str = ""
-    tag: str = ""
-    slang_def: str = ""
-
-
-class UpdateWordIn(BaseModel):
-    korean_detail: str = ""
-    english_def: str = ""
-    example: str = ""
-    tag: str = ""
-    next_review: str = ""
-
-
-class BulkUpdateItem(BaseModel):
-    id: int
-    word: str = ""
-    korean: str = ""
-    korean_detail: str = ""
-    english_def: str = ""
-    example: str = ""
-    tag: str = ""
-    next_review: str = ""
-
-
-class BulkUpdateIn(BaseModel):
-    items: list[BulkUpdateItem]
-
-
-class IdsIn(BaseModel):
-    ids: list[int]
-
-
-class ImportItem(BaseModel):
-    word: str
-    korean: str = ""
-    korean_detail: str = ""
-    example: str = ""
-    tag: str = ""
-
-
-class ImportCommitIn(BaseModel):
-    items: list[ImportItem]
-    overwrite: bool = False
-
-
-class LabelIn(BaseModel):
-    name: str
-
-
-class RenameLabelIn(BaseModel):
-    old_name: str
-    new_name: str
 
 
 @router.get("/words/saved")

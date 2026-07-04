@@ -4,7 +4,6 @@ import uuid
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
-from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from backend.articles.feeds import fetch_feed_entries
@@ -30,36 +29,16 @@ from backend.db.repositories import (
 from backend.db.session import SessionFactory
 from backend.exceptions import ARTICLE_REFRESH_ERRORS, ARTICLE_REFRESH_JOB_ERRORS, log_exception
 from backend.routers.common import CurrentUserDep, require_admin_user
+from backend.schemas.admin import (
+    ArticleCreateIn,
+    ArticleFeedRefreshIn,
+    ArticlePublishIn,
+    ArticleUpdateIn,
+)
 
 router = APIRouter(tags=["admin"])
 logger = logging.getLogger(__name__)
 ARTICLE_REFRESH_JOB_LIMIT = 20
-
-
-class ArticleFeedRefreshIn(BaseModel):
-    source_key: str = ""
-    publish: bool = True
-    max_items: int = Field(default=1, ge=1, le=3)
-
-
-class ArticleCreateIn(BaseModel):
-    source: str = ""
-    title: str
-    url: str
-    image_url: str = ""
-    topic: str = "General"
-    level: str = "B1"
-    description: str = ""
-    content: str
-    is_published: bool = False
-
-
-class ArticleUpdateIn(ArticleCreateIn):
-    pass
-
-
-class ArticlePublishIn(BaseModel):
-    is_published: bool = True
 
 
 async def _trim_article_refresh_jobs(session: SessionDep) -> None:

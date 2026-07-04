@@ -4,7 +4,6 @@ import threading
 from _thread import LockType
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import Response, StreamingResponse
 
@@ -35,6 +34,13 @@ from backend.roleplay_tts import (
 )
 from backend.exceptions import ROLEPLAY_CONTEXT_ERRORS, ROLEPLAY_RUNTIME_ERRORS, log_exception
 from backend.routers.common import CurrentUserDep, needs_translation, safe_persist_usage_capture
+from backend.schemas.roleplay import (
+    RoleplayContinueIn,
+    RoleplaySaveWordsIn,
+    RoleplayStartIn,
+    RoleplaySummaryIn,
+    RoleplayTtsIn,
+)
 
 router = APIRouter(tags=["roleplay"])
 logger = logging.getLogger(__name__)
@@ -45,41 +51,6 @@ ROLEPLAY_LIMIT_MESSAGE = "AI 롤플레잉 요청이 많아 잠시 대기 중입�
 
 _roleplay_lock_guard = threading.Lock()
 _roleplay_user_locks: dict[str, LockType] = {}
-
-
-class RoleplayStartIn(BaseModel):
-    level: str = "intermediate"          # beginner | intermediate | advanced
-    scenario: str = "general"            # general | opic | tag
-    tag: str | None = None               # scenario == "tag" 일 때 사용
-    situation: str = ""                  # 예시 카드/자유 입력의 구체적 상황
-
-
-class RoleplayContinueIn(BaseModel):
-    history: list  # [[user, bot, coaching], ...]
-    message: str
-    level: str = "intermediate"
-    scenario: str = "general"
-    tag: str | None = None
-    situation: str = ""
-    wrap_up: bool = False  # True면 AI가 자연스럽게 대화를 마무리하도록 유도
-
-
-class RoleplaySummaryIn(BaseModel):
-    history: list  # [[user, bot, coaching], ...]
-    level: str = "intermediate"
-    scenario: str = "general"
-    tag: str | None = None
-    situation: str = ""
-    title: str = ""  # 진행 칩 제목(카드 라벨 / 자유주제 / #태그) — 학습노트 표시용
-
-
-class RoleplaySaveWordsIn(BaseModel):
-    items: list  # [{word, korean, korean_detail?, english_def?, example?}, ...]
-    tag: str | None = None
-
-
-class RoleplayTtsIn(BaseModel):
-    text: str
 
 
 async def _roleplay_words(

@@ -4,7 +4,6 @@ import uuid
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
-from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from backend.api_usage import start_usage_capture
@@ -52,18 +51,10 @@ from backend.routers.common import (
     persist_usage_capture,
     require_admin_user,
 )
+from backend.schemas.articles import ArticleAskIn, ArticleSaveWordsIn
 
 router = APIRouter(tags=["articles"])
 logger = logging.getLogger(__name__)
-
-
-class ArticleAskIn(BaseModel):
-    question: str
-
-
-class ArticleSaveWordsIn(BaseModel):
-    items: list[dict] = Field(..., max_length=100)
-    tag: str | None = "뉴스"
 
 
 @router.get("/article-sources")

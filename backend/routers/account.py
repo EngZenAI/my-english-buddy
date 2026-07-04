@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 
 from backend.auth.password_reset import PasswordResetError, validate_reset_password
 from backend.auth.users import password_helper
@@ -14,13 +13,9 @@ from backend.db.repositories import (
     update_user_password_hash,
 )
 from backend.routers.common import CurrentUserDep
+from backend.schemas.account import AccountPasswordIn
 
 router = APIRouter(tags=["account"])
-
-
-class AccountPasswordIn(BaseModel):
-    current_password: str = ""
-    new_password: str
 
 
 @router.get("/mypage/overview")
