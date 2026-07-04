@@ -97,6 +97,12 @@ FEATURE_MODEL_PROFILES = {
         "model_id": "openai/gpt-oss-120b",
         "params": {"max_tokens": 3072, "temperature": 0.2},
     },
+    # Buddy Agent. 사용자 학습 데이터를 보고 JSON 액션 계획을 안정적으로 만드는 것이 핵심.
+    "agent": {
+        "provider": "watsonx",
+        "model_id": "openai/gpt-oss-120b",
+        "params": {"max_tokens": 2048, "temperature": 0.2},
+    },
 }
 
 FALLBACK_MODEL_KEY = "qwen"                       # WatsonX 실패 시 쓸 모델 키

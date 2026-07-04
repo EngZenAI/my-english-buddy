@@ -1,26 +1,39 @@
 import * as React from "react";
-import { Bot, Lightbulb, UserRound } from "lucide-react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Lightbulb, UserRound } from "lucide-react";
+import englishBuddyLogo from "@/assets/english-buddy-logo.svg";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 
-function MessageAvatar({ role }) {
+function getUserInitials(user) {
+  if (!user?.email) return "U";
+  return user.email.substring(0, 2).toUpperCase();
+}
+
+function MessageAvatar({ role, user }) {
   const isUser = role === "user";
   return (
     <Avatar
       className={cn(
-        "mt-0.5 h-8 w-8 border",
+        "mt-0.5 h-8 w-8",
         isUser
-          ? "border-primary/20 bg-primary text-primary-foreground"
-          : "border-border bg-background text-muted-foreground"
+          ? "border border-primary/20 bg-primary text-primary-foreground"
+          : "bg-transparent text-muted-foreground"
       )}
     >
+      {isUser && user?.avatar_url && (
+        <AvatarImage src={user.avatar_url} alt="" referrerPolicy="no-referrer" />
+      )}
       <AvatarFallback
         className={cn(
-          "bg-transparent",
+          "bg-transparent text-xs font-bold",
           isUser ? "text-primary-foreground" : "text-muted-foreground"
         )}
       >
-        {isUser ? <UserRound className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
+        {isUser ? (
+          user?.email ? getUserInitials(user) : <UserRound className="h-4 w-4" />
+        ) : (
+          <img src={englishBuddyLogo} alt="" aria-hidden="true" className="h-5 w-5" />
+        )}
       </AvatarFallback>
     </Avatar>
   );
@@ -29,7 +42,7 @@ function MessageAvatar({ role }) {
 function MessageTyping({ label = "답변 작성 중" }) {
   return (
     <span className="inline-flex items-center gap-2 text-muted-foreground">
-      <span>{label}</span>
+      {label && <span>{label}</span>}
       <span className="inline-flex gap-1" aria-hidden="true">
         <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.2s]" />
         <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.1s]" />
@@ -54,12 +67,20 @@ function MessageCoaching({ className, children }) {
   );
 }
 
-function Message({ role = "assistant", children, coaching, loading = false, className }) {
+function Message({
+  role = "assistant",
+  user,
+  children,
+  coaching,
+  loading = false,
+  loadingLabel = "답변 작성 중",
+  className,
+}) {
   const isUser = role === "user";
 
   return (
     <div className={cn("flex w-full gap-2", isUser && "justify-end", className)}>
-      {!isUser && <MessageAvatar role={role} />}
+      {!isUser && <MessageAvatar role={role} user={user} />}
       <div className={cn("flex min-w-0 max-w-[82%] flex-col", isUser && "items-end")}>
         <div
           className={cn(
@@ -70,12 +91,12 @@ function Message({ role = "assistant", children, coaching, loading = false, clas
           )}
         >
           <div className="whitespace-pre-wrap break-words">
-            {loading ? <MessageTyping /> : children}
+            {loading ? <MessageTyping label={loadingLabel} /> : children}
           </div>
         </div>
         {!isUser && <MessageCoaching>{coaching}</MessageCoaching>}
       </div>
-      {isUser && <MessageAvatar role={role} />}
+      {isUser && <MessageAvatar role={role} user={user} />}
     </div>
   );
 }
