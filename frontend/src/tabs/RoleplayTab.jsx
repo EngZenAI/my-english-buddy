@@ -291,8 +291,6 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
   const scrollToBottom = () => {
     setScrollSignal((value) => value + 1);
   };
-  const scrollerItemCount =
-    messages.length + (starting ? 1 : 0) + (!starting && !active ? 1 : 0);
 
   const cancelRoleplayRequests = () => {
     requestSeqRef.current += 1;
@@ -733,6 +731,8 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
   const sending = streaming;
   const summarizing = summaryMutation.isPending || summaryInFlightRef.current;
   const finishDisabled = summarizing || starting || sending;
+  const scrollerItemCount =
+    messages.length + (starting ? 1 : 0) + (!starting && !active ? 1 : 0);
 
   const cards = mode === "opic" ? OPIC_CARDS : GENERAL_CARDS;
 
