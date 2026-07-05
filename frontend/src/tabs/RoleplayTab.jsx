@@ -60,6 +60,8 @@ import {
 // 백엔드 history 항목은 [user, bot, coaching] (coaching은 봇 답변에 붙는 한국어 코칭).
 const ROLEPLAY_TTS_MODEL = "gemini-2.5-flash-preview-tts";
 const ROLEPLAY_TTS_VOICE = "Kore";
+const VOICE_MAX_LISTEN_MS = 45_000;
+const VOICE_IDLE_STOP_MS = 10_000;
 
 function RoleplayScrollEffect({ signal }) {
   const { scrollToEnd, shouldStickToEndRef } = useMessageScroller();
@@ -75,12 +77,20 @@ function RoleplayScrollEffect({ signal }) {
   return null;
 }
 
-function pairsToMessages(pairs) {
+function pairsToMessages(pairs, previousMessages = []) {
   const out = [];
+  const receivedAt = new Date().toISOString();
+  const withCreatedAt = (message) => {
+    const previous = previousMessages[out.length];
+    return {
+      ...message,
+      createdAt: previous?.role === message.role ? previous.createdAt || receivedAt : receivedAt,
+    };
+  };
   for (const item of pairs) {
     const [user, bot, coaching] = item;
-    if (user) out.push({ role: "user", text: user });
-    if (bot) out.push({ role: "bot", text: bot, coaching: coaching || "" });
+    if (user) out.push(withCreatedAt({ role: "user", text: user }));
+    if (bot) out.push(withCreatedAt({ role: "bot", text: bot, coaching: coaching || "" }));
   }
   return out;
 }
@@ -101,6 +111,23 @@ function messagesToPairs(messages) {
   }
   if (haveUser) pairs.push([curUser, "", ""]);
   return pairs;
+}
+
+function formatElapsedTime(milliseconds) {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatMessageTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
 }
 
 const LEVELS = [
@@ -230,7 +257,15 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
   const [finishNoticeDismissed, setFinishNoticeDismissed] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [scrollSignal, setScrollSignal] = useState(0);
+  const [sessionStartedAt, setSessionStartedAt] = useState(null);
+  const [elapsedNow, setElapsedNow] = useState(() => Date.now());
   const recognitionRef = useRef(null);
+  const listeningIntentRef = useRef(false);
+  const recognitionRestartTimerRef = useRef(null);
+  const voiceMaxTimerRef = useRef(null);
+  const voiceIdleTimerRef = useRef(null);
+  const voiceTranscriptRef = useRef("");
+  const speechSessionBaseRef = useRef("");
   const audioRef = useRef(null);
   const audioCleanupRef = useRef(null);
   const startAbortRef = useRef(null);
@@ -269,6 +304,10 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
 
   const active = messages.length > 0;
   const isVoiceTab = subTab === "voice";
+  useEffect(() => {
+    voiceTranscriptRef.current = voiceTranscript;
+  }, [voiceTranscript]);
+
   const latestAssistantText = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       if (messages[i].role === "bot" && messages[i].text) return messages[i].text;
@@ -329,7 +368,42 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     setStreaming(false);
   };
 
+  const clearVoiceTimers = () => {
+    if (recognitionRestartTimerRef.current) {
+      window.clearTimeout(recognitionRestartTimerRef.current);
+      recognitionRestartTimerRef.current = null;
+    }
+    if (voiceMaxTimerRef.current) {
+      window.clearTimeout(voiceMaxTimerRef.current);
+      voiceMaxTimerRef.current = null;
+    }
+    if (voiceIdleTimerRef.current) {
+      window.clearTimeout(voiceIdleTimerRef.current);
+      voiceIdleTimerRef.current = null;
+    }
+  };
+
+  const stopListeningByTimeout = (message) => {
+    listeningIntentRef.current = false;
+    clearVoiceTimers();
+    recognitionRef.current?.stop?.();
+    recognitionRef.current = null;
+    setListening(false);
+    if (message) setVoiceNotice(message);
+  };
+
+  const scheduleVoiceIdleStop = () => {
+    if (voiceIdleTimerRef.current) {
+      window.clearTimeout(voiceIdleTimerRef.current);
+    }
+    voiceIdleTimerRef.current = window.setTimeout(() => {
+      stopListeningByTimeout("말소리가 감지되지 않아 녹음을 멈췄어요.");
+    }, VOICE_IDLE_STOP_MS);
+  };
+
   const stopListening = () => {
+    listeningIntentRef.current = false;
+    clearVoiceTimers();
     recognitionRef.current?.stop?.();
     recognitionRef.current = null;
     setListening(false);
@@ -351,9 +425,11 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     stopListening();
     stopSpeaking();
     setMessages([]);
+    setSessionStartedAt(null);
     setSession(null);
     setMsg("");
     setVoiceTranscript("");
+    speechSessionBaseRef.current = "";
     setTtsSource("idle");
     setVoiceError("");
     setVoiceNotice("");
@@ -364,8 +440,17 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
   };
 
   useEffect(() => {
+    if (!sessionStartedAt || summary) return undefined;
+    setElapsedNow(Date.now());
+    const timer = window.setInterval(() => setElapsedNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [sessionStartedAt, summary]);
+
+  useEffect(() => {
     return () => {
       cancelRoleplayRequests();
+      listeningIntentRef.current = false;
+      clearVoiceTimers();
       recognitionRef.current?.abort?.();
       audioRef.current?.pause?.();
       audioCleanupRef.current?.();
@@ -379,7 +464,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
       if (variables.requestId !== requestSeqRef.current) return;
       startAbortRef.current = null;
       roleplayRequestInFlightRef.current = false;
-      setMessages(pairsToMessages(history));
+      setMessages((prev) => pairsToMessages(history, prev));
       if (isVoiceTab) playAssistantVoice(history?.[0]?.[1] || "");
       scrollToBottom();
     },
@@ -387,6 +472,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
       if (variables?.requestId === requestSeqRef.current) {
         startAbortRef.current = null;
         roleplayRequestInFlightRef.current = false;
+        setSessionStartedAt(null);
       }
     },
   });
@@ -402,6 +488,8 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     requestSeqRef.current = requestId;
     startAbortRef.current = controller;
     const cfg = { level, scenario: mode, tag, situation };
+    setSessionStartedAt(Date.now());
+    setElapsedNow(Date.now());
     setSession({ ...cfg, title });
     setMessages([]);
     setMsg("");
@@ -437,6 +525,8 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     const requestId = requestSeqRef.current + 1;
     requestSeqRef.current = requestId;
     startAbortRef.current = controller;
+    setSessionStartedAt(Date.now());
+    setElapsedNow(Date.now());
     setSession({ ...cfg, title: launch.title || launch.tag || launch.situation || "Buddy 추천" });
     setMessages([]);
     setMsg("");
@@ -585,10 +675,12 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     const requestId = requestSeqRef.current + 1;
     requestSeqRef.current = requestId;
     streamAbortRef.current = controller;
+    const sentAt = new Date().toISOString();
+    const replyStartedAt = new Date().toISOString();
     setMessages((prev) => [
       ...prev,
-      { role: "user", text },
-      { role: "bot", text: "", coaching: "", streaming: true },
+      { role: "user", text, createdAt: sentAt },
+      { role: "bot", text: "", coaching: "", streaming: true, createdAt: replyStartedAt },
     ]);
     setMsg("");
     setVoiceTranscript("");
@@ -632,7 +724,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
         }
       );
       if (requestId !== requestSeqRef.current) return;
-      setMessages(pairsToMessages(history));
+      setMessages((prev) => pairsToMessages(history, prev));
       if (speakReply) {
         const lastTurn = history?.[history.length - 1];
         playAssistantVoice(lastTurn?.[1] || "");
@@ -700,43 +792,81 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     setVoiceError("");
     setVoiceNotice("");
     setVoiceTranscript("");
-    const recognition = new SpeechRecognition();
-    recognition.lang = "en-US";
-    recognition.interimResults = true;
-    recognition.continuous = false;
-    recognition.onresult = (event) => {
-      let transcript = "";
-      for (let i = 0; i < event.results.length; i += 1) {
-        transcript += event.results[i][0]?.transcript || "";
-      }
-      setVoiceTranscript(transcript.trim());
-    };
-    recognition.onerror = (event) => {
-      setVoiceError(
-        event.error === "not-allowed"
-          ? "마이크 권한이 필요합니다. 브라우저 권한을 허용해주세요."
-          : "음성 인식 중 문제가 생겼어요. 다시 시도해주세요."
+    clearVoiceTimers();
+    speechSessionBaseRef.current = "";
+    listeningIntentRef.current = true;
+    voiceMaxTimerRef.current = window.setTimeout(() => {
+      stopListeningByTimeout(
+        "최대 녹음 시간이 지나 자동으로 멈췄어요. 필요하면 다시 말하기를 눌러 이어서 말하세요.",
       );
-      setListening(false);
+    }, VOICE_MAX_LISTEN_MS);
+    scheduleVoiceIdleStop();
+
+    const beginRecognition = () => {
+      const recognition = new SpeechRecognition();
+      recognition.lang = "en-US";
+      recognition.interimResults = true;
+      recognition.continuous = true;
+      recognition.onresult = (event) => {
+        let currentTranscript = "";
+        for (let i = 0; i < event.results.length; i += 1) {
+          currentTranscript += ` ${event.results[i][0]?.transcript || ""}`;
+        }
+        const transcript = [speechSessionBaseRef.current, currentTranscript]
+          .filter(Boolean)
+          .join(" ")
+          .replace(/\s+/g, " ")
+          .trim();
+        setVoiceTranscript(transcript);
+        if (transcript) scheduleVoiceIdleStop();
+      };
+      recognition.onerror = (event) => {
+        if (event.error === "no-speech" && listeningIntentRef.current) {
+          return;
+        }
+        listeningIntentRef.current = false;
+        clearVoiceTimers();
+        setVoiceError(
+          event.error === "not-allowed"
+            ? "마이크 권한이 필요합니다. 브라우저 권한을 허용해주세요."
+            : "음성 인식 중 문제가 생겼어요. 다시 시도해주세요."
+        );
+        setListening(false);
+      };
+      recognition.onend = () => {
+        recognitionRef.current = null;
+        if (!listeningIntentRef.current) {
+          setListening(false);
+          return;
+        }
+        speechSessionBaseRef.current = voiceTranscriptRef.current;
+        recognitionRestartTimerRef.current = window.setTimeout(() => {
+          if (!listeningIntentRef.current || streaming || reachedHardLimit) {
+            setListening(false);
+            return;
+          }
+          beginRecognition();
+        }, 180);
+      };
+      recognitionRef.current = recognition;
+      try {
+        recognition.start();
+        setListening(true);
+      } catch {
+        listeningIntentRef.current = false;
+        clearVoiceTimers();
+        setListening(false);
+        recognitionRef.current = null;
+        setVoiceError("음성 인식을 시작하지 못했어요. 잠시 후 다시 시도해주세요.");
+      }
     };
-    recognition.onend = () => {
-      setListening(false);
-      recognitionRef.current = null;
-    };
-    recognitionRef.current = recognition;
-    try {
-      setListening(true);
-      recognition.start();
-    } catch {
-      setListening(false);
-      recognitionRef.current = null;
-      setVoiceError("음성 인식을 시작하지 못했어요. 잠시 후 다시 시도해주세요.");
-    }
+
+    beginRecognition();
   };
 
   const sendVoice = () => {
     stopListening();
-    sendText(voiceTranscript, { speakReply: true });
+    sendText(voiceTranscriptRef.current, { speakReply: true });
   };
 
   // 대화 종료 → 요약 + 표현/어휘 추출
@@ -824,9 +954,9 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     if (session?.title && option.label === session.title) return false;
     return true;
   });
-  const elapsedLabel = `${String(Math.floor(userTurns / 2)).padStart(2, "0")}:${String(
-    (userTurns * 23) % 60
-  ).padStart(2, "0")}`;
+  const elapsedLabel = sessionStartedAt
+    ? formatElapsedTime(elapsedNow - sessionStartedAt)
+    : "00:00";
   const sessionBusy = starting || streaming || summarizing;
   const emptyScenarioDisabled =
     !user || starting || (mode === "tag" && (tagLoading || usableTags.length === 0));
@@ -1174,6 +1304,9 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
                         messages.map((message, index) => {
                           const isUserMessage = message.role === "user";
                           const canReplay = message.role === "bot" && message.text && !message.streaming;
+                          const messageTime = message.createdAt
+                            ? formatMessageTime(message.createdAt)
+                            : "";
                           return (
                             <MessageScrollerItem
                               key={`${message.role}-${index}`}
@@ -1206,10 +1339,11 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
                                     <span className="text-sm font-bold">
                                       {isUserMessage ? "You" : "Tutor"}
                                     </span>
-                                    <span className="text-xs font-medium text-slate-400">
-                                      {String(Math.floor((index + 1) / 2)).padStart(2, "0")}:
-                                      {String(((index + 1) * 7) % 60).padStart(2, "0")}
-                                    </span>
+                                    {messageTime && (
+                                      <span className="text-xs font-medium text-slate-400">
+                                        {messageTime}
+                                      </span>
+                                    )}
                                     {message.coaching && (
                                       <Badge
                                         variant="outline"
@@ -1271,7 +1405,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
                         className="h-10 shrink-0 rounded-md"
                       >
                         {listening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-                        {listening ? "녹음 중지" : "마이크 테스트"}
+                        {listening ? "녹음 중지" : active ? "말하기 시작" : "마이크 테스트"}
                       </Button>
                       <Input
                         value={voiceTranscript}
