@@ -363,7 +363,9 @@ export default function App() {
             ? "min-h-0 min-w-0 flex-1 overflow-hidden"
             : isAuthRoute
               ? "min-h-0 min-w-0 flex-1 overflow-y-auto"
-            : "min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-6 pb-24 md:px-8 md:pb-6"
+              : tab === "roleplay"
+                ? "min-h-0 min-w-0 flex-1 overflow-hidden"
+                : "min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-6 pb-24 md:px-8 md:pb-6"
         }
       >
         <Routes>

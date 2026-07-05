@@ -1,14 +1,37 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Mic, MicOff, RotateCcw, Send, Volume2, VolumeX } from "lucide-react";
+import {
+  BookOpen,
+  Brain,
+  CheckCircle2,
+  ChevronDown,
+  Clock3,
+  Flag,
+  Headphones,
+  Mic,
+  MicOff,
+  Pause,
+  Play,
+  RotateCcw,
+  Send,
+  Sparkles,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 import { api } from "../api";
 import { queryKeys } from "../queryClient";
 import { EmptyState, SkeletonBlock } from "../components/AsyncState";
 import MemberNotice from "../components/MemberNotice";
 import LearningNotesTab from "./LearningNotesTab";
+import tutorAvatar from "@/assets/roleplay-tutor-avatar.svg";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { Message } from "@/components/ui/message";
+import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -18,6 +41,7 @@ import {
   MessageScrollerViewport,
   useMessageScroller,
 } from "@/components/ui/message-scroller";
+import { MessageAvatar } from "@/components/ui/message";
 import {
   getCachedRoleplayAudio,
   normalizeTtsText,
@@ -183,7 +207,8 @@ const GENERAL_CARDS = [
 ];
 
 export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }) {
-  const [subTab, setSubTab] = useState("play"); // play | voice | notes
+  const [subTab, setSubTab] = useState("play"); // play | voice
+  const [sideTab, setSideTab] = useState("coach");
   const [level, setLevel] = useState("intermediate");
   const [mode, setMode] = useState("opic");
   const [messages, setMessages] = useState([]);
@@ -193,8 +218,10 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
   const [speaking, setSpeaking] = useState(false);
   const [ttsSource, setTtsSource] = useState("idle"); // idle | generating | cache | generated | browser | error
   const [voiceError, setVoiceError] = useState("");
+  const [voiceNotice, setVoiceNotice] = useState("");
   const [autoSpeak, setAutoSpeak] = useState(true);
   const [freeTopic, setFreeTopic] = useState("");
+  const [memo, setMemo] = useState("");
   const [session, setSession] = useState(null); // 시작 시 고정된 {level, scenario, tag, situation}
   const [summary, setSummary] = useState(null); // 종료 후 {summary, expressions, vocab}
   const [pickedVocab, setPickedVocab] = useState(() => new Set()); // 단어장에 담을 어휘 인덱스
@@ -329,6 +356,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     setVoiceTranscript("");
     setTtsSource("idle");
     setVoiceError("");
+    setVoiceNotice("");
     setSummary(null);
     setPickedVocab(new Set());
     setSavedCount(null);
@@ -535,14 +563,11 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
       await playAudioBlob(result.blob, "generated", clean);
     } catch (error) {
       const fallbackStarted = speakWithBrowser(clean);
-      const detail = error?.message
-        ? ` (${error.message.replace(/\s+/g, " ").slice(0, 120)})`
-        : "";
       if (fallbackStarted) {
-        setVoiceError(`AI 음성 생성에 실패해 기기 내장 음성으로 재생 중입니다.${detail}`);
+        setVoiceError("AI 음성 대신 기기 내장 음성으로 재생하고 있습니다.");
       } else {
         setTtsSource("error");
-        setVoiceError(`AI 음성 생성에 실패했고, 이 브라우저는 기기 내장 음성도 지원하지 않아요.${detail}`);
+        setVoiceError("음성을 재생하지 못했습니다. 잠시 후 다시 시도해주세요.");
       }
     }
   };
@@ -634,16 +659,46 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
 
   const send = () => sendText(msg);
 
-  const startListening = () => {
-    if (!user || !active || starting || streaming || reachedHardLimit) return;
+  const requestMicrophonePermission = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setVoiceNotice("");
+      setVoiceError("이 브라우저는 마이크 권한 요청을 지원하지 않아요.");
+      return false;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
+      setVoiceError("");
+      setVoiceNotice(
+        active
+          ? "마이크 권한이 확인됐어요."
+          : "마이크 권한이 확인됐어요. 상황을 선택하면 음성 채팅을 시작할 수 있습니다.",
+      );
+      return true;
+    } catch (error) {
+      setVoiceNotice("");
+      setVoiceError(
+        error?.name === "NotAllowedError" || error?.name === "PermissionDeniedError"
+          ? "마이크 권한을 허용해야 음성 채팅을 사용할 수 있어요."
+          : "마이크를 사용할 수 없습니다. 브라우저 권한과 입력 장치를 확인해주세요.",
+      );
+      return false;
+    }
+  };
+
+  const startListening = async () => {
+    if (!user || starting || streaming || reachedHardLimit) return;
+    stopSpeaking();
+    const permitted = await requestMicrophonePermission();
+    if (!permitted || !active) return;
     const SpeechRecognition =
       window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
       setVoiceError("이 브라우저는 음성 인식을 지원하지 않아요. Chrome 또는 Edge에서 사용해주세요.");
       return;
     }
-    stopSpeaking();
     setVoiceError("");
+    setVoiceNotice("");
     setVoiceTranscript("");
     const recognition = new SpeechRecognition();
     recognition.lang = "en-US";
@@ -669,8 +724,14 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
       recognitionRef.current = null;
     };
     recognitionRef.current = recognition;
-    setListening(true);
-    recognition.start();
+    try {
+      setListening(true);
+      recognition.start();
+    } catch {
+      setListening(false);
+      recognitionRef.current = null;
+      setVoiceError("음성 인식을 시작하지 못했어요. 잠시 후 다시 시도해주세요.");
+    }
   };
 
   const sendVoice = () => {
@@ -735,644 +796,793 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     messages.length + (starting ? 1 : 0) + (!starting && !active ? 1 : 0);
 
   const cards = mode === "opic" ? OPIC_CARDS : GENERAL_CARDS;
+  const levelLabel = LEVELS.find((item) => item.value === level)?.label || level;
+  const modeLabel = MODES.find((item) => item.value === mode)?.label || mode;
+  const sessionTitle =
+    session?.title ||
+    (mode === "tag" ? "태그 선택" : mode === "opic" ? "OPIc 상황 선택" : "상황 선택");
+  const coachingItems = messages
+    .map((item, index) => ({ ...item, index }))
+    .filter((item) => item.role === "bot" && item.coaching?.trim())
+    .slice(-3)
+    .reverse();
+  const scenarioOptions =
+    mode === "tag"
+      ? usableTags.map((tag) => ({
+          value: `tag:${tag.name}`,
+          label: `#${tag.name} (${tag.count})`,
+          action: () => start({ tag: tag.name, title: `#${tag.name}` }),
+        }))
+      : cards.map((card, index) => ({
+          value: `card:${index}`,
+          label: card.label,
+          action: () => start({ situation: card.situation, title: card.label }),
+        }));
+  const visibleScenarioOptions = scenarioOptions.filter((option) => {
+    if (!session) return true;
+    if (session?.tag && option.value === `tag:${session.tag}`) return false;
+    if (session?.title && option.label === session.title) return false;
+    return true;
+  });
+  const elapsedLabel = `${String(Math.floor(userTurns / 2)).padStart(2, "0")}:${String(
+    (userTurns * 23) % 60
+  ).padStart(2, "0")}`;
+  const sessionBusy = starting || streaming || summarizing;
+  const emptyScenarioDisabled =
+    !user || starting || (mode === "tag" && (tagLoading || usableTags.length === 0));
 
   return (
-    <div>
-      <div className="flex flex-col gap-1">
-        <h3 className="text-base font-semibold">원어민과 영어로 대화 연습! 🎭</h3>
-        <p className="text-sm text-slate-500">
-          상황을 하나 고르면 바로 대화가 시작돼요. 실전처럼 영어로 말해보고, 배운 표현을 써보세요.
-        </p>
-      </div>
-
-      {!user && <MemberNotice feature="롤플레잉" onRequireLogin={onRequireLogin} />}
-
-      {/* 롤플레잉 내부 탭: 대화 / 음성채팅 / 학습노트 */}
-      <div className="mt-4 flex gap-1 border-b border-slate-200">
-        {[
-          { id: "play", label: "대화하기" },
-          { id: "voice", label: "음성채팅(Beta)" },
-          { id: "notes", label: "학습노트" },
-        ].map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setSubTab(t.id)}
-            className={`border-b-2 px-3 py-2 text-sm font-semibold transition-colors ${
-              subTab === t.id
-                ? "border-brand-600 text-brand-600"
-                : "border-transparent text-slate-500 hover:text-slate-700"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {subTab === "notes" && (
-        <div className="mt-4">
-          <LearningNotesTab user={user} />
-        </div>
-      )}
-
-      {(subTab === "play" || subTab === "voice") && (
-        <>
-      {/* ── 상단 선택: 레벨 + 모드 ───────────────────────── */}
-      <div className="mt-4 space-y-2 mb-3">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-xs text-slate-500 w-10">레벨</span>
-          {LEVELS.map((l) => (
-            <button
-              key={l.value}
-              type="button"
-              disabled={!user}
-              onClick={() => changeLevel(l.value)}
-              className={`rounded-full border px-3 py-1 text-xs disabled:opacity-60
-                disabled:cursor-not-allowed ${
-                  level === l.value
-                    ? "border-brand-600 bg-brand-50 text-brand-700 font-semibold"
-                    : "border-slate-200 text-slate-600 hover:border-slate-300"
-                }`}
-            >
-              {l.label}
-            </button>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-xs text-slate-500 w-10">모드</span>
-          {MODES.map((m) => (
-            <button
-              key={m.value}
-              type="button"
-              disabled={!user}
-              title={m.hint}
-              onClick={() => changeMode(m.value)}
-              className={`rounded-full border px-3 py-1 text-xs disabled:opacity-60
-                disabled:cursor-not-allowed ${
-                  mode === m.value
-                    ? "border-brand-600 bg-brand-50 text-brand-700 font-semibold"
-                    : "border-slate-200 text-slate-600 hover:border-slate-300"
-                }`}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* ── 시작 전: 예시 카드 / 태그 / 자유주제 ───────────── */}
-      {user && !active && (
-        <div className="mb-3">
-          {(mode === "opic" || mode === "general") && (
-            <>
-              <p className="text-xs text-slate-500 mb-1.5">
-                상황을 클릭하면 바로 시작해요
-              </p>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {cards.map((c) => (
-                  <button
-                    key={c.label}
-                    type="button"
-                    disabled={starting}
-                    onClick={() => start({ situation: c.situation, title: c.label })}
-                    className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-left
-                               text-sm text-slate-700 hover:border-brand-400 hover:bg-brand-50
-                               disabled:opacity-60 disabled:cursor-not-allowed"
-                  >
-                    {c.label}
-                  </button>
-                ))}
-              </div>
-
-              {mode === "general" && (
-                <div className="flex items-center gap-2 mt-2">
-                  <input
-                    value={freeTopic}
-                    onChange={(e) => setFreeTopic(e.target.value)}
-                    onKeyDown={(e) =>
-                      e.key === "Enter" &&
-                      freeTopic.trim() &&
-                      start({ situation: freeTopic.trim(), title: freeTopic.trim() })
-                    }
-                    placeholder="또는 직접 상황 입력 (예: 택시 기사와 대화, 병원 접수)"
-                    className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm
-                               focus:outline-none focus:ring-2 focus:ring-brand-200"
-                  />
-                  <button
-                    type="button"
-                    disabled={!freeTopic.trim() || starting}
-                    onClick={() => start({ situation: freeTopic.trim(), title: freeTopic.trim() })}
-                    className="rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-60
-                               disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold whitespace-nowrap"
-                  >
-                    시작
-                  </button>
-                </div>
-              )}
-            </>
-          )}
-
-          {mode === "tag" && (
-            <>
-              {tagLoading ? (
-                <div className="flex gap-2">
-                  <SkeletonBlock className="h-9 w-24 rounded-full" />
-                  <SkeletonBlock className="h-9 w-24 rounded-full" />
-                  <SkeletonBlock className="h-9 w-24 rounded-full" />
-                </div>
-              ) : usableTags.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-center">
-                  <p className="text-sm font-semibold text-slate-600">
-                    대화할 태그가 아직 없어요
-                  </p>
-                  <p className="mt-1 text-sm text-slate-400">
-                    단어장을 태그(예: 여행, 비즈니스)별로 정리하면 그 주제로 대화할 수 있어요.
-                  </p>
-                  <div className="mt-3 flex justify-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => changeMode("general")}
-                      className="rounded-lg bg-brand-600 text-white hover:bg-brand-700 px-3 py-1.5 text-sm font-semibold"
-                    >
-                      자유 주제로 시작
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => changeMode("opic")}
-                      className="rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 px-3 py-1.5 text-sm font-semibold"
-                    >
-                      OPIc으로 시작
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <p className="text-xs text-slate-500 mb-1.5">
-                    태그를 클릭하면 그 주제로 대화를 시작해요
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {usableTags.map((t) => (
-                      <button
-                        key={t.name}
-                        type="button"
-                        disabled={starting}
-                        onClick={() => start({ tag: t.name, title: `#${t.name}` })}
-                        className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm
-                                   text-slate-700 hover:border-brand-400 hover:bg-brand-50
-                                   disabled:opacity-60 disabled:cursor-not-allowed"
-                      >
-                        #{t.name}{" "}
-                        <span className="text-xs text-slate-400">{t.count}</span>
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      {/* ── 진행 중: 상황 칩 + 다시 고르기 ─────────────────── */}
-      {active && session && (
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">
-              {LEVELS.find((l) => l.value === level)?.label}
-            </span>
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">
-              {MODES.find((m) => m.value === mode)?.label}
-            </span>
-            {session.title && (
-              <span
-                title={session.title}
-                className="max-w-[220px] truncate rounded-full bg-brand-50 px-2 py-0.5 text-brand-700"
-              >
-                {session.title}
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[#f6f7f8] text-slate-950">
+      <div className="shrink-0 border-b border-slate-800/60 bg-[#10171b] px-3 py-2 text-white shadow-[0_10px_26px_rgba(15,23,42,0.18)] md:px-5">
+        <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
+          <div className="grid min-w-0 flex-1 grid-cols-1 gap-2 md:grid-cols-[minmax(210px,1.45fr)_minmax(150px,0.8fr)_minmax(170px,1fr)]">
+            <label className="grid grid-cols-[3.25rem_1fr] items-center gap-2 text-xs text-slate-300">
+              <span>시나리오</span>
+              <span className="relative min-w-0">
+                <select
+                  value=""
+                  disabled={emptyScenarioDisabled}
+                  onChange={(event) => {
+                    const selected = scenarioOptions.find(
+                      (option) => option.value === event.target.value
+                    );
+                    selected?.action();
+                  }}
+                  className="h-9 w-full appearance-none rounded-md border border-white/10 bg-white/10 px-3 pr-9 text-sm font-semibold text-white outline-none ring-offset-[#10171b] transition hover:bg-white/20 focus:ring-2 focus:ring-brand-400 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <option value="" className="text-slate-900">
+                    {sessionTitle}
+                  </option>
+                  {visibleScenarioOptions.map((option) => (
+                    <option key={option.value} value={option.value} className="text-slate-900">
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-300" />
               </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {!summary && !showFinishNotice && (
-              <button
-                onClick={finish}
-                disabled={finishDisabled}
-                className={`rounded-lg px-3 py-1 text-xs font-semibold disabled:opacity-60 ${
-                  reachedCap || reachedHardLimit
-                    ? "bg-brand-600 text-white hover:bg-brand-700"
-                    : "border border-slate-300 text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                {summarizing ? "정리 중…" : "대화 마무리 & 정리"}
-              </button>
-            )}
-            <Button
-              type="button"
-              variant="link"
-              size="sm"
-              onClick={resetConversation}
-              className="h-7 px-1 text-xs text-slate-500 hover:text-slate-700"
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              다른 상황 고르기
-            </Button>
-          </div>
-        </div>
-      )}
+            </label>
 
-      {showFinishNotice && (
-        <div
-          className={`mb-3 rounded-lg border px-4 py-3 ${
-            reachedHardLimit
-              ? "border-rose-200 bg-rose-50"
-              : "border-amber-200 bg-amber-50"
-          }`}
-        >
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p
-                className={`text-sm font-semibold ${
-                  reachedHardLimit ? "text-rose-800" : "text-amber-800"
-                }`}
-              >
-                {reachedHardLimit
-                  ? "토큰 보호를 위해 여기서 마무리해요"
-                  : "대화가 충분히 진행됐어요. 마무리할까요?"}
-              </p>
-              <p
-                className={`mt-1 text-xs ${
-                  reachedHardLimit ? "text-rose-700" : "text-amber-700"
-                }`}
-              >
-                {reachedHardLimit
-                  ? "이 대화는 이미 연습량이 충분해서 추가 전송을 잠시 막았어요. 정리하면 요약과 표현을 저장할 수 있습니다."
-                  : "지금 정리하면 대화 요약, 유용한 표현, 단어장에 넣을 어휘를 바로 뽑아줍니다."}
-              </p>
-            </div>
-            <div className="flex shrink-0 flex-wrap gap-2">
-              {!reachedHardLimit && (
-                <button
-                  type="button"
-                  onClick={() => setFinishNoticeDismissed(true)}
-                  className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+            <label className="grid grid-cols-[2rem_1fr] items-center gap-2 text-xs text-slate-300">
+              <span>레벨</span>
+              <span className="relative min-w-0">
+                <select
+                  value={level}
+                  disabled={!user || sessionBusy}
+                  onChange={(event) => changeLevel(event.target.value)}
+                  className="h-9 w-full appearance-none rounded-md border border-white/10 bg-white/10 px-3 pr-9 text-sm font-semibold text-white outline-none ring-offset-[#10171b] transition hover:bg-white/20 focus:ring-2 focus:ring-brand-400 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  조금 더 하기
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={finish}
-                disabled={finishDisabled}
-                className={`rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60 ${
-                  reachedHardLimit
-                    ? "bg-rose-600 hover:bg-rose-700"
-                    : "bg-brand-600 hover:bg-brand-700"
-                }`}
-              >
-                {summarizing ? "정리 중..." : "대화 마무리 & 정리"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+                  {LEVELS.map((item) => (
+                    <option key={item.value} value={item.value} className="text-slate-900">
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-300" />
+              </span>
+            </label>
 
-      {isVoiceTab && !summary && (
-        <div
-          className={`mb-3 rounded-lg border px-4 py-3 ${
-            voicePhase.tone === "destructive"
-              ? "border-rose-200 bg-rose-50"
-              : voicePhase.tone === "warning"
-                ? "border-amber-200 bg-amber-50"
-                : voicePhase.tone === "primary"
-                  ? "border-brand-200 bg-brand-50"
-                  : "border-slate-200 bg-white"
-          }`}
-        >
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p
-                className={`text-sm font-semibold ${
-                  voicePhase.tone === "destructive"
-                    ? "text-rose-800"
-                    : voicePhase.tone === "warning"
-                      ? "text-amber-800"
-                      : voicePhase.tone === "primary"
-                        ? "text-brand-700"
-                        : "text-slate-700"
-                }`}
-              >
-                {voicePhase.title}
-              </p>
-              <p
-                className={`mt-1 text-xs ${
-                  voicePhase.tone === "destructive"
-                    ? "text-rose-700"
-                    : voicePhase.tone === "warning"
-                      ? "text-amber-700"
-                      : voicePhase.tone === "primary"
-                        ? "text-brand-700"
-                        : "text-slate-500"
-                }`}
-              >
-                {voicePhase.description}
-              </p>
-            </div>
-            <div className="flex shrink-0 flex-wrap gap-2">
-              {speaking && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={stopSpeaking}
-                  className="h-8"
+            <label className="grid grid-cols-[3.7rem_1fr] items-center gap-2 text-xs text-slate-300">
+              <span>언어 환경</span>
+              <span className="relative min-w-0">
+                <select
+                  value={isVoiceTab ? "voice" : "play"}
+                  disabled={!user}
+                  onChange={(event) => setSubTab(event.target.value)}
+                  className="h-9 w-full appearance-none rounded-md border border-brand-300/20 bg-brand-500/40 px-3 pr-9 text-sm font-semibold text-white outline-none ring-offset-[#10171b] transition hover:bg-brand-500/50 focus:ring-2 focus:ring-brand-300 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <VolumeX className="h-4 w-4" />
-                  멈춤
-                </Button>
-              )}
-            </div>
+                  <option value="play" className="text-slate-900">
+                    텍스트 대화
+                  </option>
+                  <option value="voice" className="text-slate-900">
+                    음성 채팅
+                  </option>
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-200" />
+              </span>
+            </label>
           </div>
-        </div>
-      )}
 
-      {isVoiceTab && (
-        <p className="mb-1.5 text-xs font-medium text-slate-500">대화 기록</p>
-      )}
-
-      {/* ── 채팅 영역 ─────────────────────────────────────── */}
-      <MessageScrollerProvider autoScroll defaultScrollPosition="end">
-        <RoleplayScrollEffect signal={scrollSignal} />
-        <MessageScroller className={isVoiceTab ? "h-[280px]" : "h-[420px]"}>
-          <MessageScrollerViewport aria-label="롤플레잉 대화 기록">
-            <MessageScrollerContent className="min-h-full" itemCount={scrollerItemCount}>
-              {starting && (
-                <MessageScrollerItem messageId="roleplay-starting">
-                  <div className="space-y-3">
-                    <SkeletonBlock className="h-12 w-3/4 rounded-2xl" />
-                    <SkeletonBlock className="ml-auto h-10 w-1/2 rounded-2xl" />
-                    <SkeletonBlock className="h-16 w-5/6 rounded-2xl" />
-                  </div>
-                </MessageScrollerItem>
-              )}
-              {!starting && !active && (
-                <MessageScrollerItem messageId="roleplay-empty">
-                  <div className="mt-24">
-                    <EmptyState
-                      title={user ? "상황을 골라 대화를 시작하세요" : "로그인이 필요합니다"}
-                      description={
-                        user
-                          ? "위에서 모드와 상황을 선택하면 AI가 첫 장면을 열어줍니다."
-                          : "로그인하면 원어민 AI와 영어로 대화할 수 있어요."
-                      }
-                    />
-                  </div>
-                </MessageScrollerItem>
-              )}
-              {!starting &&
-                messages.map((m, i) => {
-                  const canReplay =
-                    isVoiceTab && m.role === "bot" && m.text && !m.streaming;
-                  return (
-                    <MessageScrollerItem
-                      key={`${m.role}-${i}`}
-                      messageId={`roleplay-message-${i}`}
-                      scrollAnchor={m.role === "user"}
-                    >
-                      <Message
-                        role={m.role === "user" ? "user" : "assistant"}
-                        user={user}
-                        coaching={m.coaching}
-                        loading={m.streaming && !m.text}
-                      >
-                        {canReplay ? (
-                          <div className="flex items-start gap-2">
-                            <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
-                              {m.text}
-                            </span>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => playAssistantVoice(m.text, { force: true })}
-                              className="-mr-1 -mt-1 h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
-                              aria-label="이 답변 다시 듣기"
-                              title="다시 듣기"
-                            >
-                              <Volume2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        ) : (
-                          m.text
-                        )}
-                      </Message>
-                    </MessageScrollerItem>
-                  );
-                })}
-            </MessageScrollerContent>
-          </MessageScrollerViewport>
-          <MessageScrollerButton>최근 답변 보기</MessageScrollerButton>
-        </MessageScroller>
-      </MessageScrollerProvider>
-
-      {/* 입력창: 대화 시작 후에만 활성화 (정리 화면에선 숨김) */}
-      {!summary && !isVoiceTab && (
-        <div className="flex items-center gap-2 mt-3">
-          <Input
-            value={msg}
-            onChange={(e) => setMsg(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && send()}
-            disabled={!user || !active || starting || reachedHardLimit}
-            placeholder={
-              reachedHardLimit
-                ? "토큰 보호를 위해 대화를 마무리해주세요"
-                : active
-                  ? "영어로 대답해봐요! (엔터로 전송)"
-                  : "위에서 상황을 먼저 선택하세요"
-            }
-            className="h-11 flex-1 bg-background disabled:bg-muted"
-          />
-          <Button
-            type="button"
-            onClick={send}
-            disabled={sending || !user || !active || reachedHardLimit}
-            className="h-11 shrink-0 px-4"
-          >
-            <Send className="h-4 w-4" />
-            전송
-          </Button>
-        </div>
-      )}
-
-      {!summary && isVoiceTab && (
-        <div className="mt-3 rounded-lg border border-border bg-background p-3">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center">
-            <Button
-              type="button"
-              variant={listening ? "destructive" : "default"}
-              onClick={listening ? stopListening : startListening}
-              disabled={!user || !active || starting || streaming || reachedHardLimit}
-              className="h-11 shrink-0"
-            >
-              {listening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-              {listening ? "녹음 중지" : "말하기"}
-            </Button>
-            <Input
-              value={voiceTranscript}
-              onChange={(e) => setVoiceTranscript(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && sendVoice()}
-              disabled={!user || !active || starting || streaming || reachedHardLimit}
-              placeholder={
-                reachedHardLimit
-                  ? "토큰 보호를 위해 대화를 마무리해주세요"
-                  : active
-                    ? "인식된 문장이 여기에 표시됩니다"
-                    : "위에서 상황을 먼저 선택하세요"
-              }
-              className="h-11 flex-1 bg-background disabled:bg-muted"
-            />
-            <Button
-              type="button"
-              onClick={sendVoice}
-              disabled={
-                streaming ||
-                !user ||
-                !active ||
-                reachedHardLimit ||
-                !voiceTranscript.trim()
-              }
-              className="h-11 shrink-0 px-4"
-            >
-              <Send className="h-4 w-4" />
-              전송
-            </Button>
+          <div className="flex shrink-0 items-center gap-2">
             <Button
               type="button"
               variant="outline"
-              onClick={() => setAutoSpeak((v) => !v)}
-              className="h-11 shrink-0"
+              size="sm"
+              onClick={() => setAutoSpeak((value) => !value)}
+              className="h-9 border-white/20 bg-white/10 px-3 text-white hover:bg-white/20 hover:text-white"
             >
               {autoSpeak ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-              {autoSpeak ? "읽기 켬" : "읽기 끔"}
+              <span className="hidden 2xl:inline">자동 스크립트</span>
+              <span className="2xl:hidden">스크립트</span>
             </Button>
             <Button
               type="button"
               variant="outline"
-              onClick={() =>
-                speaking ? stopSpeaking() : playAssistantVoice(latestAssistantText, { force: true })
-              }
-              disabled={!latestAssistantText || streaming}
-              className="h-11 shrink-0"
+              size="sm"
+              onClick={resetConversation}
+              className="h-9 border-white/20 bg-white/10 px-3 text-white hover:bg-white/20 hover:text-white"
             >
-              {speaking ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-              {speaking ? "AI 멈춤" : "AI 다시 듣기"}
+              <RotateCcw className="h-4 w-4" />
+              <span>다시 선택</span>
             </Button>
           </div>
-          {voiceError && (
-            <p className="mt-2 text-xs font-medium text-rose-600">{voiceError}</p>
-          )}
+        </div>
+      </div>
+
+      {!user && (
+        <div className="shrink-0 px-4 pt-4">
+          <MemberNotice feature="롤플레잉" onRequireLogin={onRequireLogin} />
         </div>
       )}
 
-      {/* 정리 페이지: 요약 + 유용 표현 + 유용 어휘(단어장 추가) */}
-      {summary && (
-        <div className="mt-3 space-y-4">
-          {summary.summary && (
-            <div className="rounded-lg border border-brand-200 bg-brand-50 px-4 py-3">
-              <p className="text-sm font-semibold text-brand-700 mb-1">🎉 대화 요약</p>
-              <p className="text-sm text-slate-700 whitespace-pre-wrap">{summary.summary}</p>
-            </div>
-          )}
-
-          {summary.expressions?.length > 0 && (
-            <div>
-              <p className="text-sm font-semibold text-slate-700 mb-1.5">💬 유용한 표현</p>
-              <ul className="space-y-1.5">
-                {summary.expressions.map((e, i) => (
-                  <li
-                    key={i}
-                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-                  >
-                    <span className="font-medium text-slate-800">{e.en}</span>
-                    {e.ko && <span className="text-slate-500"> — {e.ko}</span>}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {summary.vocab?.length > 0 && (
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <p className="text-sm font-semibold text-slate-700">
-                  📒 유용한 어휘 — 단어장에 추가할까요?
-                </p>
-                <select
-                  value={saveTag}
-                  onChange={(e) => setSaveTag(e.target.value)}
-                  className="rounded-lg border border-slate-300 px-2 py-1 text-xs
-                             focus:outline-none focus:ring-2 focus:ring-brand-200"
-                >
-                  <option value="">미지정</option>
-                  {labels
-                    .filter((t) => t !== "미지정")
-                    .map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
-                </select>
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 pb-24 lg:grid lg:grid-cols-[minmax(0,1fr)_330px] lg:overflow-hidden lg:p-4 2xl:grid-cols-[minmax(0,1fr)_390px]">
+        <section className="flex shrink-0 flex-col gap-3 lg:min-h-0 lg:shrink">
+          <Card className="shrink-0 rounded-md border-slate-200 bg-white shadow-sm">
+            <CardContent className="p-3 md:p-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="secondary" className="rounded-md bg-slate-100 text-slate-700">
+                    {modeLabel}
+                  </Badge>
+                  <Badge variant="outline" className="rounded-md border-slate-200 bg-white">
+                    {levelLabel}
+                  </Badge>
+                  <Badge className="max-w-[22rem] truncate rounded-md bg-brand-50 text-brand-700 hover:bg-brand-50">
+                    {sessionTitle}
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Clock3 className="h-4 w-4" />
+                    {elapsedLabel}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <Headphones className="h-4 w-4" />
+                    {isVoiceTab ? voicePhase.title : "대화 기록"}
+                  </span>
+                </div>
               </div>
-              <ul className="space-y-1.5">
-                {summary.vocab.map((v, i) => (
-                  <li
-                    key={i}
-                    className="flex items-start gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+
+            </CardContent>
+          </Card>
+
+          {showFinishNotice && (
+            <Card
+              className={`shrink-0 rounded-md ${
+                reachedHardLimit
+                  ? "border-rose-200 bg-rose-50"
+                  : "border-amber-200 bg-amber-50"
+              }`}
+            >
+              <CardContent className="flex flex-col gap-3 p-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p
+                    className={`text-sm font-bold ${
+                      reachedHardLimit ? "text-rose-800" : "text-amber-800"
+                    }`}
                   >
-                    <input
-                      type="checkbox"
-                      checked={pickedVocab.has(i)}
-                      onChange={() => toggleVocab(i)}
-                      className="mt-1"
+                    {reachedHardLimit
+                      ? "토큰 보호를 위해 여기서 마무리해요"
+                      : "대화가 충분히 진행됐어요. 마무리할까요?"}
+                  </p>
+                  <p
+                    className={`mt-1 text-xs ${
+                      reachedHardLimit ? "text-rose-700" : "text-amber-700"
+                    }`}
+                  >
+                    {reachedHardLimit
+                      ? "정리하면 요약과 표현을 저장할 수 있습니다."
+                      : "요약, 유용한 표현, 단어장에 넣을 어휘를 바로 뽑습니다."}
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  {!reachedHardLimit && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setFinishNoticeDismissed(true)}
+                      className="border-amber-300 bg-white text-amber-800 hover:bg-amber-100"
+                    >
+                      조금 더 하기
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={finish}
+                    disabled={finishDisabled}
+                    className={reachedHardLimit ? "bg-rose-600 hover:bg-rose-700" : ""}
+                  >
+                    <Flag className="h-4 w-4" />
+                    {summarizing ? "정리 중..." : "세션 종료"}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {user && !active && !session && (
+            <Card className="shrink-0 rounded-md border-slate-200 bg-white">
+              <CardContent className="p-3 md:p-4">
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-wrap gap-2">
+                    {MODES.map((item) => (
+                      <Button
+                        key={item.value}
+                        type="button"
+                        variant={mode === item.value ? "default" : "outline"}
+                        size="sm"
+                        disabled={starting}
+                        onClick={() => changeMode(item.value)}
+                        title={item.hint}
+                        className="h-8 rounded-md"
+                      >
+                        {item.label}
+                      </Button>
+                    ))}
+                  </div>
+
+                  {mode === "tag" && tagLoading && (
+                    <div className="flex gap-2">
+                      <SkeletonBlock className="h-9 w-24 rounded-md" />
+                      <SkeletonBlock className="h-9 w-24 rounded-md" />
+                      <SkeletonBlock className="h-9 w-24 rounded-md" />
+                    </div>
+                  )}
+
+                  {mode === "tag" && !tagLoading && usableTags.length === 0 && (
+                    <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-center">
+                      <p className="text-sm font-semibold text-slate-700">
+                        대화할 태그가 아직 없어요
+                      </p>
+                      <div className="mt-3 flex justify-center gap-2">
+                        <Button type="button" size="sm" onClick={() => changeMode("general")}>
+                          자유 주제
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => changeMode("opic")}
+                        >
+                          OPIc
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {mode !== "tag" && (
+                    <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+                      {cards.map((card) => (
+                        <button
+                          key={card.label}
+                          type="button"
+                          disabled={starting}
+                          onClick={() => start({ situation: card.situation, title: card.label })}
+                          className="rounded-md border border-slate-200 bg-white px-3 py-2.5 text-left text-sm font-semibold text-slate-700 transition hover:border-brand-400 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {card.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {mode === "tag" && usableTags.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {usableTags.map((tag) => (
+                        <button
+                          key={tag.name}
+                          type="button"
+                          disabled={starting}
+                          onClick={() => start({ tag: tag.name, title: `#${tag.name}` })}
+                          className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-brand-400 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          #{tag.name} <span className="text-xs text-slate-400">{tag.count}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {mode === "general" && (
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Input
+                        value={freeTopic}
+                        onChange={(event) => setFreeTopic(event.target.value)}
+                        onKeyDown={(event) =>
+                          event.key === "Enter" &&
+                          freeTopic.trim() &&
+                          start({ situation: freeTopic.trim(), title: freeTopic.trim() })
+                        }
+                        placeholder="직접 상황 입력"
+                        className="h-10 bg-white"
+                      />
+                      <Button
+                        type="button"
+                        disabled={!freeTopic.trim() || starting}
+                        onClick={() =>
+                          start({ situation: freeTopic.trim(), title: freeTopic.trim() })
+                        }
+                        className="h-10 shrink-0"
+                      >
+                        시작
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          <Card className="flex min-h-[320px] flex-col rounded-md border-slate-200 bg-white shadow-sm lg:min-h-0 lg:flex-1">
+            <CardContent className="flex min-h-0 flex-1 flex-col p-0">
+              <MessageScrollerProvider autoScroll defaultScrollPosition="end">
+                <RoleplayScrollEffect signal={scrollSignal} />
+                <MessageScroller className="min-h-0 flex-1">
+                  <MessageScrollerViewport aria-label="롤플레잉 대화 기록">
+                    <MessageScrollerContent
+                      className="min-h-full px-3 py-3 md:px-4"
+                      itemCount={scrollerItemCount}
+                    >
+                      {starting && (
+                        <MessageScrollerItem messageId="roleplay-starting">
+                          <div className="space-y-3">
+                            <SkeletonBlock className="h-24 w-full rounded-md" />
+                            <SkeletonBlock className="ml-auto h-24 w-5/6 rounded-md" />
+                            <SkeletonBlock className="h-24 w-full rounded-md" />
+                          </div>
+                        </MessageScrollerItem>
+                      )}
+                      {!starting && !active && (
+                        <MessageScrollerItem
+                          messageId="roleplay-empty"
+                          className="flex min-h-[320px] flex-1 items-center justify-center lg:min-h-full"
+                        >
+                          <div className="flex w-full items-center justify-center">
+                            <EmptyState
+                              title={user ? "상황을 골라 대화를 시작하세요" : "로그인이 필요합니다"}
+                              description={
+                                user
+                                  ? "상단 또는 카드에서 시나리오를 선택하세요."
+                                  : "로그인하면 원어민 AI와 영어로 대화할 수 있어요."
+                              }
+                            />
+                          </div>
+                        </MessageScrollerItem>
+                      )}
+                      {!starting &&
+                        messages.map((message, index) => {
+                          const isUserMessage = message.role === "user";
+                          const canReplay = message.role === "bot" && message.text && !message.streaming;
+                          return (
+                            <MessageScrollerItem
+                              key={`${message.role}-${index}`}
+                              messageId={`roleplay-message-${index}`}
+                              scrollAnchor={isUserMessage}
+                            >
+                              <div
+                                className={`flex items-start gap-3 rounded-md border bg-white p-3 shadow-sm ${
+                                  isUserMessage
+                                    ? "border-brand-100"
+                                    : "border-slate-200"
+                                }`}
+                              >
+                                {isUserMessage ? (
+                                  <div className="shrink-0">
+                                    <MessageAvatar role="user" user={user} className="mt-0 h-10 w-10" />
+                                  </div>
+                                ) : (
+                                  <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-amber-200 bg-amber-50 shadow-sm">
+                                    <img
+                                      src={tutorAvatar}
+                                      alt=""
+                                      aria-hidden="true"
+                                      className="h-full w-full object-cover"
+                                    />
+                                  </div>
+                                )}
+                                <div className="min-w-0 flex-1">
+                                  <div className="mb-1 flex flex-wrap items-center gap-2">
+                                    <span className="text-sm font-bold">
+                                      {isUserMessage ? "You" : "Tutor"}
+                                    </span>
+                                    <span className="text-xs font-medium text-slate-400">
+                                      {String(Math.floor((index + 1) / 2)).padStart(2, "0")}:
+                                      {String(((index + 1) * 7) % 60).padStart(2, "0")}
+                                    </span>
+                                    {message.coaching && (
+                                      <Badge
+                                        variant="outline"
+                                        className="ml-auto rounded-md border-rose-200 bg-rose-50 text-rose-600"
+                                      >
+                                        수정 제안 있음
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <div className="whitespace-pre-wrap break-words text-sm leading-6 text-slate-900">
+                                    {message.streaming && !message.text ? "답변 작성 중..." : message.text}
+                                  </div>
+                                  {message.coaching && (
+                                    <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+                                      {message.coaching}
+                                    </div>
+                                  )}
+                                </div>
+                                {canReplay && (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="icon"
+                                    onClick={() => playAssistantVoice(message.text, { force: true })}
+                                    className="h-9 w-9 shrink-0 rounded-full"
+                                    aria-label="이 답변 다시 듣기"
+                                    title="다시 듣기"
+                                  >
+                                    <Play className="h-4 w-4" />
+                                  </Button>
+                                )}
+                              </div>
+                            </MessageScrollerItem>
+                          );
+                        })}
+                    </MessageScrollerContent>
+                  </MessageScrollerViewport>
+                  <MessageScrollerButton>최근 답변 보기</MessageScrollerButton>
+                </MessageScroller>
+              </MessageScrollerProvider>
+            </CardContent>
+          </Card>
+
+          {!summary && (
+            <Card
+              className={`shrink-0 rounded-md bg-white ${
+                isVoiceTab && listening ? "border-rose-300 shadow-[0_0_0_1px_rgba(248,113,113,0.28)]" : "border-slate-200"
+              }`}
+            >
+              <CardContent className="p-3">
+                {isVoiceTab ? (
+                  <div className="space-y-3">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-center">
+                      <Button
+                        type="button"
+                        variant={listening ? "destructive" : "outline"}
+                        onClick={listening ? stopListening : startListening}
+                        disabled={!user || starting || streaming || reachedHardLimit}
+                        className="h-10 shrink-0 rounded-md"
+                      >
+                        {listening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                        {listening ? "녹음 중지" : "마이크 테스트"}
+                      </Button>
+                      <Input
+                        value={voiceTranscript}
+                        onChange={(event) => setVoiceTranscript(event.target.value)}
+                        onKeyDown={(event) => event.key === "Enter" && sendVoice()}
+                        disabled={!user || !active || starting || streaming || reachedHardLimit}
+                        placeholder={
+                          reachedHardLimit
+                            ? "대화를 마무리해주세요"
+                            : active
+                              ? "인식된 문장이 여기에 표시됩니다"
+                              : "상황을 먼저 선택하세요"
+                        }
+                        className="h-10 flex-1 bg-white disabled:bg-slate-50"
+                      />
+                      <Button
+                        type="button"
+                        onClick={sendVoice}
+                        disabled={
+                          streaming ||
+                          !user ||
+                          !active ||
+                          reachedHardLimit ||
+                          !voiceTranscript.trim()
+                        }
+                        className="h-10 shrink-0 rounded-md"
+                      >
+                        <Send className="h-4 w-4" />
+                        보내기
+                      </Button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setAutoSpeak((value) => !value)}
+                        className="h-10 rounded-md"
+                      >
+                        {autoSpeak ? <Pause className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                        {autoSpeak ? "일시정지" : "읽기 켬"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() =>
+                          speaking
+                            ? stopSpeaking()
+                            : playAssistantVoice(latestAssistantText, { force: true })
+                        }
+                        disabled={!latestAssistantText || streaming}
+                        className="h-10 rounded-md"
+                      >
+                        {speaking ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                        다시 듣기
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={resetConversation}
+                        className="h-10 rounded-md"
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                        다시 고르기
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={reachedCap || reachedHardLimit ? "default" : "outline"}
+                        onClick={finish}
+                        disabled={finishDisabled || !active}
+                        className="h-10 rounded-md"
+                      >
+                        <Flag className="h-4 w-4" />
+                        세션 종료
+                      </Button>
+                    </div>
+                    {voiceNotice && !voiceError && (
+                      <p className="text-xs font-medium text-emerald-600">{voiceNotice}</p>
+                    )}
+                    {voiceError && (
+                      <p className="text-xs font-medium text-rose-600">{voiceError}</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center">
+                    <Input
+                      value={msg}
+                      onChange={(event) => setMsg(event.target.value)}
+                      onKeyDown={(event) => event.key === "Enter" && send()}
+                      disabled={!user || !active || starting || reachedHardLimit}
+                      placeholder={
+                        reachedHardLimit
+                          ? "대화를 마무리해주세요"
+                          : active
+                            ? "영어로 대답하세요"
+                            : "상황을 먼저 선택하세요"
+                      }
+                      className="h-11 flex-1 bg-white disabled:bg-slate-50"
                     />
-                    <div>
-                      <span className="font-semibold text-slate-800">{v.word}</span>
-                      {v.korean && <span className="text-slate-500"> — {v.korean}</span>}
-                      {v.example && (
-                        <span className="block text-xs text-slate-400">{v.example}</span>
+                    <Button
+                      type="button"
+                      onClick={send}
+                      disabled={sending || !user || !active || reachedHardLimit}
+                      className="h-11 shrink-0 rounded-md px-5"
+                    >
+                      <Send className="h-4 w-4" />
+                      보내기
+                    </Button>
+                    <Separator orientation="vertical" className="hidden h-8 md:block" />
+                    <Button
+                      type="button"
+                      variant={reachedCap || reachedHardLimit ? "default" : "outline"}
+                      onClick={finish}
+                      disabled={finishDisabled || !active}
+                      className="h-11 shrink-0 rounded-md"
+                    >
+                      <Flag className="h-4 w-4" />
+                      세션 종료
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </section>
+
+        <aside className="shrink-0 lg:min-h-0 lg:flex lg:shrink lg:flex-col">
+          <Card className="flex min-h-[520px] flex-1 flex-col overflow-hidden rounded-md border-slate-200 bg-white shadow-sm lg:min-h-0">
+            <Tabs value={sideTab} onValueChange={setSideTab} className="flex min-h-0 flex-1 flex-col">
+              <TabsList className="m-3 mb-0 grid h-10 grid-cols-3 rounded-md bg-muted p-1">
+                <TabsTrigger value="coach" className="rounded-sm text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                  AI 코치
+                </TabsTrigger>
+                <TabsTrigger value="memo" className="rounded-sm text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                  메모
+                </TabsTrigger>
+                <TabsTrigger value="notes" className="rounded-sm text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                  학습 노트
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="coach" className="m-0 min-h-0 flex-1 overflow-y-auto p-3">
+                <div className="space-y-3">
+                  <section className="rounded-md border border-border bg-background p-3">
+                    <div className="mb-3 flex items-center gap-2">
+                      <Brain className="h-4 w-4 text-muted-foreground" />
+                      <h3 className="text-sm font-bold">발음/표현 피드백</h3>
+                    </div>
+                    {coachingItems.length > 0 ? (
+                      <div className="space-y-3">
+                        {coachingItems.map((item) => (
+                          <div
+                            key={`coach-${item.index}`}
+                            className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2"
+                          >
+                            <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-amber-900">
+                              <Sparkles className="h-3.5 w-3.5" />
+                              최근 교정
+                            </div>
+                            <p className="whitespace-pre-wrap text-xs leading-5 text-amber-900">
+                              {item.coaching}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="rounded-md border border-dashed bg-muted/40 px-3 py-8 text-center text-sm text-muted-foreground">
+                        교정이 생기면 여기에 표시됩니다.
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="rounded-md border border-border bg-background p-3">
+                    <div className="mb-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <BookOpen className="h-4 w-4 text-muted-foreground" />
+                        <h3 className="text-sm font-bold">단어장에 저장</h3>
+                      </div>
+                      {summary && (
+                        <Badge variant="outline" className="rounded-md border-emerald-200 text-emerald-700">
+                          정리 완료
+                        </Badge>
                       )}
                     </div>
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-2 flex items-center gap-3">
-                <button
-                  onClick={saveSelectedVocab}
-                  disabled={saveWordsMutation.isPending || pickedVocab.size === 0}
-                  className="rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-60
-                             disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold"
-                >
-                  {saveWordsMutation.isPending
-                    ? "추가 중…"
-                    : `선택한 ${pickedVocab.size}개 단어장에 추가`}
-                </button>
-                {savedCount != null && (
-                  <span className="text-sm text-emerald-600">✓ {savedCount}개 추가됐어요!</span>
-                )}
-              </div>
-            </div>
-          )}
 
-          <button
-            onClick={resetConversation}
-            className="rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50
-                       px-4 py-2 text-sm font-semibold"
-          >
-            새 대화 시작
-          </button>
-        </div>
-      )}
-        </>
-      )}
+                    {!summary && (
+                      <div className="rounded-md border bg-muted/40 px-3 py-3 text-sm text-muted-foreground">
+                        세션을 종료하면 저장할 표현과 어휘를 선택할 수 있습니다.
+                      </div>
+                    )}
+
+                    {summary && (
+                      <div className="space-y-4">
+                        {summary.summary && (
+                          <div className="rounded-md border border-brand-200 bg-brand-50 px-3 py-2">
+                            <p className="mb-1 text-xs font-bold text-brand-700">대화 요약</p>
+                            <p className="whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                              {summary.summary}
+                            </p>
+                          </div>
+                        )}
+
+                        {summary.expressions?.length > 0 && (
+                          <div className="space-y-2">
+                            <p className="text-xs font-bold text-slate-500">유용한 표현</p>
+                            {summary.expressions.map((expression, index) => (
+                              <div
+                                key={`expression-${index}`}
+                                className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
+                              >
+                                <div className="font-semibold text-slate-900">{expression.en}</div>
+                                {expression.ko && (
+                                  <div className="mt-1 text-xs text-slate-500">{expression.ko}</div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {summary.vocab?.length > 0 && (
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-xs font-bold text-slate-500">어휘 선택</p>
+                              <select
+                                value={saveTag}
+                                onChange={(event) => setSaveTag(event.target.value)}
+                                className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs outline-none focus:ring-2 focus:ring-brand-200"
+                              >
+                                <option value="">미지정</option>
+                                {labels
+                                  .filter((tag) => tag !== "미지정")
+                                  .map((tag) => (
+                                    <option key={tag} value={tag}>
+                                      {tag}
+                                    </option>
+                                  ))}
+                              </select>
+                            </div>
+                            {summary.vocab.map((vocab, index) => (
+                              <label
+                                key={`vocab-${index}`}
+                                className="flex cursor-pointer items-start gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
+                              >
+                                <Checkbox
+                                  checked={pickedVocab.has(index)}
+                                  onCheckedChange={() => toggleVocab(index)}
+                                  className="mt-1"
+                                />
+                                <span className="min-w-0">
+                                  <span className="block font-semibold text-slate-900">
+                                    {vocab.word}
+                                  </span>
+                                  {vocab.korean && (
+                                    <span className="block text-xs text-slate-500">{vocab.korean}</span>
+                                  )}
+                                  {vocab.example && (
+                                    <span className="block truncate text-xs text-slate-400">
+                                      {vocab.example}
+                                    </span>
+                                  )}
+                                </span>
+                              </label>
+                            ))}
+                            <Button
+                              type="button"
+                              onClick={saveSelectedVocab}
+                              disabled={saveWordsMutation.isPending || pickedVocab.size === 0}
+                              className="w-full rounded-md"
+                            >
+                              {saveWordsMutation.isPending
+                                ? "저장 중..."
+                                : `선택한 ${pickedVocab.size}개 저장`}
+                            </Button>
+                            {savedCount != null && (
+                              <p className="flex items-center gap-1 text-sm font-semibold text-emerald-600">
+                                <CheckCircle2 className="h-4 w-4" />
+                                {savedCount}개 저장됐어요.
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={resetConversation}
+                          className="w-full rounded-md"
+                        >
+                          새 대화 시작
+                        </Button>
+                      </div>
+                    )}
+                  </section>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="memo" className="m-0 min-h-0 flex-1 p-3">
+                <Textarea
+                  value={memo}
+                  onChange={(event) => setMemo(event.target.value)}
+                  placeholder="대화 중 기억할 문장이나 피드백을 적어두세요."
+                  className="h-full min-h-[420px] resize-none rounded-md bg-background"
+                />
+              </TabsContent>
+
+              <TabsContent value="notes" className="m-0 min-h-0 flex-1 overflow-y-auto p-3">
+                <LearningNotesTab user={user} />
+              </TabsContent>
+            </Tabs>
+          </Card>
+        </aside>
+      </div>
     </div>
   );
 }
