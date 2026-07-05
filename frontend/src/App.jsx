@@ -295,7 +295,16 @@ export default function App() {
     <LoadingPanel message="인증 상태를 확인하고 있습니다." />
   ) : (
     <div className="h-full">
-      {tab !== "roleplay" && (
+      {/* 검색 탭: 다른 탭에 갔다 와도 검색 내용이 유지되도록 항상 마운트하고 숨김 처리 */}
+      <div className={tab === "search" ? "h-full" : "hidden"}>
+        <SearchTab
+          user={user}
+          onRequireLogin={() => startLogin({ path: VIEW_PATHS.home, tab: "search" })}
+        />
+      </div>
+
+      {/* 나머지 탭(단어장/뉴스 리딩/퀴즈)은 활성일 때만 렌더 */}
+      {tab !== "search" && tab !== "roleplay" && (
         <ActiveTab
           user={user}
           onRequireLogin={() => startLogin({ path: VIEW_PATHS.home, tab })}

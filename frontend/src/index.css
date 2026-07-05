@@ -142,6 +142,17 @@
   animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+/* 저장 성공 시 체크 아이콘 팝 */
+@keyframes savePop {
+  0% { transform: scale(0.4); opacity: 0; }
+  60% { transform: scale(1.25); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.animate-save-pop {
+  animation: savePop 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 .scrollbar-none {
   -ms-overflow-style: none;
   scrollbar-width: none;

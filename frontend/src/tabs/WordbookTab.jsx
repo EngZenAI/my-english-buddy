@@ -95,6 +95,10 @@ export default function WordbookTab({ user, onRequireLogin }) {
   const [overwriteDup, setOverwriteDup] = useState(false); // 이미 있는 단어 덮어쓰기
   const [committing, setCommitting] = useState(false);
 
+  // 기본 제공(예시) 단어장 = 스타터 팩
+  const [starterOpen, setStarterOpen] = useState(false);
+  const [importingPackId, setImportingPackId] = useState(null);
+
   const labelsQuery = useQuery({
     queryKey: queryKeys.labels,
     queryFn: api.listLabels,
@@ -168,6 +172,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
       queryClient.setQueryData(queryKeys.labels, { labels: res.labels });
       queryClient.invalidateQueries({ queryKey: ["words"] });
       queryClient.invalidateQueries({ queryKey: ["label-word-count"] });
+      queryClient.invalidateQueries({ queryKey: ["starter-packs"] });
       setEditValues((prev) => {
         const copy = { ...prev };
         delete copy[name];
@@ -186,6 +191,38 @@ export default function WordbookTab({ user, onRequireLogin }) {
   const refreshWords = async () => {
     await queryClient.invalidateQueries({ queryKey: ["words"] });
     await queryClient.invalidateQueries({ queryKey: ["label-word-count"] });
+    await queryClient.invalidateQueries({ queryKey: ["starter-packs"] });
+  };
+
+  // ── 기본 제공(예시) 단어장 = 스타터 팩 ──
+  const starterQuery = useQuery({
+    queryKey: ["starter-packs"],
+    queryFn: api.starterPacks,
+    enabled: !!user && starterOpen,
+    // 태그/단어를 삭제한 뒤 다시 열면 '담음' 개수가 옛 값이면 안 되므로 열 때마다 새로 조회
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+  const starterPacks = starterQuery.data?.packs || [];
+
+  const importStarterPack = async (pack) => {
+    setImportingPackId(pack.id);
+    try {
+      const res = await api.importStarterPack(pack.id);
+      if (res.ok === false) {
+        alert(res.message || "가져오기에 실패했어요.");
+        return;
+      }
+      await queryClient.invalidateQueries({ queryKey: queryKeys.labels });
+      await refreshWords();
+      await starterQuery.refetch(); // '이미 담음' 개수 갱신
+      alert(res.message || "가져왔어요.");
+      if (res.tag) setFilter(res.tag); // 가져온 태그로 바로 보기 이동
+    } catch {
+      alert("가져오는 중 오류가 발생했어요.");
+    } finally {
+      setImportingPackId(null);
+    }
   };
 
   // ── CSV/XLSX 가져오기: 미리보기 → 편집 → 적용 ──
@@ -438,6 +475,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
         return;
       }
       queryClient.invalidateQueries({ queryKey: ["label-word-count"] });
+      queryClient.invalidateQueries({ queryKey: ["starter-packs"] });
     } catch {
       alert("삭제 중 오류가 발생했어요.");
       queryClient.setQueryData(queryKeys.words(""), prev); // 롤백
@@ -505,6 +543,16 @@ export default function WordbookTab({ user, onRequireLogin }) {
             onChange={onImportFile}
             className="hidden"
           />
+          <button
+            onClick={() => setStarterOpen(true)}
+            disabled={!user || rowEdit}
+            title="바로 쓸 수 있는 기본 제공 단어장을 담아요"
+            className="rounded-lg border border-brand-200 bg-brand-50 text-brand-700
+                       hover:bg-brand-100 px-3 py-1.5 text-sm font-medium
+                       disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            예시 단어장
+          </button>
           <button
             onClick={() => setGuideOpen(true)}
             disabled={!user || importing || rowEdit}
@@ -1038,6 +1086,100 @@ export default function WordbookTab({ user, onRequireLogin }) {
           >
             다음
           </button>
+        </div>
+      )}
+
+      {starterOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div
+            className="bg-white rounded-2xl shadow-2xl ring-1 ring-black/5 w-full max-w-lg
+                       max-h-[85vh] flex flex-col overflow-hidden"
+          >
+            <div className="px-6 pt-5 pb-4 border-b border-slate-200 flex items-start justify-between">
+              <div>
+                <h3 className="text-lg font-bold">예시 단어장</h3>
+                <p className="text-[13px] text-slate-500 mt-0.5">
+                  바로 쓸 수 있게 미리 정리해 둔 단어장이에요. 담은 뒤 자유롭게 편집·삭제할 수 있고,
+                  삭제했다가 다시 담을 수도 있어요.
+                </p>
+              </div>
+              <button
+                onClick={() => setStarterOpen(false)}
+                className="text-slate-400 hover:text-slate-600 text-2xl leading-none -mt-1"
+                title="닫기"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="px-6 py-4 overflow-auto grow space-y-3">
+              {starterQuery.isPending && (
+                <div className="py-8 flex justify-center">
+                  <LoadingSpinner label="불러오는 중" />
+                </div>
+              )}
+              {!starterQuery.isPending && starterPacks.length === 0 && (
+                <EmptyState
+                  title="제공되는 예시 단어장이 없어요."
+                  description="잠시 후 다시 시도해 주세요."
+                />
+              )}
+              {!starterQuery.isPending &&
+                starterPacks.map((pack) => {
+                  const busy = importingPackId === pack.id;
+                  const allIn = pack.already >= pack.count && pack.count > 0;
+                  return (
+                    <div
+                      key={pack.id}
+                      className="rounded-xl border border-slate-200 bg-white p-4 flex items-start gap-3"
+                    >
+                      <div className="min-w-0 grow">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="font-bold text-slate-800">{pack.title}</h4>
+                          <span className="inline-flex items-center rounded-full bg-brand-50 text-brand-600 text-[11px] font-medium px-2 py-0.5">
+                            #{pack.tag}
+                          </span>
+                          <span className="text-[12px] text-slate-400">
+                            {pack.count}단어
+                          </span>
+                        </div>
+                        {pack.description && (
+                          <p className="mt-1 text-[13px] text-slate-500 leading-relaxed">
+                            {pack.description}
+                          </p>
+                        )}
+                        {pack.already > 0 && (
+                          <p className="mt-1 text-[12px] text-emerald-600">
+                            {allIn
+                              ? "이미 모두 담았어요."
+                              : `${pack.already}개는 이미 담겨 있어요 (나머지만 추가돼요).`}
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => importStarterPack(pack)}
+                        disabled={busy}
+                        className="shrink-0 rounded-lg bg-brand-600 text-white hover:bg-brand-700
+                                   px-3 py-1.5 text-sm font-semibold disabled:opacity-50
+                                   disabled:cursor-not-allowed"
+                      >
+                        {busy ? "담는 중..." : "담기"}
+                      </button>
+                    </div>
+                  );
+                })}
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end">
+              <button
+                onClick={() => setStarterOpen(false)}
+                className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50
+                           px-3 py-1.5 text-sm font-medium"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

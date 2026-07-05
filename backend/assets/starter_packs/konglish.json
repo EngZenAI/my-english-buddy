@@ -1,0 +1,108 @@
+{
+  "id": "konglish",
+  "title": "생활 콩글리시",
+  "tag": "konglish",
+  "description": "멀티탭·콘센트·모닝콜 등 일상 속 한국식 영어를 원어민 표현으로 정리.",
+  "words": [
+    {
+      "word": "power strip",
+      "korean": "멀티탭"
+    },
+    {
+      "word": "outlet",
+      "korean": "콘센트"
+    },
+    {
+      "word": "social media",
+      "korean": "SNS"
+    },
+    {
+      "word": "security/surveillance camera",
+      "korean": "CCTV"
+    },
+    {
+      "word": "USB flash drive/thumb drive",
+      "korean": "USB"
+    },
+    {
+      "word": "online course/class",
+      "korean": "인터넷 강의"
+    },
+    {
+      "word": "lamp",
+      "korean": "스탠드"
+    },
+    {
+      "word": "marker",
+      "korean": "사인펜"
+    },
+    {
+      "word": "sticky note",
+      "korean": "포스트잇"
+    },
+    {
+      "word": "plastic bag",
+      "korean": "비닐봉지"
+    },
+    {
+      "word": "dress shirt",
+      "korean": "와이셔츠"
+    },
+    {
+      "word": "tracksuit/sweats",
+      "korean": "트레이닝복"
+    },
+    {
+      "word": "tank top/undershirt",
+      "korean": "런닝"
+    },
+    {
+      "word": "physical touch/contact/affection",
+      "korean": "스킨십"
+    },
+    {
+      "word": "bottoms up!",
+      "korean": "원샷!"
+    },
+    {
+      "word": "on the house/complimentary",
+      "korean": "서비스"
+    },
+    {
+      "word": "wake-up call",
+      "korean": "모닝콜"
+    },
+    {
+      "word": "cell phone/mobie phone",
+      "korean": "핸드폰"
+    },
+    {
+      "word": "overreact",
+      "korean": "오바하다"
+    },
+    {
+      "word": "warranty service",
+      "korean": "애프터서비스(A/S)"
+    },
+    {
+      "word": "coke",
+      "korean": "콜라 (발음: 코우크)"
+    },
+    {
+      "word": "white wine",
+      "korean": "화이트 와인 (발음: 왓 완)"
+    },
+    {
+      "word": "dress",
+      "korean": "원피스"
+    },
+    {
+      "word": "laptop",
+      "korean": "노트북"
+    },
+    {
+      "word": "signature",
+      "korean": "싸인"
+    }
+  ]
+}

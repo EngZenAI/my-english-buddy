@@ -107,57 +107,53 @@ export default function ResponsiveNav({
       >
         <div className={cn("relative flex min-h-0 flex-1 flex-col", collapsed ? "px-3 py-5" : "px-5 py-6")}>
           <div className={cn("mb-8 flex items-center", collapsed ? "justify-center" : "justify-between gap-3")}>
-            <button
-              type="button"
-              onClick={goHome}
-              className={cn(
-                "flex min-w-0 items-center gap-3 rounded-lg text-left outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[#2f7d73]/30",
-                collapsed && "justify-center"
-              )}
-              title="English Buddy"
-            >
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center">
-                <img
-                  src={englishBuddyLogo}
-                  alt=""
-                  aria-hidden="true"
-                  className="block h-10 w-10 drop-shadow-[0_8px_18px_rgba(47,125,115,0.18)]"
-                  draggable="false"
-                />
-              </span>
-              {!collapsed && (
-                <span className="truncate text-xl font-extrabold tracking-tight text-slate-900">
-                  English Buddy
-                </span>
-              )}
-            </button>
-
-            {!collapsed && (
+            {collapsed ? (
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
-                onClick={() => setCollapsed(true)}
-                className="h-9 w-9 shrink-0 rounded-lg text-slate-500 hover:bg-white hover:text-slate-900"
-                aria-label="사이드바 접기"
+                onClick={() => setCollapsed(false)}
+                className="h-10 w-10 rounded-lg text-slate-500 hover:bg-white hover:text-slate-900"
+                aria-label="사이드바 펼치기"
+                title="사이드바 펼치기"
               >
-                <PanelLeftClose className="h-4 w-4" />
+                <PanelLeftOpen className="h-5 w-5" />
               </Button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={goHome}
+                  className="flex min-w-0 items-center gap-3 rounded-lg text-left outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[#2f7d73]/30"
+                  title="English Buddy"
+                >
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center">
+                    <img
+                      src={englishBuddyLogo}
+                      alt=""
+                      aria-hidden="true"
+                      className="block h-10 w-10 drop-shadow-[0_8px_18px_rgba(47,125,115,0.18)]"
+                      draggable="false"
+                    />
+                  </span>
+                  <span className="truncate text-xl font-extrabold tracking-tight text-slate-900">
+                    English Buddy
+                  </span>
+                </button>
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setCollapsed(true)}
+                  className="h-9 w-9 shrink-0 rounded-lg text-slate-500 hover:bg-white hover:text-slate-900"
+                  aria-label="사이드바 접기"
+                >
+                  <PanelLeftClose className="h-4 w-4" />
+                </Button>
+              </>
             )}
           </div>
-
-          {collapsed && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => setCollapsed(false)}
-              className="mx-auto mb-6 h-9 w-9 rounded-lg text-slate-500 hover:bg-white hover:text-slate-900"
-              aria-label="사이드바 펼치기"
-            >
-              <PanelLeftOpen className="h-4 w-4" />
-            </Button>
-          )}
 
           <nav className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overflow-x-hidden pr-0.5">
             {navItems.map((tab) => {
