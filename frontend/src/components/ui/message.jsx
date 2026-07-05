@@ -9,7 +9,7 @@ function getUserInitials(user) {
   return user.email.substring(0, 2).toUpperCase();
 }
 
-function MessageAvatar({ role, user }) {
+function MessageAvatar({ role, user, className }) {
   const isUser = role === "user";
   return (
     <Avatar
@@ -17,7 +17,8 @@ function MessageAvatar({ role, user }) {
         "mt-0.5 h-8 w-8",
         isUser
           ? "border border-primary/20 bg-primary text-primary-foreground"
-          : "bg-transparent text-muted-foreground"
+          : "bg-transparent text-muted-foreground",
+        className
       )}
     >
       {isUser && user?.avatar_url && (
