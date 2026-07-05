@@ -166,7 +166,11 @@ def _require_article_admin(user: dict) -> None:
     require_admin_user(user)
 
 
-@router.get("/admin/api-usage")
+@router.get(
+    "/admin/api-usage",
+    summary="관리자 API 사용량 조회",
+    description="운영자가 날짜, 기간, 집계 단위별 API 사용량을 확인합니다.",
+)
 async def admin_api_usage(
     date: str = "",
     start_date: str = "",
@@ -205,7 +209,11 @@ async def admin_api_usage(
     )
 
 
-@router.get("/admin/learners")
+@router.get(
+    "/admin/learners",
+    summary="관리자 학습자 목록 조회",
+    description="검색어, 상태, 페이지 조건으로 가입 학습자 목록을 조회합니다.",
+)
 async def admin_learners(
     q: str = "",
     status: str = "",
@@ -219,7 +227,11 @@ async def admin_learners(
     return await list_admin_learners(session, q=q, status=status, page=page, page_size=page_size)
 
 
-@router.get("/admin/learners/{learner_ref}")
+@router.get(
+    "/admin/learners/{learner_ref}",
+    summary="관리자 학습자 상세 조회",
+    description="이메일 또는 내부 식별자로 특정 학습자의 상세 학습/계정 정보를 조회합니다.",
+)
 async def admin_learner_detail(learner_ref: str, session: SessionDep, _user: CurrentUserDep):
     require_admin_user(_user)
     data = await get_admin_learner_detail(session, learner_ref)
@@ -228,7 +240,11 @@ async def admin_learner_detail(learner_ref: str, session: SessionDep, _user: Cur
     return data
 
 
-@router.get("/article-admin/status")
+@router.get(
+    "/article-admin/status",
+    summary="뉴스 관리자 권한 상태 조회",
+    description="현재 사용자가 뉴스 콘텐츠 관리 권한을 가진 운영자인지 확인합니다.",
+)
 async def article_admin_status(_user: CurrentUserDep):
     return {
         "is_admin": bool(_user.get("is_superuser")),
@@ -236,7 +252,11 @@ async def article_admin_status(_user: CurrentUserDep):
     }
 
 
-@router.get("/admin/articles")
+@router.get(
+    "/admin/articles",
+    summary="관리자 뉴스 자료 목록 조회",
+    description="공개/비공개를 포함한 뉴스 학습 자료 목록을 운영자 화면에서 조회합니다.",
+)
 async def article_admin_list(
     page: int = 1,
     *,
@@ -247,7 +267,11 @@ async def article_admin_list(
     return await list_admin_articles(session, page=page)
 
 
-@router.post("/admin/articles")
+@router.post(
+    "/admin/articles",
+    summary="관리자 뉴스 자료 생성",
+    description="운영자가 직접 입력한 기사 제목, 원문 URL, 본문, 주제, 레벨로 학습 자료를 생성합니다.",
+)
 async def article_admin_create(
     payload: ArticleCreateIn,
     *,
@@ -292,7 +316,11 @@ async def article_admin_create(
     return {"ok": True, "article_id": article_id}
 
 
-@router.get("/admin/articles/{article_id}")
+@router.get(
+    "/admin/articles/{article_id}",
+    summary="관리자 뉴스 자료 상세 조회",
+    description="공개 여부와 무관하게 특정 뉴스 학습 자료의 상세 정보를 조회합니다.",
+)
 async def article_admin_detail(article_id: int, session: SessionDep, _user: CurrentUserDep):
     _require_article_admin(_user)
     data = await get_article_catalog_item(session, article_id, include_unpublished=True)
@@ -301,7 +329,11 @@ async def article_admin_detail(article_id: int, session: SessionDep, _user: Curr
     return data
 
 
-@router.patch("/admin/articles/{article_id}")
+@router.patch(
+    "/admin/articles/{article_id}",
+    summary="관리자 뉴스 자료 수정",
+    description="운영자가 뉴스 학습 자료의 메타데이터, 공개 여부, 본문을 수정합니다.",
+)
 async def article_admin_update(
     article_id: int,
     payload: ArticleUpdateIn,
@@ -343,7 +375,11 @@ async def article_admin_update(
     return {"ok": True, "article_id": article_id}
 
 
-@router.delete("/admin/articles/{article_id}")
+@router.delete(
+    "/admin/articles/{article_id}",
+    summary="관리자 뉴스 자료 삭제",
+    description="운영자가 뉴스 학습 자료를 삭제합니다.",
+)
 async def article_admin_delete(article_id: int, session: SessionDep, _user: CurrentUserDep):
     _require_article_admin(_user)
     ok = await delete_admin_article(session, article_id)
@@ -352,7 +388,11 @@ async def article_admin_delete(article_id: int, session: SessionDep, _user: Curr
     return {"ok": True}
 
 
-@router.post("/admin/article-feeds/refresh")
+@router.post(
+    "/admin/article-feeds/refresh",
+    summary="뉴스 피드 업데이트 시작",
+    description="승인된 뉴스 RSS/피드 출처에서 새 기사를 가져오는 백그라운드 작업을 시작합니다.",
+)
 async def article_feed_refresh(
     payload: ArticleFeedRefreshIn,
     background_tasks: BackgroundTasks,
@@ -398,13 +438,21 @@ async def article_feed_refresh(
     return job
 
 
-@router.get("/admin/article-feeds/refresh/{job_id}")
+@router.get(
+    "/admin/article-feeds/refresh/{job_id}",
+    summary="뉴스 피드 업데이트 상태 조회",
+    description="뉴스 피드 백그라운드 업데이트 작업의 진행 상태와 출처별 결과를 조회합니다.",
+)
 async def article_feed_refresh_status(job_id: str, session: SessionDep, _user: CurrentUserDep):
     _require_article_admin(_user)
     return await _refresh_job_snapshot(session, job_id)
 
 
-@router.patch("/admin/articles/{article_id}/publish")
+@router.patch(
+    "/admin/articles/{article_id}/publish",
+    summary="뉴스 자료 공개 상태 변경",
+    description="운영자가 뉴스 학습 자료의 공개/비공개 상태만 빠르게 변경합니다.",
+)
 async def article_admin_publish(
     article_id: int,
     payload: ArticlePublishIn,

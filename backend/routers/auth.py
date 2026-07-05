@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.routing import APIRoute
 from fastapi_users.router.oauth import (
     CSRF_TOKEN_COOKIE_NAME,
     CSRF_TOKEN_KEY,
@@ -159,3 +160,62 @@ router.include_router(
     prefix="/users",
     tags=["users"],
 )
+
+
+_AUTH_ROUTE_DOCS = {
+    ("POST", "/auth/cookie/login"): (
+        "이메일 로그인",
+        "이메일과 비밀번호를 검증하고 인증 쿠키를 발급합니다.",
+    ),
+    ("POST", "/auth/cookie/logout"): (
+        "쿠키 로그아웃",
+        "현재 인증 쿠키를 무효화해서 로그아웃 처리합니다.",
+    ),
+    ("GET", "/auth/google/authorize"): (
+        "Google OAuth 인증 URL 발급",
+        "Google 로그인 화면으로 이동하기 위한 OAuth authorize URL을 생성합니다.",
+    ),
+    ("GET", "/auth/google/callback"): (
+        "Google OAuth 콜백 처리",
+        "Google 인증 완료 후 전달된 코드를 검증하고 앱 로그인 쿠키를 발급합니다.",
+    ),
+    ("POST", "/auth/register"): (
+        "이메일 회원가입",
+        "이메일, 비밀번호 등 가입 정보를 받아 새 사용자 계정을 생성합니다.",
+    ),
+    ("GET", "/users/me"): (
+        "내 사용자 정보 조회",
+        "현재 로그인한 사용자의 프로필과 계정 정보를 반환합니다.",
+    ),
+    ("PATCH", "/users/me"): (
+        "내 사용자 정보 수정",
+        "현재 로그인한 사용자의 프로필 정보를 수정합니다.",
+    ),
+    ("GET", "/users/{id}"): (
+        "사용자 정보 조회",
+        "지정한 사용자 ID의 계정 정보를 조회합니다. FastAPI-Users 기본 사용자 API입니다.",
+    ),
+    ("PATCH", "/users/{id}"): (
+        "사용자 정보 수정",
+        "지정한 사용자 ID의 계정 정보를 수정합니다. FastAPI-Users 기본 사용자 API입니다.",
+    ),
+    ("DELETE", "/users/{id}"): (
+        "사용자 삭제",
+        "지정한 사용자 ID의 계정을 삭제합니다. FastAPI-Users 기본 사용자 API입니다.",
+    ),
+}
+
+
+def _annotate_generated_auth_routes() -> None:
+    """FastAPI-Users가 만든 라우트에 Swagger용 한글 설명을 붙인다."""
+    for route in router.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        for method in route.methods or []:
+            docs = _AUTH_ROUTE_DOCS.get((method, route.path))
+            if not docs:
+                continue
+            route.summary, route.description = docs
+
+
+_annotate_generated_auth_routes()
