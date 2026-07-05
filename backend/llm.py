@@ -28,12 +28,19 @@ from typing import Iterator, TypedDict
 
 from dotenv import load_dotenv
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama import ChatOllama
 from langgraph.graph import END, StateGraph
 
 from backend.api_usage import track_llm_usage
 from backend.exceptions import JSON_PARSE_ERRORS, LLM_PROVIDER_ERRORS
+from backend.prompts.quiz import build_legacy_grade_prompt, build_legacy_quiz_prompt
+from backend.prompts.roleplay import (
+    build_roleplay_coaching_prompt,
+    build_roleplay_continue_prompt,
+    build_roleplay_start_prompt,
+    build_roleplay_summary_prompt,
+)
+from backend.prompts.slang import build_slang_explanation_prompt
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", encoding="utf-8-sig")
 logger = logging.getLogger(__name__)
@@ -329,37 +336,6 @@ def _stream_tracked_llm(feature: str, operation: str, prompt_value) -> Iterator[
 # 3. 퀴즈 — 생성 & 채점
 # ══════════════════════════════════════════════════════════════════════
 # 참고: 퀴즈 탭은 팀원이 별도 브랜치에서 발전시키는 중. 여기 체인은 레거시 경로다.
-quiz_prompt = ChatPromptTemplate.from_template("""
-당신은 영어 학습 튜터입니다.
-아래 단어들로 영어 퀴즈를 만들어주세요.
-
-형식:
-- 빈칸 채우기 3문제 (예문에서 단어를 _____로 대체)
-- 뜻 맞추기 2문제 (영어 뜻을 보고 단어 맞추기)
-- 각 문제 아래에 [정답: ] 표시
-
-단어 목록:
-{word_list}
-""")
-quiz_chain = quiz_prompt | llm | parser
-
-grade_prompt = ChatPromptTemplate.from_template("""
-당신은 영어 학습 튜터입니다. 아래 퀴즈와 학습자 답변을 채점해주세요.
-
-퀴즈:
-{quiz_text}
-
-학습자 답변:
-{user_answer}
-
-채점 기준:
-- 각 문제별로 O/X 표시
-- 틀렸다면 왜 틀렸는지 한국어로 친절하게 설명
-- 마지막에 총점과 격려 메시지
-""")
-grade_chain = grade_prompt | llm | parser
-
-
 # ── LangGraph 워크플로우 ──────────────────────────────────────────────
 # 지금은 단일 노드라 체인을 직접 호출해도 되지만, 추후 "생성→검수→재생성"처럼
 # 다단계로 확장할 여지를 두려고 그래프로 감싸 두었다.
@@ -375,15 +351,14 @@ def generate_quiz_node(state: QuizState) -> QuizState:
         f"- {w['word']}: {w['korean']} / 예문: {w['example']}"
         for w in state["words"]
     ])
-    state["quiz_text"] = quiz_chain.invoke({"word_list": word_list})
+    prompt_value = build_legacy_quiz_prompt(word_list)
+    state["quiz_text"] = parser.invoke(llm.invoke(prompt_value))
     return state
 
 
 def grade_answer_node(state: QuizState) -> QuizState:
-    state["feedback"] = grade_chain.invoke({
-        "quiz_text":   state["quiz_text"],
-        "user_answer": state["user_answer"],
-    })
+    prompt_value = build_legacy_grade_prompt(state["quiz_text"], state["user_answer"])
+    state["feedback"] = parser.invoke(llm.invoke(prompt_value))
     return state
 
 
@@ -435,28 +410,7 @@ def explain_slang(word: str, kor_word: str = "") -> str:
     사용자가 검색한 단어(word)와 사전 번역(kor_word)을 주면, 원어민이 실제로
     어떻게 쓰는지(슬랭·뉘앙스·밈 등)를 한국어 고정 포맷으로 답한다.
     """
-    prompt = ChatPromptTemplate.from_template("""
-You are an English language expert. A Korean learner searched "{word}"
-and got the dictionary translation "{kor_word}", but suspects a more
-colloquial or cultural meaning exists.
-
-Explain how native speakers actually use "{word}" beyond its literal meaning
-(slang, social context, pop culture, irony, etc.).
-If no such usage exists, say so in one sentence.
-
-Respond in Korean using this format:
-
-👀 속뜻과 맥락
-[2~3문장]
-
-📝 예문
-1. 영어 예문 (한국어 해석)
-2. 영어 예문 (한국어 해석)
-
-🔗 비슷한 표현
-[2~3개]
-""")
-    prompt_value = prompt.invoke({"word": word, "kor_word": kor_word})
+    prompt_value = build_slang_explanation_prompt(word, kor_word)
     return _invoke_tracked_llm("slang", "explain", prompt_value)
 
 
@@ -482,125 +436,6 @@ Respond in Korean using this format:
 #   - history 포맷: [(user, bot), ...] 튜플. 첫 메시지는 사용자 발화가 없어
 #                ("", 봇첫인사) 형태. (프론트는 객체 메시지로 변환해 렌더)
 #
-# 레벨(beginner/intermediate/advanced)에 따라 AI의 어휘·속도·질문 난이도를 조절한다.
-ROLEPLAY_LEVEL_GUIDES = {
-    "beginner": (
-        "The learner is a BEGINNER. Use simple, common vocabulary and short "
-        "sentences. Speak slowly and clearly. Ask easy, concrete questions, "
-        "one at a time."
-    ),
-    "intermediate": (
-        "The learner is INTERMEDIATE. Use everyday vocabulary with some common "
-        "idioms. Ask follow-up questions that require explanation and opinions."
-    ),
-    "advanced": (
-        "The learner is ADVANCED. Use rich, natural, native-level vocabulary "
-        "and idioms. Ask nuanced, open-ended questions and push the learner to "
-        "elaborate and defend their views."
-    ),
-}
-
-
-def _roleplay_level_guide(level: str) -> str:
-    """레벨 키에 맞는 지침 문장을 반환(미상이면 intermediate)."""
-    return ROLEPLAY_LEVEL_GUIDES.get(
-        (level or "").lower(), ROLEPLAY_LEVEL_GUIDES["intermediate"]
-    )
-
-
-def _roleplay_scenario_intro(
-    scenario: str, tag: str | None, situation: str, words: list
-) -> str:
-    """모드별 상황 설명 문장을 만든다(situation/태그 어휘 반영).
-
-    scenario:
-      - "opic"   : OPIc 설문형 상황극. AI가 상대역을 맡아 사용자를 말하게 한다.
-      - "tag"    : 단어장 태그 주제 대화. 태그 단어를 써볼 기회를 만들어준다.
-      - "general": 자유 주제 상황극. situation으로 상황을 받는다.
-    """
-    word_list = ", ".join([w["word"] for w in words]) if words else ""
-    scenario = (scenario or "general").lower()
-    situation = (situation or "").strip()
-
-    if scenario == "opic":
-        intro = (
-            "This is OPIc-style speaking practice. Play the other person in a "
-            "realistic role-play and keep the learner talking, like an OPIc "
-            "examiner drawing out detail, opinions, and reactions. Stay in "
-            "character and ask one thing at a time."
-        )
-        if situation:
-            intro += f"\n\nRole-play setup: {situation}"
-    elif scenario == "tag":
-        topic = tag or "general topics"
-        intro = (
-            f"Have a natural, immersive English conversation about '{topic}', "
-            "like chatting with a native friend. Ask questions and react "
-            "naturally to keep the learner speaking."
-        )
-        if word_list:
-            intro += (
-                "\n\nThe learner has been studying these expressions and wants "
-                "to actually use them, so create natural openings for them: "
-                f"{word_list}. Don't force them all or turn it into a vocabulary drill."
-            )
-    else:  # general / 자유 주제
-        intro = (
-            "This is free-topic role-play for real conversation practice. Play "
-            "the appropriate counterpart for the situation and stay in character."
-        )
-        if situation:
-            intro += f"\n\nSituation: {situation}"
-        else:
-            intro += "\n\nPick a friendly everyday situation and start the conversation."
-    return intro
-
-
-# 대화 중 코칭(2단계): 답변과 별도로 학습자 발화에 대한 짧은 코칭을 JSON으로 받는다.
-_ROLEPLAY_COACHING_INSTRUCTION = """
-COACHING (very important):
-Besides staying in character, give brief coaching on the learner's MOST RECENT message,
-written for a Korean learner. Reply with ONLY a JSON object — no markdown, no code fences —
-in exactly this shape:
-{{"reply": "<your in-character English reply>", "coaching": "<coaching in Korean>"}}
-- "reply": your in-character reply. Do NOT put any correction inside it.
-- "coaching": 1-2 short Korean tips — suggest a more natural/native expression, or fix a
-  grammar/word-choice mistake from the learner's last message. Keep it short so it doesn't
-  break immersion. If their English was already natural and correct, use an empty string "".
-"""
-
-
-def _roleplay_system_prompt(
-    level, scenario, tag, situation, words, coaching=False, wrap_up=False
-) -> str:
-    """롤플레잉 시스템 프롬프트(상황 + 레벨 + 공통 규칙)를 조립한다.
-
-    coaching=True(대화 진행 턴)면 코칭 JSON 출력 지시를 덧붙인다.
-    coaching=False(첫 메시지)면 평문 답변만 생성한다.
-    wrap_up=True면 대화가 충분히 길어졌으니 자연스럽게 마무리하도록 유도한다.
-    """
-    base = f"""You are a friendly native English speaker helping the learner practice real conversation.
-
-{_roleplay_scenario_intro(scenario, tag, situation, words)}
-
-{_roleplay_level_guide(level)}
-
-Rules:
-- Speak ONLY in English (the in-character reply must be English).
-- Keep your turn fairly short and end with a question to keep the conversation going.
-- Stay in character for the situation.
-"""
-    if wrap_up:
-        base += (
-            "\nWRAP UP: The conversation has gone on long enough. Respond to the learner, "
-            "then gently bring the role-play to a natural close (warmly signal it's a good "
-            "place to stop) instead of opening big new topics. Do NOT ask a new question.\n"
-        )
-    if coaching:
-        base += _ROLEPLAY_COACHING_INSTRUCTION
-    return base
-
-
 def _parse_coached(raw: str) -> dict:
     """LLM 응답에서 {reply, coaching}를 견고하게 파싱한다.
 
@@ -651,12 +486,13 @@ def start_roleplay(
         봇 첫 메시지 문자열. (첫 턴은 학습자 발화가 없어 코칭 없음.)
     """
     words = words or []
-    system = _roleplay_system_prompt(level, scenario, tag, situation, words)
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system),
-        ("human", "Start the role-play now: set the scene briefly, then greet me and ask your first question."),
-    ])
-    prompt_value = prompt.invoke({})
+    prompt_value = build_roleplay_start_prompt(
+        level=level,
+        scenario=scenario,
+        tag=tag,
+        situation=situation,
+        words=words,
+    )
     return _invoke_tracked_llm("roleplay", "start", prompt_value)
 
 
@@ -688,23 +524,17 @@ def continue_roleplay(
         return {"reply": "", "coaching": ""}
 
     words = words or []
-    system = _roleplay_system_prompt(
-        level, scenario, tag, situation, words, coaching=True, wrap_up=wrap_up
+    prompt_value = build_roleplay_continue_prompt(
+        history=history,
+        user_msg=user_msg,
+        level=level,
+        scenario=scenario,
+        tag=tag,
+        situation=situation,
+        words=words,
+        coaching=True,
+        wrap_up=wrap_up,
     )
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system),
-        ("placeholder", "{history}"),  # 이전 대화가 여기로 펼쳐진다
-        ("human", "{user_msg}"),
-    ])
-    # 튜플 history → LangChain 메시지(role, content) 리스트로 변환.
-    lc_history = []
-    for user, bot in history:
-        if user:
-            lc_history.append(("human", user))
-        if bot:
-            lc_history.append(("assistant", bot))
-
-    prompt_value = prompt.invoke({"history": lc_history, "user_msg": user_msg})
     raw = _invoke_tracked_llm("roleplay", "continue", prompt_value)
     return _parse_coached(raw)
 
@@ -721,21 +551,17 @@ def _roleplay_continue_prompt_value(
 ):
     """롤플레잉 진행 턴의 순수 답변용 prompt value를 만든다."""
     words = words or []
-    system = _roleplay_system_prompt(
-        level, scenario, tag, situation, words, coaching=False, wrap_up=wrap_up
+    return build_roleplay_continue_prompt(
+        history=history,
+        user_msg=user_msg,
+        level=level,
+        scenario=scenario,
+        tag=tag,
+        situation=situation,
+        words=words,
+        coaching=False,
+        wrap_up=wrap_up,
     )
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system),
-        ("placeholder", "{history}"),
-        ("human", "{user_msg}"),
-    ])
-    lc_history = []
-    for user, bot in history:
-        if user:
-            lc_history.append(("human", user))
-        if bot:
-            lc_history.append(("assistant", bot))
-    return prompt.invoke({"history": lc_history, "user_msg": user_msg})
 
 
 def stream_roleplay_reply(
@@ -785,65 +611,16 @@ def coach_roleplay_turn(
             lines.append(f"AI: {bot}")
     recent_context = "\n".join(lines).strip()
 
-    prompt = ChatPromptTemplate.from_template("""You are an English speaking coach for a Korean learner.
-
-Recent context:
-{recent_context}
-
-Current learner message:
-{user_msg}
-
-AI's in-character reply:
-{ai_reply}
-
-Level: {level}
-Scenario: {scenario}
-Tag: {tag}
-Situation: {situation}
-
-Write ONLY a brief Korean coaching tip for the learner's current message.
-Rules:
-- 1-2 short Korean sentences.
-- Suggest a more natural/native expression, or fix grammar/word choice.
-- If the learner's English was already natural and correct, return an empty string.
-- Do not include markdown, labels, or bullet points.
-""")
-    prompt_value = prompt.invoke({
-        "recent_context": recent_context,
-        "user_msg": user_msg,
-        "ai_reply": ai_reply,
-        "level": level,
-        "scenario": scenario,
-        "tag": tag or "",
-        "situation": situation or "",
-    })
+    prompt_value = build_roleplay_coaching_prompt(
+        recent_context=recent_context,
+        user_msg=user_msg,
+        ai_reply=ai_reply,
+        level=level,
+        scenario=scenario,
+        tag=tag or "",
+        situation=situation or "",
+    )
     return _invoke_tracked_llm("roleplay", "coaching", prompt_value).strip()
-
-
-# ── 대화 종료 후 정리(3단계): 요약 + 유용 표현 + 유용 어휘 추출 ──────────
-_ROLEPLAY_SUMMARY_TEMPLATE = """You are an English tutor reviewing a role-play conversation with a Korean learner.
-
-Conversation:
-{transcript}
-
-Write a short, encouraging review FOR THE LEARNER and extract only high-value study items.
-Respond with ONLY a JSON object,
-no markdown and no code fences, in exactly this shape:
-{{"summary": "<2-3 sentences in Korean: how the conversation went + one encouragement>", "expressions": [{{"en": "<a useful, natural English expression from or for this conversation>", "ko": "<Korean meaning>"}}], "vocab": [{{"word": "<useful English word or short phrase>", "korean": "<Korean meaning>", "example": "<a short English example sentence>"}}]}}
-
-Rules:
-- Choose items that improve the learner's next similar role-play, not random words that merely appeared.
-- "expressions" must be reusable conversational chunks, sentence frames, or natural phrases for the exact situation.
-  Prefer practical items like "Could you recommend...?", "I'd like to...", "That sounds...", "I'm looking for...".
-- Do NOT include weak filler or overly generic items such as "so on", "good luck", "that's cool", "thanks", "you're welcome",
-  unless you upgrade them into a more useful natural expression.
-- "vocab" must be role-play-relevant words or short phrases that are worth saving to a wordbook.
-  Prefer situational phrases and useful collocations over isolated easy nouns.
-- For each vocab item, the "example" must be related to this role-play situation, not a generic dictionary example.
-- 3-5 items in "expressions" and 3-5 items in "vocab". It is better to return fewer strong items than many weak ones.
-- "summary", "ko", and "korean" must be Korean. "en", "word", "example" must be English.
-- If the conversation is too short to extract from, still return valid JSON with what you can.
-"""
 
 
 def _parse_summary(raw: str) -> dict:
@@ -907,7 +684,6 @@ def summarize_roleplay(
     if not transcript:
         return {"summary": "", "expressions": [], "vocab": []}
 
-    prompt = ChatPromptTemplate.from_template(_ROLEPLAY_SUMMARY_TEMPLATE)
-    prompt_value = prompt.invoke({"transcript": transcript})
+    prompt_value = build_roleplay_summary_prompt(transcript)
     raw = _invoke_tracked_llm("roleplay", "summary", prompt_value)
     return _parse_summary(raw)
