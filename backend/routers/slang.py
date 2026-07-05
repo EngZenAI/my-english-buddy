@@ -10,7 +10,14 @@ from backend.schemas.slang import SlangIn
 router = APIRouter(tags=["slang"])
 
 
-@router.post("/slang")
+@router.post(
+    "/slang",
+    summary="AI 슬랭 설명",
+    description=(
+        "검색한 단어의 뉘앙스, 실제 회화에서의 쓰임, 슬랭 가능성을 AI가 한국어로 설명합니다. "
+        "회원 전용 API입니다."
+    ),
+)
 async def slang(payload: SlangIn, session: SessionDep, _user: CurrentUserDep):
     word = payload.word.strip()
     if not word:

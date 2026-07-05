@@ -5,18 +5,13 @@ from fastapi import APIRouter, File, UploadFile
 
 from backend.db.dependencies import SessionDep
 from backend.db.repositories import (
-    add_label,
     bulk_delete_words,
     bulk_update_words,
-    count_words_by_tag,
-    delete_label,
     delete_word,
     existing_words_lower,
     get_all_words,
-    get_labels,
     insert_words,
     is_word_saved,
-    rename_label,
     reorder_words,
     save_word,
     update_word,
@@ -28,8 +23,6 @@ from backend.schemas.wordbook import (
     BulkUpdateIn,
     IdsIn,
     ImportCommitIn,
-    LabelIn,
-    RenameLabelIn,
     SaveWordIn,
     UpdateWordIn,
 )
@@ -37,50 +30,35 @@ from backend.schemas.wordbook import (
 router = APIRouter(tags=["wordbook"])
 
 
-@router.get("/words/saved")
+@router.get(
+    "/words/saved",
+    summary="단어 저장 여부 확인",
+    description="검색 결과에 표시할 수 있도록 현재 사용자의 단어장에 이미 저장된 단어인지 확인합니다.",
+)
 async def word_saved(word: str = "", *, session: SessionDep, _user: CurrentUserDep):
     return {"saved": await is_word_saved(session, _user["id"], word)}
 
 
-@router.get("/labels")
-async def list_labels(session: SessionDep, _user: CurrentUserDep):
-    return {"labels": await get_labels(session, _user["id"])}
-
-
-@router.post("/labels")
-async def create_label(payload: LabelIn, session: SessionDep, _user: CurrentUserDep):
-    labels, ok = await add_label(session, _user["id"], payload.name)
-    return {"labels": labels, "ok": ok, "max": 20}
-
-
-@router.post("/labels/rename")
-async def rename_label_ep(payload: RenameLabelIn, session: SessionDep, _user: CurrentUserDep):
-    labels, ok, message = await rename_label(
-        session,
-        _user["id"],
-        payload.old_name,
-        payload.new_name,
-    )
-    return {"labels": labels, "ok": ok, "message": message}
-
-
-@router.get("/labels/word-count")
-async def label_word_count(tag: str = "", *, session: SessionDep, _user: CurrentUserDep):
-    return {"count": await count_words_by_tag(session, _user["id"], tag) if tag else 0}
-
-
-@router.delete("/labels")
-async def delete_label_ep(name: str = "", *, session: SessionDep, _user: CurrentUserDep):
-    labels, ok, message, deleted = await delete_label(session, _user["id"], name)
-    return {"labels": labels, "ok": ok, "message": message, "deleted": deleted}
-
-
-@router.get("/words")
+@router.get(
+    "/words",
+    summary="단어장 목록 조회",
+    description=(
+        "현재 사용자의 저장 단어를 정렬 순서대로 반환합니다. "
+        "tag 쿼리가 있으면 해당 태그의 단어만 조회합니다."
+    ),
+)
 async def list_words(tag: str = "", *, session: SessionDep, _user: CurrentUserDep):
     return {"words": await get_all_words(session, _user["id"], tag or None)}
 
 
-@router.post("/words")
+@router.post(
+    "/words",
+    summary="단어 저장",
+    description=(
+        "검색 화면, 롤플레잉, 뉴스 리딩 등에서 선택한 단어를 현재 사용자의 단어장에 저장합니다. "
+        "태그가 비어 있으면 '미지정'으로 저장합니다."
+    ),
+)
 async def create_word(payload: SaveWordIn, session: SessionDep, _user: CurrentUserDep):
     word = payload.word.strip()
     if not word:
@@ -100,7 +78,11 @@ async def create_word(payload: SaveWordIn, session: SessionDep, _user: CurrentUs
     return {"ok": True, "message": message, "saved": True}
 
 
-@router.patch("/words/{word_id}")
+@router.patch(
+    "/words/{word_id}",
+    summary="단어 단건 수정",
+    description="단어장 한 항목의 상세 뜻, 영어 뜻, 예문, 태그, 복습일을 수정합니다.",
+)
 async def edit_word(word_id: int, payload: UpdateWordIn, session: SessionDep, _user: CurrentUserDep):
     ok = await update_word(
         session,
@@ -117,7 +99,11 @@ async def edit_word(word_id: int, payload: UpdateWordIn, session: SessionDep, _u
     return {"ok": True, "message": "✏️ 수정했어요!"}
 
 
-@router.delete("/words/{word_id}")
+@router.delete(
+    "/words/{word_id}",
+    summary="단어 단건 삭제",
+    description="현재 사용자의 단어장에서 지정한 단어 항목을 삭제합니다.",
+)
 async def remove_word(word_id: int, session: SessionDep, _user: CurrentUserDep):
     ok = await delete_word(session, _user["id"], word_id)
     if not ok:
@@ -125,7 +111,14 @@ async def remove_word(word_id: int, session: SessionDep, _user: CurrentUserDep):
     return {"ok": True, "message": "🗑️ 삭제했어요!"}
 
 
-@router.post("/words/bulk-update")
+@router.post(
+    "/words/bulk-update",
+    summary="단어장 일괄 수정",
+    description=(
+        "단어장 편집 모드에서 여러 단어의 본문, 뜻, 예문, 태그, 복습일을 한 번에 저장합니다. "
+        "영어 단어 변경 시 사용자 단어장 내 중복 단어는 건너뜁니다."
+    ),
+)
 async def bulk_update(payload: BulkUpdateIn, session: SessionDep, _user: CurrentUserDep):
     items = [it.model_dump() for it in payload.items]
     res = await bulk_update_words(session, _user["id"], items)
@@ -155,13 +148,21 @@ async def bulk_update(payload: BulkUpdateIn, session: SessionDep, _user: Current
     }
 
 
-@router.post("/words/bulk-delete")
+@router.post(
+    "/words/bulk-delete",
+    summary="단어장 다중 삭제",
+    description="선택한 단어 ID 목록을 현재 사용자의 단어장에서 한 번에 삭제합니다.",
+)
 async def bulk_delete(payload: IdsIn, session: SessionDep, _user: CurrentUserDep):
     deleted = await bulk_delete_words(session, _user["id"], payload.ids)
     return {"ok": True, "deleted": deleted, "message": f"🗑️ {deleted}개 삭제했어요!"}
 
 
-@router.post("/words/reorder")
+@router.post(
+    "/words/reorder",
+    summary="단어장 순서 저장",
+    description="드래그 정렬 결과로 전달된 단어 ID 순서를 sort_order에 반영합니다.",
+)
 async def reorder(payload: IdsIn, session: SessionDep, _user: CurrentUserDep):
     updated = await reorder_words(session, _user["id"], payload.ids)
     return {"ok": True, "updated": updated}
@@ -250,7 +251,14 @@ def _parse_upload(file: UploadFile, content: bytes) -> list[tuple[str, str]]:
     return _parse_rows_csv(content)
 
 
-@router.post("/words/import/preview")
+@router.post(
+    "/words/import/preview",
+    summary="단어 가져오기 미리보기",
+    description=(
+        "CSV/XLSX 파일을 파싱해서 저장 후보 행을 반환합니다. "
+        "이 단계에서는 DB에 저장하지 않고, 이미 보유한 단어 여부만 표시합니다."
+    ),
+)
 async def import_preview(
     *,
     file: UploadFile = File(...),
@@ -276,7 +284,11 @@ async def import_preview(
     return {"ok": True, "rows": out, "count": len(out)}
 
 
-@router.post("/words/import/commit")
+@router.post(
+    "/words/import/commit",
+    summary="단어 가져오기 적용",
+    description="미리보기 모달에서 검토·수정한 행을 실제 단어장에 저장합니다.",
+)
 async def import_commit(payload: ImportCommitIn, session: SessionDep, _user: CurrentUserDep):
     """미리보기에서 검토·편집한 행들을 실제로 저장한다."""
     items = [it.model_dump() for it in payload.items]

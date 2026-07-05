@@ -37,12 +37,20 @@ router = APIRouter(tags=["articles"])
 logger = logging.getLogger(__name__)
 
 
-@router.get("/article-sources")
+@router.get(
+    "/article-sources",
+    summary="뉴스 출처 목록 조회",
+    description="학습용 뉴스 카탈로그에서 사용할 수 있는 출처 목록을 반환합니다.",
+)
 async def article_sources(session: SessionDep):
     return {"sources": await list_article_sources(session)}
 
 
-@router.get("/articles")
+@router.get(
+    "/articles",
+    summary="뉴스 기사 목록 조회",
+    description="주제, 레벨, 검색어, 페이지 조건에 맞는 공개 뉴스 기사 목록을 조회합니다.",
+)
 async def article_catalog(
     topic: str = "",
     level: str = "",
@@ -67,7 +75,11 @@ async def article_catalog(
     )
 
 
-@router.get("/articles/{article_id}")
+@router.get(
+    "/articles/{article_id}",
+    summary="뉴스 기사 상세 조회",
+    description="공개된 학습용 뉴스 기사 한 건의 상세 내용과 청크 정보를 조회합니다.",
+)
 async def article_detail(article_id: int, session: SessionDep):
     data = await get_article_catalog_item(
         session, article_id, include_unpublished=False
@@ -77,7 +89,11 @@ async def article_detail(article_id: int, session: SessionDep):
     return data
 
 
-@router.post("/articles/{article_id}/sessions")
+@router.post(
+    "/articles/{article_id}/sessions",
+    summary="뉴스 리딩 세션 시작",
+    description="선택한 기사로 현재 사용자의 뉴스 리딩 학습 세션을 생성합니다.",
+)
 async def article_session_create(
     article_id: int, session: SessionDep, _user: CurrentUserDep
 ):
@@ -90,12 +106,20 @@ async def article_session_create(
     return {"ok": True, "session_id": session_id, "article_id": article_id}
 
 
-@router.get("/article-sessions")
+@router.get(
+    "/article-sessions",
+    summary="뉴스 리딩 세션 목록 조회",
+    description="현재 사용자의 뉴스 리딩 학습 세션 목록을 최신순으로 반환합니다.",
+)
 async def article_sessions(session: SessionDep, _user: CurrentUserDep):
     return {"sessions": await get_article_sessions(session, _user["id"])}
 
 
-@router.get("/article-sessions/{session_id}")
+@router.get(
+    "/article-sessions/{session_id}",
+    summary="뉴스 리딩 세션 상세 조회",
+    description="현재 사용자의 특정 뉴스 리딩 세션과 저장된 학습 결과를 조회합니다.",
+)
 async def article_session_detail(
     session_id: int, session: SessionDep, _user: CurrentUserDep
 ):
@@ -107,7 +131,11 @@ async def article_session_detail(
     return data
 
 
-@router.post("/article-sessions/{session_id}/study")
+@router.post(
+    "/article-sessions/{session_id}/study",
+    summary="뉴스 학습 자료 생성",
+    description="기사 본문을 바탕으로 핵심 표현, 요약, 이해 보조 자료를 AI로 생성하고 세션에 저장합니다.",
+)
 async def article_study(session_id: int, session: SessionDep, _user: CurrentUserDep):
     usage_token = start_usage_capture()
     try:
@@ -128,7 +156,11 @@ async def article_study(session_id: int, session: SessionDep, _user: CurrentUser
         await persist_usage_capture(usage_token, _user)
 
 
-@router.post("/article-sessions/{session_id}/ask")
+@router.post(
+    "/article-sessions/{session_id}/ask",
+    summary="뉴스 기사 질문하기",
+    description="사용자 질문과 관련 높은 기사 청크를 골라 AI 답변과 근거 청크를 반환합니다.",
+)
 async def article_ask(
     session_id: int,
     payload: ArticleAskIn,
@@ -152,7 +184,11 @@ async def article_ask(
         await persist_usage_capture(usage_token, _user)
 
 
-@router.post("/article-sessions/{session_id}/complete")
+@router.post(
+    "/article-sessions/{session_id}/complete",
+    summary="뉴스 리딩 완료 정리",
+    description="뉴스 리딩 세션을 마무리하며 학습 요약과 복습용 정리를 AI로 생성합니다.",
+)
 async def article_complete(session_id: int, session: SessionDep, _user: CurrentUserDep):
     usage_token = start_usage_capture()
     try:
@@ -172,7 +208,11 @@ async def article_complete(session_id: int, session: SessionDep, _user: CurrentU
         await persist_usage_capture(usage_token, _user)
 
 
-@router.delete("/article-sessions/{session_id}")
+@router.delete(
+    "/article-sessions/{session_id}",
+    summary="뉴스 리딩 세션 삭제",
+    description="현재 사용자의 뉴스 리딩 학습 세션을 삭제합니다.",
+)
 async def article_session_delete(
     session_id: int, session: SessionDep, _user: CurrentUserDep
 ):
@@ -180,7 +220,14 @@ async def article_session_delete(
     return {"ok": ok}
 
 
-@router.post("/article-sessions/{session_id}/save-words")
+@router.post(
+    "/article-sessions/{session_id}/save-words",
+    summary="뉴스 어휘 단어장 저장",
+    description=(
+        "뉴스 리딩에서 고른 어휘를 단어장에 저장합니다. 지정한 태그가 없으면 생성하고, "
+        "생성할 수 없으면 '미지정' 태그로 저장합니다."
+    ),
+)
 async def article_save_words(
     session_id: int,
     payload: ArticleSaveWordsIn,

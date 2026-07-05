@@ -107,7 +107,14 @@ def _raise_roleplay_limit_error(exc: LLMConcurrencyLimitError) -> None:
     raise HTTPException(status_code=429, detail=ROLEPLAY_LIMIT_MESSAGE) from exc
 
 
-@router.post("/roleplay/start")
+@router.post(
+    "/roleplay/start",
+    summary="롤플레잉 대화 시작",
+    description=(
+        "선택한 레벨, 시나리오, 태그, 상황 설명을 바탕으로 AI 상대역의 첫 메시지를 생성합니다. "
+        "태그 모드일 때만 해당 태그 단어를 참고합니다."
+    ),
+)
 async def roleplay_start(payload: RoleplayStartIn, session: SessionDep, _user: CurrentUserDep):
     request_lock = _acquire_roleplay_request_lock(_user["id"])
     usage_token = start_usage_capture()
@@ -130,7 +137,14 @@ async def roleplay_start(payload: RoleplayStartIn, session: SessionDep, _user: C
         _release_roleplay_request_lock(request_lock)
 
 
-@router.post("/roleplay/continue")
+@router.post(
+    "/roleplay/continue",
+    summary="롤플레잉 대화 이어가기",
+    description=(
+        "프론트가 전달한 전체 대화 기록과 새 사용자 메시지를 바탕으로 AI 답변과 한국어 코칭을 "
+        "함께 생성합니다."
+    ),
+)
 async def roleplay_continue(payload: RoleplayContinueIn, session: SessionDep, _user: CurrentUserDep):
     request_lock = _acquire_roleplay_request_lock(_user["id"])
     usage_token = start_usage_capture()
@@ -159,7 +173,14 @@ async def roleplay_continue(payload: RoleplayContinueIn, session: SessionDep, _u
         _release_roleplay_request_lock(request_lock)
 
 
-@router.post("/roleplay/continue/stream")
+@router.post(
+    "/roleplay/continue/stream",
+    summary="롤플레잉 스트리밍 응답",
+    description=(
+        "AI 답변을 NDJSON 스트림으로 순차 전송하고, 답변이 끝난 뒤 코칭과 갱신된 history를 "
+        "추가 이벤트로 반환합니다."
+    ),
+)
 async def roleplay_continue_stream(
     payload: RoleplayContinueIn,
     request: Request,
@@ -243,7 +264,13 @@ async def roleplay_continue_stream(
     )
 
 
-@router.post("/roleplay/summary")
+@router.post(
+    "/roleplay/summary",
+    summary="롤플레잉 대화 정리",
+    description=(
+        "대화 전체에서 요약, 다음에 재사용할 표현, 유용한 어휘를 추출하고 학습노트 세션으로 저장합니다."
+    ),
+)
 async def roleplay_summary(payload: RoleplaySummaryIn, session: SessionDep, _user: CurrentUserDep):
     """대화 전체에서 요약 + 유용 표현 + 유용 어휘를 추출하고 저장한다."""
     request_lock = _acquire_roleplay_request_lock(_user["id"])
@@ -281,7 +308,14 @@ async def roleplay_summary(payload: RoleplaySummaryIn, session: SessionDep, _use
         _release_roleplay_request_lock(request_lock)
 
 
-@router.post("/roleplay/save-words")
+@router.post(
+    "/roleplay/save-words",
+    summary="롤플레잉 어휘 단어장 저장",
+    description=(
+        "정리 페이지에서 선택한 어휘를 단어장에 저장합니다. 한국어 뜻이 비어 있거나 실패값이면 "
+        "번역을 보강합니다."
+    ),
+)
 async def roleplay_save_words(payload: RoleplaySaveWordsIn, session: SessionDep, _user: CurrentUserDep):
     """정리 페이지에서 선택한 어휘를 단어장에 저장한다(insert_words 재사용)."""
     usage_token = start_usage_capture()
@@ -313,7 +347,11 @@ async def roleplay_save_words(payload: RoleplaySaveWordsIn, session: SessionDep,
         await safe_persist_usage_capture(usage_token, _user)
 
 
-@router.post("/roleplay/tts")
+@router.post(
+    "/roleplay/tts",
+    summary="롤플레잉 답변 음성 생성",
+    description="AI 롤플레잉 답변 문장을 음성으로 변환하고 오디오 바이트를 직접 반환합니다.",
+)
 async def roleplay_tts(
     payload: RoleplayTtsIn,
     session: SessionDep,
@@ -362,13 +400,21 @@ async def roleplay_tts(
         await safe_persist_usage_capture(usage_token, _user)
 
 
-@router.get("/roleplay/sessions")
+@router.get(
+    "/roleplay/sessions",
+    summary="롤플레잉 학습노트 목록",
+    description="저장된 롤플레잉 정리 세션을 최신순으로 조회합니다.",
+)
 async def roleplay_sessions(session: SessionDep, _user: CurrentUserDep):
     """학습노트: 저장된 롤플레잉 결과 목록(최신순)."""
     return {"sessions": await get_roleplay_sessions(session, _user["id"])}
 
 
-@router.delete("/roleplay/sessions/{session_id}")
+@router.delete(
+    "/roleplay/sessions/{session_id}",
+    summary="롤플레잉 학습노트 삭제",
+    description="현재 사용자의 저장된 롤플레잉 정리 세션을 삭제합니다.",
+)
 async def roleplay_session_delete(session_id: int, session: SessionDep, _user: CurrentUserDep):
     ok = await delete_roleplay_session(session, _user["id"], session_id)
     return {"ok": ok}
