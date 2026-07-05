@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { DndContext, PointerSensor, useDraggable, useSensor, useSensors } from "@dnd-kit/core";
 import { Loader2, Minimize2, Send, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import englishBuddyLogo from "@/assets/english-buddy-logo.svg";
+import englishBuddyLogo from "@/assets/english-buddy-logo-cat.png";
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -60,7 +60,7 @@ function AgentLauncher({ style, dragging, hasNotice, onClick }) {
         transform: transformStyle(transform),
       }}
       className={[
-        "fixed z-40 flex h-14 w-14 touch-none items-center justify-center rounded-full border border-emerald-200 bg-white text-emerald-700 shadow-lg will-change-transform hover:shadow-xl",
+        "fixed z-40 flex h-14 w-14 touch-none items-center justify-center rounded-full border border-slate-200 bg-white text-emerald-700 shadow-lg will-change-transform hover:shadow-xl",
         dragging || isDragging ? "cursor-grabbing" : "cursor-grab",
       ].join(" ")}
       aria-label="Buddy Agent 열기"
@@ -200,17 +200,7 @@ export default function AgentPanel({
         >
           <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
             <div className="flex items-center gap-2">
-              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white">
-                <img
-                  src={englishBuddyLogo}
-                  alt=""
-                  aria-hidden="true"
-                  className="h-8 w-8"
-                />
-              </span>
-              <div>
-                <div className="text-sm font-semibold text-slate-900">Buddy Agent</div>
-              </div>
+              <div className="text-sm font-semibold text-slate-900">Buddy Agent</div>
             </div>
             <div className="flex items-center gap-1">
               <button

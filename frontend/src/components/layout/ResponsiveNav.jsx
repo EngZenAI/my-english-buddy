@@ -16,7 +16,7 @@ import {
   Settings,
   ShieldCheck,
 } from "lucide-react";
-import englishBuddyLogo from "@/assets/english-buddy-logo.svg";
+import englishBuddyLogo from "@/assets/english-buddy-logo-cat.png";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";

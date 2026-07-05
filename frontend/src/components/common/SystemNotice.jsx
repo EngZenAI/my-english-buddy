@@ -1,4 +1,4 @@
-import englishBuddyLogo from "../../assets/english-buddy-logo.svg";
+import englishBuddyLogo from "../../assets/english-buddy-logo-cat.png";
 import { Alert, AlertDescription } from "../ui/alert";
 
 export default function SystemNotice({ children, className = "", icon = true }) {

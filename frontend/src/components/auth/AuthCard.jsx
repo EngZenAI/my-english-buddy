@@ -1,5 +1,5 @@
 import { ShieldCheck } from "lucide-react";
-import englishBuddyLogo from "@/assets/english-buddy-logo.svg";
+import englishBuddyLogo from "@/assets/english-buddy-logo-cat.png";
 import {
   Card,
   CardContent,
