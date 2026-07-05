@@ -15,7 +15,6 @@ import { queryKeys } from "../queryClient";
 import AudioButton from "../components/AudioButton";
 import { LoadingSpinner, SkeletonBlock } from "../components/AsyncState";
 import MemberNotice from "../components/MemberNotice";
-import SystemNotice from "../components/common/SystemNotice";
 
 const DEBOUNCE_MS = 250;
 const RECENT_SEARCHES_KEY = "englishBuddy.recentSearches.v1";
@@ -45,32 +44,29 @@ const persistRecentSearches = (items) => {
 const getRecentKey = (entry) =>
   `${entry.type}:${(entry.query || entry.word || "").trim().toLowerCase()}`;
 
-const IconButton = ({ children, className = "", ...props }) => (
-  <button
-    type="button"
-    className={`inline-flex h-10 w-10 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
-    {...props}
-  >
-    {children}
-  </button>
-);
-
-const SaveButton = ({ saved, onClick, disabled }) => (
+const SaveButton = ({ saved, onClick, disabled, full = false }) => (
   <button
     type="button"
     onClick={onClick}
     disabled={disabled}
-    className={`inline-flex h-9 min-w-[104px] items-center justify-center gap-1.5 rounded-full border px-3.5 text-sm font-semibold transition-colors
+    className={`inline-flex items-center justify-center gap-1.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60
       ${
-        saved
-          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-          : "border-[#b7dcd3] bg-[#e7f3ef] text-[#286d65] hover:bg-[#d7ebe5]"
-      }
-      disabled:cursor-not-allowed disabled:opacity-60`}
+        full
+          ? `h-12 w-full rounded-xl text-sm shadow-sm active:scale-[0.99] ${
+              saved
+                ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "bg-brand-600 text-white hover:bg-brand-700"
+            }`
+          : `h-9 min-w-[104px] rounded-full border px-3.5 text-sm ${
+              saved
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100"
+            }`
+      }`}
   >
     {saved ? (
       <>
-        <CheckCircle2 className="h-4 w-4" />
+        <CheckCircle2 className="h-4 w-4 animate-save-pop" />
         저장됨
       </>
     ) : (
@@ -90,58 +86,108 @@ const ReadOnlyField = ({ label, value, rows = 3, loading }) => (
     <label className={`mb-3 block ${SECTION_LABEL_CLASS}`}>{label}</label>
     {loading ? (
       <SkeletonBlock className={rows >= 4 ? "h-28" : "h-24"} />
+    ) : value ? (
+      <div
+        className={`w-full overflow-auto whitespace-pre-wrap break-words rounded-md border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm leading-6 text-slate-800 ${
+          rows >= 4 ? "min-h-[7rem] max-h-64" : "min-h-[5.5rem] max-h-48"
+        }`}
+      >
+        {value}
+      </div>
     ) : (
-      <textarea
-        readOnly
-        rows={rows}
-        value={value || ""}
-        className="w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm leading-6 text-slate-900 outline-none"
-      />
+      <div
+        className={`flex items-center rounded-md border border-dashed border-slate-200 bg-slate-50/60 px-3 py-2.5 text-sm text-slate-400 ${
+          rows >= 4 ? "min-h-[7rem]" : "min-h-[5.5rem]"
+        }`}
+      >
+        검색하면 여기에 표시돼요
+      </div>
     )}
   </div>
 );
 
 const SearchInputRow = ({
   label,
+  badge,
   value,
   onChange,
   onSearch,
   placeholder,
   audio,
-}) => (
-  <div className={SECTION_CARD_CLASS}>
-    <div className="mb-3 flex items-center justify-between gap-3">
-      <span className={SECTION_LABEL_CLASS}>{label}</span>
-      {audio}
+  emphasize = false,
+}) => {
+  const textareaRef = useRef(null);
+  // 내용에 맞춰 높이를 자동으로 늘림(최대 ~5줄), 넘치면 그 안에서 스크롤
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+  }, [value]);
+  // 문장이 길어지면 큰 볼드체가 무거워 보이므로 폰트를 한 단계 낮춤
+  const long = (value || "").length > 22;
+  return (
+    <div className="group rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md focus-within:border-brand-400 focus-within:shadow-md focus-within:ring-4 focus-within:ring-brand-100/50">
+      <div className="mb-2.5 flex items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700">
+          {badge && (
+            <span className="inline-flex h-5 items-center rounded-full bg-brand-50 px-2 text-[10px] font-bold tracking-wider text-brand-600">
+              {badge}
+            </span>
+          )}
+          {label}
+        </span>
+        {audio}
+      </div>
+      <div className="flex items-end gap-1.5 rounded-xl border border-slate-200 bg-slate-50/70 p-1 transition focus-within:border-brand-400 focus-within:bg-white">
+        <textarea
+          ref={textareaRef}
+          value={value}
+          onChange={onChange}
+          onKeyDown={(e) => {
+            // Enter=검색, Shift+Enter=줄바꿈
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              onSearch();
+            }
+          }}
+          placeholder={placeholder}
+          rows={1}
+          className={`max-h-[120px] min-h-[2.5rem] min-w-0 flex-1 resize-none bg-transparent px-2.5 py-2 leading-6 text-slate-900 outline-none placeholder:font-normal placeholder:text-slate-400 ${
+            emphasize
+              ? long
+                ? "text-base font-semibold"
+                : "text-lg font-bold tracking-tight"
+              : "text-base font-medium"
+          }`}
+        />
+        <button
+          type="button"
+          onClick={onSearch}
+          aria-label={`${label} 검색`}
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-600 text-white shadow-sm transition hover:bg-brand-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Search className="h-4 w-4" />
+        </button>
+      </div>
     </div>
-    <div className="flex items-center gap-2">
-      <input
-        value={value}
-        onChange={onChange}
-        onKeyDown={(e) => e.key === "Enter" && onSearch()}
-        placeholder={placeholder}
-        className="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-[#5ba79a] focus:ring-2 focus:ring-[#d7ebe5]"
-      />
-      <IconButton onClick={onSearch} aria-label={`${label} 검색`}>
-        <Search className="h-4 w-4" />
-      </IconButton>
-    </div>
-  </div>
-);
+  );
+};
 
 function RecentSearchChips({ items, onSelect, onRemove }) {
   if (items.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap items-center gap-2 pt-2">
-      <span className="mr-1 text-xs font-semibold text-slate-500">최근 검색</span>
+    <div className="flex items-start gap-2 pt-2">
+      <span className="shrink-0 pt-1.5 text-xs font-semibold text-slate-500">최근 검색</span>
+      <div className="flex max-h-[5.5rem] min-w-0 flex-1 flex-wrap items-start gap-2 overflow-y-auto pr-1 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-200 hover:[&::-webkit-scrollbar-thumb]:bg-slate-300">
       {items.map((item) => {
         const title = item.word || item.query;
         const subtitle = item.korean || "";
         return (
           <span
             key={getRecentKey(item)}
-            className="group inline-flex max-w-full items-center overflow-hidden rounded-full border border-slate-200 bg-white text-xs shadow-sm transition hover:border-[#b7dcd3] hover:bg-[#f4faf8]"
+            className="group inline-flex max-w-[220px] items-center overflow-hidden rounded-full border border-slate-200 bg-white text-xs shadow-sm transition hover:border-brand-200 hover:bg-brand-50"
           >
             <button
               type="button"
@@ -171,6 +217,7 @@ function RecentSearchChips({ items, onSelect, onRemove }) {
           </span>
         );
       })}
+      </div>
     </div>
   );
 }
@@ -273,6 +320,20 @@ export default function SearchTab({ user, onRequireLogin }) {
     });
   };
 
+  // 이미 기록된(엔터로 추가된) 항목의 번역/단어만 보강. 없으면 아무것도 추가하지 않음
+  // → 실시간 검색이 새 항목을 만들지 않고, 엔터로 남긴 항목만 예쁘게 채워짐.
+  const enrichRecent = (type, query, patch) => {
+    const key = `${type}:${(query || "").trim().toLowerCase()}`;
+    setRecentSearches((prev) => {
+      if (!prev.some((item) => getRecentKey(item) === key)) return prev;
+      const next = prev.map((item) =>
+        getRecentKey(item) === key ? { ...item, ...patch } : item
+      );
+      persistRecentSearches(next);
+      return next;
+    });
+  };
+
   const saveWordMutation = useMutation({
     mutationFn: (payload) => api.saveWord(payload),
     onSuccess: (res, payload) => {
@@ -346,12 +407,6 @@ export default function SearchTab({ user, onRequireLogin }) {
       resetResultState();
       const nextWord = searchRequest.type === "en" ? searchRequest.word : eng.trim();
       setSettledWord(nextWord);
-      rememberSearch({
-        type: searchRequest.type,
-        query: searchRequest.word,
-        word: nextWord || searchRequest.word,
-        korean: searchRequest.type === "ko" ? searchRequest.word : kor.trim(),
-      });
       return;
     }
     applyCommon(r);
@@ -359,21 +414,14 @@ export default function SearchTab({ user, onRequireLogin }) {
       lastSearched.current.ko = r.korean_word;
       setKor(r.korean_word);
       setSettledWord(searchRequest.word);
-      rememberSearch({
-        type: "en",
-        query: searchRequest.word,
-        word: searchRequest.word,
-        korean: r.korean_word,
-      });
+      // 엔터로 이미 남긴 항목이면 번역만 채워줌(없으면 추가 안 함)
+      enrichRecent("en", searchRequest.word, { korean: r.korean_word });
     } else {
       lastSearched.current.en = r.english_word;
       setEng(r.english_word);
       setSettledWord(r.english_word);
-      rememberSearch({
-        type: "ko",
-        query: searchRequest.word,
+      enrichRecent("ko", searchRequest.word, {
         word: r.english_word || searchRequest.word,
-        korean: searchRequest.word,
       });
     }
   }, [searchQuery.data, searchRequest]);
@@ -386,12 +434,6 @@ export default function SearchTab({ user, onRequireLogin }) {
     setAppliedKey(key);
     const nextWord = searchRequest.type === "en" ? searchRequest.word : eng.trim();
     setSettledWord(nextWord);
-    rememberSearch({
-      type: searchRequest.type,
-      query: searchRequest.word,
-      word: nextWord || searchRequest.word,
-      korean: searchRequest.type === "ko" ? searchRequest.word : kor.trim(),
-    });
   }, [searchQuery.isError, searchRequest]);
 
   const runEnglish = (word) => {
@@ -418,6 +460,20 @@ export default function SearchTab({ user, onRequireLogin }) {
     resetResultState();
     setQuickQuery(w);
     setSearchRequest({ type: "ko", word: w });
+  };
+
+  // 엔터/검색 버튼을 누르면 결과를 기다리지 않고 즉시 최근 검색에 기록한 뒤 검색 실행
+  const commitSearch = (type) => {
+    const q = (type === "en" ? eng : kor).trim();
+    if (!q) return;
+    rememberSearch({
+      type,
+      query: q,
+      word: q,
+      korean: type === "ko" ? q : kor.trim(),
+    });
+    if (type === "en") runEnglish(eng);
+    else runKorean(kor);
   };
 
   const runSmartSearch = (value = quickQuery) => {
@@ -523,94 +579,23 @@ export default function SearchTab({ user, onRequireLogin }) {
 
   return (
     <div className="mx-auto max-w-[1180px] space-y-4">
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          runSmartSearch();
-        }}
-        className="space-y-2"
-      >
-        <div className="relative flex h-14 items-center overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition focus-within:border-[#5ba79a] focus-within:ring-2 focus-within:ring-[#d7ebe5]">
-          <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#2f7d73]" />
-          <input
-            value={quickQuery}
-            onChange={(e) => setQuickQuery(e.target.value)}
-            placeholder="Type word, sentence, or Korean meaning"
-            className="h-full min-w-0 flex-1 bg-transparent pl-11 pr-3 text-base text-slate-950 outline-none placeholder:text-slate-400"
-            style={{ paddingLeft: "2.75rem" }}
-          />
-          {quickQuery && (
-            <button
-              type="button"
-              onClick={() => {
-                setQuickQuery("");
-              }}
-              className="hidden h-8 w-8 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700 sm:inline-flex"
-              aria-label="검색어 지우기"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          )}
-          <button
-            type="submit"
-            className="inline-flex h-full items-center gap-2 border-l border-[#d7ebe5] bg-[#2f7d73] px-5 text-sm font-semibold text-white transition hover:bg-[#286d65] disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={!quickQuery.trim()}
-          >
-            {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-            검색
-          </button>
-        </div>
-        <RecentSearchChips
-          items={recentSearches}
-          onSelect={selectRecentSearch}
-          onRemove={removeRecentSearch}
-        />
-      </form>
+      <RecentSearchChips
+        items={recentSearches}
+        onSelect={selectRecentSearch}
+        onRemove={removeRecentSearch}
+      />
 
       {gate && !user && (
         <MemberNotice feature={gate} onRequireLogin={onRequireLogin} />
       )}
 
         <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
-          <div
-            className="border-b border-slate-100 px-5 py-5"
-            style={{
-              alignItems: "flex-start",
-              display: "flex",
-              flexWrap: "wrap",
-              gap: "1rem",
-              justifyContent: "space-between",
-            }}
-          >
-            <div className="min-w-0 flex-1">
-              {!hasSearch ? (
-                <SystemNotice>
-                  영어 단어, 한국어 뜻, 예문을 함께 정리하여 단어장에 추가해 보세요.
-                </SystemNotice>
-              ) : eng.trim() ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="truncate text-2xl font-bold tracking-normal text-slate-950">
-                    {eng.trim()}
-                  </h2>
-                  <AudioButton word={eng} lang="en" phonetic={phonetic} />
-                </div>
-              ) : null}
-              {phonetic && (
-                <p className="mt-1 text-sm text-slate-400">{phonetic}</p>
-              )}
-              {kor && (
-                <div className={eng.trim() || phonetic ? "mt-3" : ""}>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    한국어 뜻
-                  </p>
-                  <p className="mt-1 text-lg font-semibold leading-7 text-slate-900">
-                    {kor}
-                  </p>
-                </div>
-              )}
-            </div>
+          <div className="flex min-h-[3.5rem] flex-wrap items-center justify-between gap-3 px-5 pt-5">
+            <p className="min-w-0 text-sm font-medium text-slate-500">
+              영어 단어, 한국어 뜻, 예문을 함께 정리하여 단어장에 추가해 보세요.
+            </p>
             <div className="ml-auto flex shrink-0 items-center gap-2">
-              {searchQuery.isFetching ? (
+              {isSearching ? (
                 <LoadingSpinner label="검색 중" />
               ) : searchQuery.isError ? (
                 <span className="text-sm font-medium text-rose-500">검색 실패</span>
@@ -628,29 +613,32 @@ export default function SearchTab({ user, onRequireLogin }) {
           <div className="grid gap-4 p-5 md:grid-cols-2">
             <SearchInputRow
               label="영어 단어"
+              badge="EN"
               value={eng}
+              emphasize
               onChange={(e) => {
                 source.current = "en";
                 setEng(e.target.value);
               }}
-              onSearch={() => runEnglish(eng)}
+              onSearch={() => commitSearch("en")}
               placeholder="예: cardiovascular"
               audio={<AudioButton word={eng} lang="en" phonetic={phonetic} />}
             />
             <SearchInputRow
               label="한국어 뜻"
+              badge="KO"
               value={kor}
               onChange={(e) => {
                 source.current = "ko";
                 setKor(e.target.value);
               }}
-              onSearch={() => runKorean(kor)}
+              onSearch={() => commitSearch("ko")}
               placeholder="예: 심혈관"
               audio={<AudioButton word={kor} lang="ko" />}
             />
           </div>
 
-          {eng.trim() && kor.trim() && (
+          {eng.trim() && kor.trim() ? (
             <div className="px-5 pb-5">
               <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -666,7 +654,7 @@ export default function SearchTab({ user, onRequireLogin }) {
                     type="button"
                     onClick={handleSlang}
                     disabled={slangMutation.isPending || !eng.trim()}
-                    className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md border border-[#b7dcd3] bg-white px-3 text-xs font-semibold text-[#286d65] shadow-sm transition hover:bg-[#f4faf8] disabled:cursor-not-allowed disabled:opacity-50"
+                    className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md border border-brand-200 bg-white px-3 text-xs font-semibold text-brand-700 shadow-sm transition hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {slangMutation.isPending ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -682,39 +670,118 @@ export default function SearchTab({ user, onRequireLogin }) {
                     value={slangText}
                     onChange={(e) => setSlangText(e.target.value)}
                     placeholder="AI가 분석한 의미를 확인한 뒤 필요하면 고쳐서 저장할 수 있어요"
-                    className="mt-3 w-full resize-none rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm leading-6 text-slate-900 outline-none transition focus:border-[#5ba79a] focus:ring-2 focus:ring-[#d7ebe5]"
+                    className="mt-3 w-full resize-none rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm leading-6 text-slate-900 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
                   />
                 )}
               </div>
             </div>
+          ) : (
+            <div className="px-5 pb-5">
+              <div className="border-t border-slate-200" />
+            </div>
           )}
 
-          <div className="space-y-5 border-t border-slate-100 p-5">
-            <div className={SECTION_CARD_CLASS}>
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <label className={SECTION_LABEL_CLASS}>
-                  예문 편집
-                </label>
-                <span className="text-xs font-medium text-slate-500">
-                  {customExample.length}/200
-                </span>
+          <div className="space-y-4 p-5 pt-0">
+            <div className={`grid gap-4 ${user ? "md:grid-cols-2" : ""}`}>
+              {/* 예문 편집 */}
+              <div className={SECTION_CARD_CLASS}>
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <label className={SECTION_LABEL_CLASS}>
+                    예문 편집
+                  </label>
+                  <span className="text-xs font-medium text-slate-500">
+                    {customExample.length}/200
+                  </span>
+                </div>
+                <textarea
+                  rows={2}
+                  value={customExample}
+                  onChange={(e) => setCustomExample(e.target.value)}
+                  placeholder="내 상황에 맞는 예문을 직접 적어보세요"
+                  className="w-full resize-none rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm leading-6 text-slate-900 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
+                />
+                {example && customExample !== example && (
+                  <button
+                    type="button"
+                    onClick={() => setCustomExample(example)}
+                    className="mt-2 text-xs font-medium text-brand-700 hover:text-brand-900"
+                  >
+                    사전 예문으로 되돌리기
+                  </button>
+                )}
               </div>
-              <textarea
-                rows={4}
-                value={customExample}
-                onChange={(e) => setCustomExample(e.target.value)}
-                placeholder="내 상황에 맞는 예문을 직접 적어보세요"
-                className="w-full resize-none rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm leading-6 text-slate-900 outline-none transition focus:border-[#5ba79a] focus:ring-2 focus:ring-[#d7ebe5]"
-              />
-              {example && customExample !== example && (
-                <button
-                  type="button"
-                  onClick={() => setCustomExample(example)}
-                  className="mt-2 text-xs font-medium text-[#286d65] hover:text-[#184843]"
-                >
-                  사전 예문으로 되돌리기
-                </button>
-              )}
+
+              {/* 태그 (예문 편집 오른쪽) */}
+              {user && (
+                <div className={SECTION_CARD_CLASS}>
+                  <div className="mb-3 flex items-center gap-2">
+                    <Tags className="h-4 w-4 text-brand-600" />
+                    <span className={SECTION_LABEL_CLASS}>태그</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {labelsQuery.isPending ? (
+                      <span className="text-xs text-slate-400">태그 불러오는 중…</span>
+                    ) : (
+                      labels.map((name) => (
+                        <button
+                          key={name}
+                          type="button"
+                          onClick={() => setLabel(name)}
+                          className={`h-8 rounded-full border px-3 text-[13px] font-medium transition-colors ${
+                            label === name
+                              ? "border-brand-600 bg-brand-600 text-white"
+                              : "border-slate-300 bg-white text-slate-600 hover:bg-brand-50"
+                          }`}
+                        >
+                          {name}
+                        </button>
+                      ))
+                    )}
+
+                    {adding ? (
+                      <span className="inline-flex items-center gap-1">
+                        <input
+                          autoFocus
+                          value={newLabel}
+                          onChange={(e) => setNewLabel(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleAddLabel();
+                            if (e.key === "Escape") {
+                              setAdding(false);
+                              setNewLabel("");
+                            }
+                          }}
+                          placeholder="새 태그"
+                          className="h-8 w-24 rounded-full border border-slate-300 px-3 text-[13px] outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleAddLabel}
+                          disabled={addLabelMutation.isPending}
+                          className="inline-flex h-8 items-center gap-1 rounded-full border border-brand-200 bg-brand-50 px-3 text-[13px] font-semibold text-brand-700 transition hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          추가
+                        </button>
+                      </span>
+                    ) : labels.length < 20 ? (
+                      <button
+                        type="button"
+                        onClick={() => setAdding(true)}
+                        className="inline-flex h-8 items-center gap-1 rounded-full border border-dashed border-slate-300 px-3 text-[13px] font-medium text-slate-500 transition hover:bg-slate-50"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        태그 추가
+                      </button>
+                    ) : (
+                      <span className="text-xs text-slate-400">태그 최대 20개</span>
+                    )}
+                  </div>
+                {labelError && (
+                  <p className="mt-2 text-xs text-rose-500">{labelError}</p>
+                )}
+              </div>
+            )}
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
@@ -731,73 +798,6 @@ export default function SearchTab({ user, onRequireLogin }) {
                 loading={searchLoading}
               />
             </div>
-
-            {user && (
-              <div className={SECTION_CARD_CLASS}>
-                <div className="mb-3 flex items-center gap-2">
-                  <Tags className="h-4 w-4 text-[#2f7d73]" />
-                  <span className={SECTION_LABEL_CLASS}>태그</span>
-                </div>
-                <div className="flex flex-col gap-2 md:flex-row md:items-center">
-                  <select
-                    value={label}
-                    onChange={(e) => setLabel(e.target.value)}
-                    className="h-11 min-w-0 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-[#5ba79a] focus:ring-2 focus:ring-[#d7ebe5] md:w-56"
-                  >
-                    {labelsQuery.isPending && <option value="미지정">태그 불러오는 중</option>}
-                    {!labelsQuery.isPending &&
-                      labels.map((name) => (
-                        <option key={name} value={name}>
-                          {name}
-                        </option>
-                      ))}
-                  </select>
-
-                  {adding ? (
-                    <div className="flex min-w-0 flex-1 items-center gap-2">
-                      <input
-                        autoFocus
-                        value={newLabel}
-                        onChange={(e) => setNewLabel(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") handleAddLabel();
-                          if (e.key === "Escape") {
-                            setAdding(false);
-                            setNewLabel("");
-                          }
-                        }}
-                        placeholder="새 태그"
-                        className="h-11 min-w-0 flex-1 rounded-md border border-slate-300 px-3 text-sm outline-none transition focus:border-[#5ba79a] focus:ring-2 focus:ring-[#d7ebe5]"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleAddLabel}
-                        disabled={addLabelMutation.isPending}
-                        className="inline-flex h-11 items-center gap-2 rounded-md border border-[#b7dcd3] bg-[#e7f3ef] px-3 text-sm font-semibold text-[#286d65] transition hover:bg-[#d7ebe5] disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <Plus className="h-4 w-4" />
-                        추가
-                      </button>
-                    </div>
-                  ) : labels.length < 20 ? (
-                    <button
-                      type="button"
-                      onClick={() => setAdding(true)}
-                      className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-dashed border-slate-300 px-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
-                    >
-                      <Plus className="h-4 w-4" />
-                      태그 추가
-                    </button>
-                  ) : (
-                    <span className="text-xs text-slate-400">태그 최대 20개</span>
-                  )}
-                </div>
-                {labelError && (
-                  <p className="mt-2 text-xs text-rose-500">{labelError}</p>
-                )}
-              </div>
-            )}
-
           </div>
         </section>
     </div>

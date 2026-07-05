@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { Loader2, Square, Volume2 } from "lucide-react";
 import { api } from "../api";
 
 // 단어 발음을 서버 gTTS로 받아 재생하는 버튼 (기존 Gradio 🔊 버튼 대체)
@@ -44,25 +45,31 @@ export default function AudioButton({ word, lang = "en", phonetic = "" }) {
   return (
     <span className="inline-flex items-center gap-1 py-0.5">
       <audio ref={audioRef} />
-      <button
-        type="button"
-        onClick={play}
-        disabled={!hasWord}
-        title={hasWord ? "클릭하여 발음 듣기" : ""}
-        className={`w-7 h-7 rounded-full inline-flex items-center justify-center text-base
-                    transition-colors ${
-                      hasWord
-                        ? "text-gray-500 hover:bg-brand-50 cursor-pointer"
-                        : "text-gray-300 cursor-default select-none"
-                    }`}
-      >
-        {loading ? "…" : playing ? "⏹" : "🔊"}
-      </button>
       {hasWord && phonetic && (
         <span className="text-[11px] text-gray-400 font-serif align-middle">
           {phonetic}
         </span>
       )}
+      <button
+        type="button"
+        onClick={play}
+        disabled={!hasWord}
+        title={hasWord ? "클릭하여 발음 듣기" : ""}
+        className={`w-7 h-7 rounded-full inline-flex items-center justify-center
+                    transition-colors ${
+                      hasWord
+                        ? "text-slate-500 hover:bg-brand-50 hover:text-brand-600 cursor-pointer"
+                        : "text-slate-300 cursor-default select-none"
+                    }`}
+      >
+        {loading ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : playing ? (
+          <Square className="h-4 w-4 fill-current" />
+        ) : (
+          <Volume2 className="h-4 w-4" />
+        )}
+      </button>
     </span>
   );
 }

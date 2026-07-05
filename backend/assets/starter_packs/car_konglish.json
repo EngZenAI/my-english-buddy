@@ -1,0 +1,96 @@
+{
+  "id": "car_konglish",
+  "title": "자동차 콩글리시",
+  "tag": "car_konglish",
+  "description": "운전·자동차 관련 한국식 표현을 진짜 영어로. 핸들·썬팅·백미러 같은 콩글리시 바로잡기.",
+  "words": [
+    {
+      "word": "interchange/exit",
+      "korean": "IC"
+    },
+    {
+      "word": "rest/service area",
+      "korean": "휴게소"
+    },
+    {
+      "word": "speed bump",
+      "korean": "과속방지턱"
+    },
+    {
+      "word": "tow",
+      "korean": "견인"
+    },
+    {
+      "word": "car insurance",
+      "korean": "자동차 보험"
+    },
+    {
+      "word": "license plate",
+      "korean": "번호판"
+    },
+    {
+      "word": "gas stations/petrol station",
+      "korean": "주유소"
+    },
+    {
+      "word": "fill up/refuel",
+      "korean": "주유"
+    },
+    {
+      "word": "horn",
+      "korean": "경적"
+    },
+    {
+      "word": "hazard lights/flashers",
+      "korean": "비상등"
+    },
+    {
+      "word": "indicator/blinker",
+      "korean": "깜빡이"
+    },
+    {
+      "word": "turn/shut off the engine",
+      "korean": "시동을 끄다"
+    },
+    {
+      "word": "start the car/engine",
+      "korean": "시동을 걸다"
+    },
+    {
+      "word": "flat tire",
+      "korean": "타이어 펑크"
+    },
+    {
+      "word": "camper",
+      "korean": "캠핑카"
+    },
+    {
+      "word": "convertible",
+      "korean": "오픈카"
+    },
+    {
+      "word": "window tint",
+      "korean": "썬팅"
+    },
+    {
+      "word": "dash cam",
+      "korean": "블랙박스"
+    },
+    {
+      "word": "hood/bonnet",
+      "korean": "본넷"
+    },
+    {
+      "word": "rearview mirror",
+      "korean": "백미러"
+    },
+    {
+      "word": "Mercedes",
+      "korean": "벤츠(메르세데스)"
+    },
+    {
+      "word": "steering wheel",
+      "korean": "핸들"
+    }
+  ]
+}

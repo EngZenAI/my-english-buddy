@@ -189,6 +189,13 @@ export const api = {
       body: JSON.stringify({ items, overwrite }),
     }),
 
+  // ── 기본 제공(예시) 단어장 = 스타터 팩 ──
+  starterPacks: () => jsonFetch("/api/words/starter-packs"),
+  importStarterPack: (id) =>
+    jsonFetch(`/api/words/starter-packs/${encodeURIComponent(id)}/import`, {
+      method: "POST",
+    }),
+
   // ── 슬랭 ──
   slang: (word, korean) =>
     jsonFetch("/api/slang", {

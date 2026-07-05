@@ -18,6 +18,7 @@ from backend.db.repositories import (
 )
 from backend.exceptions import FILE_IMPORT_ERRORS
 from backend.routers.common import CurrentUserDep
+from backend.starter_packs import get_starter_pack, list_starter_packs
 from backend.schemas.wordbook import (
     BulkUpdateIn,
     IdsIn,
@@ -304,3 +305,50 @@ async def import_commit(payload: ImportCommitIn, session: SessionDep, _user: Cur
         "message": ", ".join(parts),
         **result,
     }
+
+
+@router.get("/words/starter-packs")
+async def starter_packs(session: SessionDep, _user: CurrentUserDep):
+    """기본 제공(예시) 단어장 목록. 각 팩이 이미 몇 개 담겨 있는지도 함께 알려준다."""
+    existing = await existing_words_lower(session, _user["id"])
+    out = []
+    for pack in list_starter_packs():
+        words = pack["words"]
+        already = sum(1 for w in words if w["word"].lower() in existing)
+        out.append(
+            {
+                "id": pack["id"],
+                "title": pack["title"],
+                "tag": pack["tag"],
+                "description": pack["description"],
+                "count": len(words),
+                "already": already,
+            }
+        )
+    return {"packs": out}
+
+
+@router.post("/words/starter-packs/{pack_id}/import")
+async def import_starter_pack(pack_id: str, session: SessionDep, _user: CurrentUserDep):
+    """기본 제공 단어장을 사용자 단어장에 담는다.
+    팩의 태그를 없으면 만들고, 이미 있는 단어는 건너뛴다(중복 방지).
+    삭제 후 다시 눌러도 빠진 단어만 다시 채워진다."""
+    pack = get_starter_pack(pack_id)
+    if not pack:
+        return {"ok": False, "message": "해당 단어장을 찾을 수 없어요."}
+    tag = pack["tag"]
+    await add_label(session, _user["id"], tag)
+    items = [
+        {"word": w["word"], "korean": w.get("korean", ""), "tag": tag}
+        for w in pack["words"]
+    ]
+    result = await insert_words(session, _user["id"], items, overwrite=False)
+    added = result.get("added", 0)
+    skipped = result.get("skipped", 0)
+    if added:
+        message = f"'{pack['title']}' 단어장에서 {added}개를 담았어요!"
+        if skipped:
+            message += f" ({skipped}개는 이미 있어 건너뜀)"
+    else:
+        message = f"이미 '{pack['title']}' 단어장을 모두 담았어요."
+    return {"ok": True, "message": message, "tag": tag, **result}
