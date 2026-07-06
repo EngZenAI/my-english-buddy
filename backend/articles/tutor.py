@@ -30,7 +30,7 @@ def _json_from_text(raw: str, fallback: Any):
         return fallback
 
 
-def _lead_chunks(chunks: list[dict[str, Any]], max_chunks: int = 10, max_chars: int = 700) -> list[dict[str, Any]]:
+def _lead_chunks(chunks: list[dict[str, Any]], max_chunks: int = 40, max_chars: int = 700) -> list[dict[str, Any]]:
     if not chunks:
         return []
     out = []
@@ -60,15 +60,15 @@ def _lead_chunks(chunks: list[dict[str, Any]], max_chunks: int = 10, max_chars: 
     return out
 
 
-def _lead_chunks_json(chunks: list[dict[str, Any]]) -> str:
-    return json.dumps(_lead_chunks(chunks), ensure_ascii=False)
+def _lead_chunks_json(chunks: list[dict[str, Any]], max_chunks: int = 40) -> str:
+    return json.dumps(_lead_chunks(chunks, max_chunks=max_chunks), ensure_ascii=False)
 
 
 def generate_article_study(title: str, source: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:
     prompt = build_article_study_prompt(
         title=title or "",
         source=source or "",
-        chunks_json=_lead_chunks_json(chunks),
+        chunks_json=_lead_chunks_json(chunks, max_chunks=len(chunks) or 40),
     )
     raw = _invoke_tracked_llm("article", "study", prompt)
     data = _json_from_text(raw, {"level": "medium", "paragraphs": []})

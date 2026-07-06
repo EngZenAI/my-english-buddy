@@ -578,6 +578,20 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
+  const showCatalog = () => {
+    if (
+      viewModeRef.current === "reader" &&
+      readerHistoryPushedRef.current &&
+      typeof window !== "undefined"
+    ) {
+      readerHistoryPushedRef.current = false;
+      setViewMode("catalog");
+      window.history.back();
+      return;
+    }
+    setViewMode("catalog");
+  };
+
   const sessionData = sessionQuery.data || null;
   const study = sessionData?.study_json || studyMutation.data?.study || {};
   const chunks = sessionData?.chunks || studyMutation.data?.chunks || [];
@@ -954,7 +968,7 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
                     setCatalogPage(1);
                     setSelectedArticleId(null);
                     setTopic(event.target.value);
-                    setViewMode("catalog");
+                    showCatalog();
                   }}
                   className="h-9 w-full appearance-none rounded-md border border-white/10 bg-white/10 px-3 pr-9 text-sm font-semibold text-white outline-none ring-offset-[#10171b] transition hover:bg-white/20 focus:ring-2 focus:ring-brand-400"
                 >
@@ -974,7 +988,7 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => setViewMode("catalog")}
+              onClick={showCatalog}
               className="h-9 border-white/20 bg-white/10 px-3 text-white hover:bg-white/20 hover:text-white"
             >
               <ArrowLeft className="h-4 w-4" />

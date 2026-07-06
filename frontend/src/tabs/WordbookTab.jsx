@@ -520,6 +520,10 @@ export default function WordbookTab({ user, onRequireLogin }) {
 
   // ── 드래그 정렬 ('전체' 보기에서만) ──
   const onDrop = async (i) => {
+    if (filter !== "" || searchNeedle || rowEdit) {
+      setDragIndex(null);
+      return;
+    }
     if (dragIndex === null || dragIndex === i) {
       setDragIndex(null);
       return;
@@ -548,7 +552,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
 
   const loading = wordsQuery.isPending || labelsQuery.isPending;
   const refetching = wordsQuery.isFetching && !wordsQuery.isPending;
-  const canReorder = filter === "" && !rowEdit; // 순서 변경은 '전체' 보기에서만
+  const canReorder = filter === "" && !searchNeedle && !rowEdit; // 순서 변경은 검색 없는 '전체' 보기에서만
 
   // ── 페이지네이션 (40개씩) ──
   const totalPages = Math.max(1, Math.ceil(words.length / PAGE_SIZE));

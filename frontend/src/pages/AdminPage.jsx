@@ -1483,7 +1483,7 @@ function ArticlesTab({ enabled }) {
               <Input
                 value={articleSearchInput}
                 onChange={(event) => setArticleSearchInput(event.target.value)}
-                placeholder="제목, 출처, URL 검색"
+                placeholder="제목, 설명, 주제, 출처, URL 검색"
                 className="h-9 pl-9 pr-10"
               />
               <Button

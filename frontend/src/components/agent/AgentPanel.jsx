@@ -341,7 +341,7 @@ export default function AgentPanel({
                           <AgentActionButton
                             key={`${action.type}-${action.label}-${index}`}
                             action={action}
-                            disabled={busy}
+                            disabled={busy || Boolean(pendingAction)}
                             onRun={runAction}
                           />
                         ))}

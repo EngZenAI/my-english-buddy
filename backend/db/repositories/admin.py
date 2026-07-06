@@ -73,7 +73,7 @@ async def get_admin_api_usage(
 ) -> dict:
     """Admin aggregate for the usage/cost screen.
 
-    Costs use the current WatsonX token pricing table configured above.
+    Costs use the shared token pricing profiles in backend.usage.pricing.
     They are returned as estimated_cost_usd because provider invoices remain
     the final billing source.
     """

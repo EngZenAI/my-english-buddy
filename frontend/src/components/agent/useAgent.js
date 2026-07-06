@@ -50,6 +50,7 @@ export function useAgent({ user, currentTab, hidden, onRequireLogin, onAction })
   const [jobId, setJobId] = useState("");
   const [hasUnreadNotice, setHasUnreadNotice] = useState(false);
   const [pendingAction, setPendingAction] = useState(null);
+  const pendingActionRef = useRef(null);
 
   const createMessage = (role, data) => {
     messageSeqRef.current += 1;
@@ -150,6 +151,7 @@ export function useAgent({ user, currentTab, hidden, onRequireLogin, onAction })
       onRequireLogin?.();
       return;
     }
+    if (pendingActionRef.current || confirmMutation.isPending) return;
     if (!isServerAgentTool(action)) {
       onAction?.(action);
       setMessages((prev) => [
@@ -158,7 +160,8 @@ export function useAgent({ user, currentTab, hidden, onRequireLogin, onAction })
       ]);
       return;
     }
-    if (action.destructive || CONFIRM_ACTION_TYPES.has(action.type)) {
+    if (action.requires_confirmation || action.destructive || CONFIRM_ACTION_TYPES.has(action.type)) {
+      pendingActionRef.current = action;
       setPendingAction(action);
       return;
     }
@@ -168,11 +171,13 @@ export function useAgent({ user, currentTab, hidden, onRequireLogin, onAction })
   const confirmPendingAction = () => {
     if (!pendingAction) return;
     const action = pendingAction;
+    pendingActionRef.current = null;
     setPendingAction(null);
     confirmMutation.mutate(action);
   };
 
   const cancelPendingAction = () => {
+    pendingActionRef.current = null;
     setPendingAction(null);
   };
 

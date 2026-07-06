@@ -47,7 +47,7 @@ def split_article_text(text: str, max_chars: int = 1200) -> list[str]:
                 chunks.append(current)
             continue
         chunks.append(paragraph)
-    return chunks[:12]
+    return chunks
 
 
 def estimate_tokens(text: str) -> int:
