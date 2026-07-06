@@ -293,21 +293,43 @@ export default function ResponsiveNav({
       {/* ========================================================================= */}
       {/* 상단 미니 헤더 */}
       <header className="md:hidden sticky top-0 left-0 right-0 h-14 border-b border-[#e1ddd4] bg-[#f6f3ee]/95 backdrop-blur supports-[backdrop-filter]:bg-[#f6f3ee]/75 px-4 flex items-center justify-between z-40 select-none">
-        <div className="flex items-center gap-2">
-          {!isHome && (
-            <Button
+        <div className="flex min-w-0 items-center gap-2">
+          {isHome ? (
+            <button
               type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => setView("home")}
-              className="h-9 w-9 rounded-full"
+              onClick={goHome}
+              className="flex min-w-0 items-center gap-2 rounded-lg text-left outline-none transition-opacity active:opacity-80 focus-visible:ring-2 focus-visible:ring-[#2f7d73]/30"
+              title="English Buddy"
             >
-              <ChevronLeft className="h-5 w-5" />
-            </Button>
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center">
+                <img
+                  src={englishBuddyLogo}
+                  alt=""
+                  aria-hidden="true"
+                  className="block h-9 w-9 drop-shadow-[0_8px_18px_rgba(47,125,115,0.18)]"
+                  draggable="false"
+                />
+              </span>
+              <span className="truncate text-lg font-extrabold tracking-tight text-slate-900">
+                English Buddy
+              </span>
+            </button>
+          ) : (
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => setView("home")}
+                className="h-9 w-9 rounded-full"
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </Button>
+              <span className="truncate text-base font-bold tracking-tight text-foreground">
+                {getMobileTitle()}
+              </span>
+            </>
           )}
-          <span className={`font-bold tracking-tight text-foreground ${isHome ? "text-lg text-[#2f7d73] font-extrabold" : "text-base"}`}>
-            {getMobileTitle()}
-          </span>
         </div>
 
         <div className="flex items-center gap-1">
@@ -367,7 +389,7 @@ export default function ResponsiveNav({
       </header>
 
       {/* 하단 고정 캡슐 탭 바 (ref/image.png 디자인 이식) */}
-      <nav className="md:hidden fixed bottom-4 left-4 right-4 h-15 bg-white/95 backdrop-blur border border-[#e1ddd4]/80 rounded-full flex items-center justify-around z-45 shadow-[0_10px_30px_rgba(99,88,72,0.10)] px-2.5">
+      <nav className="fixed bottom-4 left-4 right-4 z-[45] flex h-[3.75rem] items-center justify-around rounded-full border border-[#e1ddd4]/80 bg-white/95 px-2.5 shadow-[0_10px_30px_rgba(99,88,72,0.10)] backdrop-blur md:hidden">
         {tabs.map((tab) => {
           const Icon = tabIcons[tab.id] || Search;
           const isActive = isHome && value === tab.id;
