@@ -1,3 +1,4 @@
+from langchain_core.messages import SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
 
 from backend.prompts.common import render_messages, render_prompt, roleplay_history_messages
@@ -176,7 +177,7 @@ def build_roleplay_start_prompt(
     system = roleplay_system_prompt(level, scenario, tag, situation, words)
     return render_messages(
         [
-            ("system", system),
+            SystemMessage(content=system),
             (
                 "human",
                 "Start the role-play now: set the scene briefly, then greet me and ask your first question.",
@@ -208,7 +209,7 @@ def build_roleplay_continue_prompt(
     )
     return render_messages(
         [
-            ("system", system),
+            SystemMessage(content=system),
             ("placeholder", "{history}"),
             ("human", "{user_msg}"),
         ],

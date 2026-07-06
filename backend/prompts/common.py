@@ -15,7 +15,7 @@ def render_text_prompt(template: ChatPromptTemplate, variables: dict[str, Any] |
     return "\n\n".join(str(message.content or "") for message in messages).strip()
 
 
-def render_messages(messages: list[tuple[str, str]], variables: dict[str, Any] | None = None):
+def render_messages(messages: list[Any], variables: dict[str, Any] | None = None):
     """Build and render a message-based ChatPromptTemplate."""
     return ChatPromptTemplate.from_messages(messages).invoke(variables or {})
 
