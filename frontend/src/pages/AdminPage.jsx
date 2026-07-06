@@ -103,7 +103,8 @@ function number(value) {
 }
 
 function money(value) {
-  return `$${Number(value || 0).toFixed(4)}`;
+  const numeric = Number(value || 0);
+  return `$${numeric.toFixed(numeric > 0 && numeric < 0.01 ? 6 : 4)}`;
 }
 
 function percent(value) {
@@ -449,7 +450,7 @@ function ApiUsageTab({ enabled }) {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-2xl font-black tracking-normal text-slate-950">API 사용량 및 비용</h2>
-            <p className="mt-1 text-sm text-slate-500">기능별 호출량, 실패율, 추정 비용을 확인합니다.</p>
+            <p className="mt-1 text-sm text-slate-500">기능별 호출량, 실패율, WatsonX 단가 기준 비용을 확인합니다.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex rounded-md border border-slate-200 bg-white p-1">
@@ -522,7 +523,7 @@ function ApiUsageTab({ enabled }) {
         <div className="grid gap-3 md:grid-cols-3">
           <MiniStat label="선택 기간 요청 수" value={number(summary.request_count)} helper="로그인 사용자 기준 기록" />
           <MiniStat label="실패 요청" value={number(summary.failed_count)} helper="success=false 이벤트" tone={summary.failed_count ? "danger" : "default"} />
-          <MiniStat label="추정 비용" value={money(summary.estimated_cost_usd)} helper="토큰/문자 기반 임시 산식" />
+          <MiniStat label="사용 비용" value={money(summary.estimated_cost_usd)} helper="모델별 WatsonX 토큰 단가 기준" />
         </div>
 
         {usageQuery.isPending ? (
@@ -874,6 +875,8 @@ function LearnersTab({ enabled }) {
 function ArticlesTab({ enabled }) {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
+  const [articleSearchInput, setArticleSearchInput] = useState("");
+  const [articleSearch, setArticleSearch] = useState("");
   const [selectedId, setSelectedId] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [feedSourceKey, setFeedSourceKey] = useState("");
@@ -886,8 +889,8 @@ function ArticlesTab({ enabled }) {
   const editHydrationRef = useRef({ articleId: null, hydrated: false, dirtyFields: {} });
 
   const articlesQuery = useQuery({
-    queryKey: queryKeys.articleAdminList(page),
-    queryFn: () => api.articleAdminList(page),
+    queryKey: queryKeys.articleAdminList(page, articleSearch),
+    queryFn: () => api.articleAdminList(page, articleSearch),
     enabled,
   });
   const sourcesQuery = useQuery({
@@ -1468,7 +1471,31 @@ function ArticlesTab({ enabled }) {
         <div className="rounded-md border border-slate-200 bg-white">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
             <span className="text-sm font-bold text-slate-600">자료 목록</span>
-            <span className="text-xs text-slate-400">공개 상태는 행의 토글로 변경합니다.</span>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                setPage(1);
+                setArticleSearch(articleSearchInput.trim());
+              }}
+              className="relative w-full max-w-sm"
+            >
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                value={articleSearchInput}
+                onChange={(event) => setArticleSearchInput(event.target.value)}
+                placeholder="제목, 설명, 주제, 출처, URL 검색"
+                className="h-9 pl-9 pr-10"
+              />
+              <Button
+                type="submit"
+                variant="ghost"
+                size="icon"
+                className="absolute right-0 top-0 h-9 w-9"
+                aria-label="뉴스 자료 검색"
+              >
+                <Search className="h-4 w-4" />
+              </Button>
+            </form>
           </div>
           <div className="p-4">
             <DataTable

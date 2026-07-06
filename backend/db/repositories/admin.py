@@ -13,6 +13,7 @@ from backend.db.repositories.common import (
 )
 from backend.db.session import SessionFactory
 from backend.exceptions import SQLALCHEMY_ERRORS
+from backend.usage.pricing import estimate_llm_cost_usd
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +73,9 @@ async def get_admin_api_usage(
 ) -> dict:
     """Admin aggregate for the usage/cost screen.
 
-    Costs are rough operational estimates until provider billing is wired in.
-    They are intentionally returned as estimated_cost_usd.
+    Costs use the shared token pricing profiles in backend.usage.pricing.
+    They are returned as estimated_cost_usd because provider invoices remain
+    the final billing source.
     """
     range_key = (range_key or "day").strip().lower()
     if range_key not in {"day", "week", "month", "year", "custom"}:
@@ -172,9 +174,7 @@ async def get_admin_api_usage(
     for item in _rows(result):
         request_count = int(item.get("request_count") or 0)
         failed_count = int(item.get("failed_count") or 0)
-        total_tokens = int(item.get("total_tokens") or 0)
-        total_chars = int(item.get("input_chars") or 0) + int(item.get("output_chars") or 0)
-        estimated_cost = round((total_tokens / 1000 * 0.002) + (total_chars / 1000 * 0.0002), 4)
+        estimated_cost = estimate_llm_cost_usd(item)
         usage_rows.append({
             **item,
             "label": _operation_label(item.get("feature") or "", item.get("operation") or ""),
@@ -187,6 +187,8 @@ async def get_admin_api_usage(
             """SELECT COALESCE(NULLIF(provider, ''), 'internal') AS provider,
                       COALESCE(SUM(units), 0)::int AS request_count,
                       COALESCE(SUM(total_tokens), 0)::int AS total_tokens,
+                      COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
+                      COALESCE(SUM(output_tokens), 0)::int AS output_tokens,
                       COALESCE(SUM(CASE WHEN success THEN 0 ELSE units END), 0)::int AS failed_count
                FROM api_usage_events
                WHERE created_at >= CAST(:start_date AS date)
@@ -198,10 +200,15 @@ async def get_admin_api_usage(
     )
     providers = []
     for item in _rows(result):
-        total_tokens = int(item.get("total_tokens") or 0)
+        provider_key = item.get("provider")
+        provider_cost = sum(
+            float(row.get("estimated_cost_usd") or 0)
+            for row in usage_rows
+            if (row.get("provider") or "internal") == provider_key
+        )
         providers.append({
             **item,
-            "estimated_cost_usd": round(total_tokens / 1000 * 0.002, 4),
+            "estimated_cost_usd": round(provider_cost, 6),
         })
 
     result = await session.execute(

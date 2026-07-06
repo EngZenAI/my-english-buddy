@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { DndContext, PointerSensor, useDraggable, useSensor, useSensors } from "@dnd-kit/core";
-import { Loader2, Minimize2, Send, X } from "lucide-react";
+import { AlertTriangle, Loader2, Minimize2, PencilLine, Send, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import englishBuddyLogo from "@/assets/english-buddy-logo.svg";
 import {
   MessageScroller,
@@ -20,6 +28,12 @@ import {
   AgentMessageList,
   AgentTypingMessage,
 } from "./AgentUI";
+import {
+  PROPOSE_BULK_WORD_UPDATE,
+  PROPOSE_DELETE_WORDS,
+  PROPOSE_RENAME_LABEL,
+} from "./actionTypes";
+import { cleanAgentDisplayText } from "./displayText";
 import { useAgent } from "./useAgent";
 import { useFloatingWidget } from "./useFloatingWidget";
 
@@ -39,6 +53,58 @@ function readMinimized() {
 function transformStyle(transform) {
   if (!transform) return undefined;
   return `translate3d(${transform.x}px, ${transform.y}px, 0)`;
+}
+
+function describePendingAction(action) {
+  const payload = action?.payload || {};
+  if (action?.type === PROPOSE_DELETE_WORDS) {
+    const count = Array.isArray(payload.ids) ? payload.ids.length : 0;
+    return count ? `${count}개 단어가 단어장에서 삭제됩니다.` : "선택한 단어가 단어장에서 삭제됩니다.";
+  }
+  if (action?.type === PROPOSE_BULK_WORD_UPDATE) {
+    const count = Array.isArray(payload.items) ? payload.items.length : 0;
+    return count ? `${count}개 단어의 저장값이 변경됩니다.` : "단어장 저장값이 변경됩니다.";
+  }
+  if (action?.type === PROPOSE_RENAME_LABEL) {
+    const oldName = payload.old_name || "기존 태그";
+    const newName = payload.new_name || "새 태그";
+    return `"${oldName}" 태그 이름이 "${newName}"(으)로 변경됩니다.`;
+  }
+  return "실행하면 변경 사항이 바로 반영됩니다.";
+}
+
+function pendingDialogCopy(action) {
+  if (action?.type === PROPOSE_DELETE_WORDS) {
+    return {
+      Icon: AlertTriangle,
+      title: "삭제 작업을 실행할까요?",
+      description: "되돌릴 수 없는 작업입니다. 한번 더 확인해 주세요.",
+      iconClass: "bg-amber-100 text-amber-700",
+      boxClass: "border-amber-200 bg-amber-50 text-amber-950",
+      detailClass: "text-amber-800",
+      buttonClass: "bg-amber-700 text-white hover:bg-amber-800",
+    };
+  }
+  if (action?.type === PROPOSE_BULK_WORD_UPDATE || action?.type === PROPOSE_RENAME_LABEL) {
+    return {
+      Icon: PencilLine,
+      title: "변경 사항을 적용할까요?",
+      description: "Agent가 제안한 수정값이 단어장에 바로 저장됩니다.",
+      iconClass: "bg-teal-100 text-teal-700",
+      boxClass: "border-teal-200 bg-teal-50 text-teal-950",
+      detailClass: "text-teal-800",
+      buttonClass: "bg-teal-700 text-white hover:bg-teal-800",
+    };
+  }
+  return {
+    Icon: AlertTriangle,
+    title: "작업을 실행할까요?",
+    description: "실행하면 변경 사항이 바로 반영됩니다.",
+    iconClass: "bg-slate-100 text-slate-700",
+    boxClass: "border-slate-200 bg-slate-50 text-slate-950",
+    detailClass: "text-slate-700",
+    buttonClass: "",
+  };
 }
 
 function AgentLauncher({ style, dragging, hasNotice, onClick }) {
@@ -106,10 +172,13 @@ export default function AgentPanel({
     suggestionsQuery,
     latestJob,
     visibleActions,
+    pendingAction,
     hasNotice,
     busy,
     sendMessage,
     runAction,
+    confirmPendingAction,
+    cancelPendingAction,
     toggleOpen,
   } = useAgent({ user, currentTab, hidden, onRequireLogin, onAction });
   const sendFromPanel = (text) => {
@@ -123,6 +192,8 @@ export default function AgentPanel({
     (visibleActions.length ? 1 : 0) +
     (!messages.length ? 1 : 0) +
     (!messages.length && suggestions?.cards?.length ? 1 : 0);
+  const pendingCopy = pendingDialogCopy(pendingAction);
+  const PendingIcon = pendingCopy.Icon;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -270,7 +341,7 @@ export default function AgentPanel({
                           <AgentActionButton
                             key={`${action.type}-${action.label}-${index}`}
                             action={action}
-                            disabled={busy}
+                            disabled={busy || Boolean(pendingAction)}
                             onRun={runAction}
                           />
                         ))}
@@ -319,6 +390,44 @@ export default function AgentPanel({
           </div>
         </section>
       )}
+
+      <Dialog
+        open={Boolean(pendingAction)}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) cancelPendingAction();
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <span className={`flex h-8 w-8 items-center justify-center rounded-full ${pendingCopy.iconClass}`}>
+                <PendingIcon className="h-4 w-4" />
+              </span>
+              {pendingCopy.title}
+            </DialogTitle>
+            <DialogDescription>{pendingCopy.description}</DialogDescription>
+          </DialogHeader>
+          <div className={`rounded-lg border px-3 py-2.5 text-sm ${pendingCopy.boxClass}`}>
+            <div className="font-semibold">{cleanAgentDisplayText(pendingAction?.label) || "Agent 작업"}</div>
+            <div className={`mt-1 text-xs leading-5 ${pendingCopy.detailClass}`}>
+              {describePendingAction(pendingAction)}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={cancelPendingAction}>
+              취소
+            </Button>
+            <Button
+              type="button"
+              onClick={confirmPendingAction}
+              disabled={busy}
+              className={pendingCopy.buttonClass}
+            >
+              실행
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DndContext>
   );
 }

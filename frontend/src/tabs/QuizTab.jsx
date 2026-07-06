@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { queryKeys } from "../queryClient";
@@ -27,6 +27,8 @@ export default function QuizTab({ user, onRequireLogin, quizState, setQuizState 
   const [localQuizState, setLocalQuizState] = useState(createInitialQuizState);
   const [statsRange, setStatsRange] = useState(createInitialStatsRange);
   const [savedSuggestedWords, setSavedSuggestedWords] = useState(() => new Set());
+  const [generationStartedAt, setGenerationStartedAt] = useState(null);
+  const [generationNow, setGenerationNow] = useState(Date.now());
   
   const state = quizState || localQuizState;
   const writeQuizState = setQuizState || setLocalQuizState;
@@ -95,6 +97,9 @@ export default function QuizTab({ user, onRequireLogin, quizState, setQuizState 
       }));
       setSavedSuggestedWords(new Set());
     },
+    onSettled: () => {
+      setGenerationStartedAt(null);
+    },
   });
 
   const gradePayload = useMemo(
@@ -156,6 +161,25 @@ export default function QuizTab({ user, onRequireLogin, quizState, setQuizState 
   const genLoading = generateMutation.isPending;
   const gradeLoading = gradeMutation.isPending;
   const hasQuiz = questions.length > 0;
+  const generationElapsedMs = generationStartedAt ? Math.max(0, generationNow - generationStartedAt) : 0;
+  const generationElapsedSeconds = Math.floor(generationElapsedMs / 1000);
+  const generationStep =
+    generationElapsedMs >= 24_000
+      ? 4
+      : generationElapsedMs >= 14_000
+        ? 3
+        : generationElapsedMs >= 6_000
+          ? 2
+          : generationElapsedMs >= 2_000
+            ? 1
+            : 0;
+
+  useEffect(() => {
+    if (!genLoading) return undefined;
+    setGenerationNow(Date.now());
+    const timer = window.setInterval(() => setGenerationNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [genLoading]);
 
   const resultByQuestion = useMemo(() => {
     const pairs = (gradeResult?.results || []).map((result) => [
@@ -186,6 +210,7 @@ export default function QuizTab({ user, onRequireLogin, quizState, setQuizState 
 
   const generate = () => {
     if (genLoading || gradeLoading || !user) return;
+    setGenerationStartedAt(Date.now());
     generateMutation.mutate();
   };
 
@@ -230,7 +255,7 @@ export default function QuizTab({ user, onRequireLogin, quizState, setQuizState 
   };
 
   return (
-    <div className="h-full flex flex-col select-none">
+    <div className="h-full flex flex-col">
       <div className="border-b border-slate-200">
         <div className="flex gap-8">
           {[
@@ -256,7 +281,14 @@ export default function QuizTab({ user, onRequireLogin, quizState, setQuizState 
         </div>
       </div>
 
-      {!user && <MemberNotice feature="퀴즈" onRequireLogin={onRequireLogin} />}
+      {!user && (
+        <div className="mt-4">
+          <MemberNotice
+            message="로그인하면 퀴즈를 바로 사용할 수 있어요."
+            onRequireLogin={onRequireLogin}
+          />
+        </div>
+      )}
 
       {/* 에러 및 메시지 배너 */}
       {(generateMutation.error || gradeMutation.error || openSessionMutation.error || saveSuggestedWordMutation.error) && (
@@ -294,6 +326,8 @@ export default function QuizTab({ user, onRequireLogin, quizState, setQuizState 
                     onGenerate={generate}
                     disabled={genLoading}
                     loading={genLoading}
+                    generationStep={generationStep}
+                    generationElapsedSeconds={generationElapsedSeconds}
                     user={user}
                   />
                 </div>

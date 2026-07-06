@@ -2,7 +2,7 @@ import {
   CalendarDays,
   Check,
   Layers3,
-  Sparkles,
+  Loader2,
   Tags,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { DEFAULT_QUESTION_TYPE_COUNTS } from "@/components/quiz/quizState";
 import { cn } from "@/lib/utils";
 
-const MAX_QUESTION_COUNT = 20;
+const MAX_QUESTION_COUNT = 10;
 const QUESTION_TYPE_OPTIONS = [
   {
     key: "meaning_choice",
@@ -24,6 +24,16 @@ const QUESTION_TYPE_OPTIONS = [
     key: "context_choice",
     label: "문맥 빈칸 객관식",
     description: "문장 빈칸에 맞는 표현 선택",
+  },
+  {
+    key: "collocation_choice",
+    label: "언어/표현",
+    description: "자연스러운 단어 조합 선택",
+  },
+  {
+    key: "usage_choice",
+    label: "올바른 사용 객관식",
+    description: "문장 속 자연스러운 쓰임 선택",
   },
   {
     key: "short_answer",
@@ -145,6 +155,51 @@ function Section({ icon: Icon, title, meta, children }) {
   );
 }
 
+const GENERATION_STEPS = [
+  "단어 범위를 확인하고 있어요",
+  "문항 유형을 배분하고 있어요",
+  "AI가 문제를 만들고 있어요",
+  "문항 품질을 확인하고 있어요",
+  "조금 더 걸리고 있어요",
+];
+
+function QuizGenerationLoading({ activeStep = 0, totalQuestionCount = 0, elapsedSeconds = 0 }) {
+  const safeStep = Math.min(activeStep, GENERATION_STEPS.length - 1);
+  return (
+    <div className="absolute inset-0 z-10 flex items-center justify-center px-4">
+      <div className="w-full max-w-sm rounded-md bg-white p-5 text-center shadow-[0_16px_40px_rgba(15,23,42,0.16)]">
+        <Loader2 className="mx-auto h-7 w-7 animate-spin text-brand-700" />
+        <div className="mt-4 min-w-0">
+          <p className="text-base font-black text-slate-950">
+            {GENERATION_STEPS[safeStep]}
+          </p>
+          <p className="mt-1 text-xs font-bold text-slate-400">
+            생성 시작 후 {elapsedSeconds.toLocaleString()}초
+          </p>
+          <p className="mt-2 text-sm font-medium leading-6 text-slate-600">
+            {safeStep >= 4
+              ? "문항 품질 검사를 통과하지 못한 문제는 다시 생성할 수 있어요."
+              : totalQuestionCount >= 5
+              ? "문항이 많을수록 시간이 더 걸릴 수 있어요. 화면을 닫지 말고 기다려 주세요."
+              : "AI가 퀴즈를 만드는 동안 잠시만 기다려 주세요."}
+          </p>
+          <div className="mt-3 grid grid-cols-5 gap-2">
+            {GENERATION_STEPS.map((step, index) => (
+              <div
+                key={step}
+                className={cn(
+                  "h-1.5 rounded-full transition",
+                  index <= safeStep ? "bg-brand-600" : "bg-slate-100",
+                )}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function QuizConfig({
   goal,
   setGoalValue,
@@ -153,6 +208,8 @@ export default function QuizConfig({
   onGenerate,
   disabled,
   loading = false,
+  generationStep = 0,
+  generationElapsedSeconds = 0,
   user,
 }) {
   const totalWords = words.length;
@@ -225,6 +282,7 @@ export default function QuizConfig({
     (sum, value) => sum + Number(value || 0),
     0,
   );
+  const controlsDisabled = Boolean(disabled || loading);
 
   const setQuestionTypeCount = (key, value) => {
     const digits = String(value).replace(/\D/g, "");
@@ -278,6 +336,7 @@ export default function QuizConfig({
                   description="태그와 기간 제한 없이 단어장 전체에서 출제"
                   count={totalWords}
                   onClick={() => updateScope({ scope_all: !goal.scope_all })}
+                  disabled={controlsDisabled}
                 />
               </Section>
 
@@ -299,7 +358,7 @@ export default function QuizConfig({
                       description={goal.scope_all ? "전체 단어 선택 중에는 사용할 수 없습니다" : "저장한 태그에서 출제"}
                       count={countByTag(words, label)}
                       onClick={() => toggleTag(label)}
-                      disabled={Boolean(goal.scope_all)}
+                      disabled={Boolean(goal.scope_all) || controlsDisabled}
                     />
                   ))
                 )}
@@ -320,7 +379,7 @@ export default function QuizConfig({
                   }
                   count={rangeWords.length}
                   onClick={() => updateScope({ scope_saved_date: !goal.scope_saved_date })}
-                  disabled={Boolean(goal.scope_all)}
+                  disabled={Boolean(goal.scope_all) || controlsDisabled}
                 />
                 <div className="grid gap-3 rounded-md bg-slate-50/70 px-3 py-3 sm:grid-cols-2">
                   <label className="space-y-1.5">
@@ -328,7 +387,7 @@ export default function QuizConfig({
                     <Input
                       type="date"
                       value={goal.saved_from}
-                      disabled={Boolean(goal.scope_all)}
+                      disabled={Boolean(goal.scope_all) || controlsDisabled}
                       onChange={(event) => {
                         updateScope({ scope_saved_date: true });
                         setGoalValue("saved_from", event.target.value);
@@ -341,7 +400,7 @@ export default function QuizConfig({
                     <Input
                       type="date"
                       value={goal.saved_to}
-                      disabled={Boolean(goal.scope_all)}
+                      disabled={Boolean(goal.scope_all) || controlsDisabled}
                       onChange={(event) => {
                         updateScope({ scope_saved_date: true });
                         setGoalValue("saved_to", event.target.value);
@@ -356,12 +415,19 @@ export default function QuizConfig({
                   description={goal.scope_all ? "전체 단어 선택 중에는 사용할 수 없습니다" : "복습일이 지난 단어를 함께 포함"}
                   count={dueWords.length}
                   onClick={() => updateScope({ scope_due: !goal.scope_due })}
-                  disabled={Boolean(goal.scope_all)}
+                  disabled={Boolean(goal.scope_all) || controlsDisabled}
                 />
               </Section>
 
               <Section icon={Check} title="생성 옵션">
-                <div className="grid gap-5 p-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+                <div className="relative grid gap-5 p-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+                  {loading && (
+                    <QuizGenerationLoading
+                      activeStep={generationStep}
+                      totalQuestionCount={totalQuestionCount}
+                      elapsedSeconds={generationElapsedSeconds}
+                    />
+                  )}
                   <div className="space-y-3">
                     <div>
                       <div className="flex items-end justify-between gap-3">
@@ -388,6 +454,7 @@ export default function QuizConfig({
                               min={0}
                               max={MAX_QUESTION_COUNT}
                               value={questionTypeCounts[option.key] ?? 0}
+                              disabled={controlsDisabled}
                               onChange={(event) => setQuestionTypeCount(option.key, event.target.value)}
                               className="h-10 rounded-md border-slate-200 bg-white text-center text-sm font-black focus-visible:ring-[#0f766e]"
                               aria-label={`${option.label} 문항 수`}
@@ -414,6 +481,7 @@ export default function QuizConfig({
                         placeholder="예: 비즈니스 상황 중심으로, 헷갈리는 뜻 위주로 출제해줘."
                         rows={4}
                         maxLength={300}
+                        disabled={controlsDisabled}
                         className="resize-none rounded-md border-slate-200 bg-white text-sm font-medium leading-6 focus-visible:ring-[#0f766e]"
                       />
                       <span className="block text-right text-[11px] font-medium text-slate-400">
@@ -422,10 +490,10 @@ export default function QuizConfig({
                     </label>
                     <Button
                       onClick={onGenerate}
-                      disabled={disabled || !user || selectedWordCount === 0 || totalQuestionCount === 0}
+                      disabled={controlsDisabled || !user || selectedWordCount === 0 || totalQuestionCount === 0}
                       className="h-12 w-full rounded-md bg-[#0f766e] text-base font-black text-white shadow-sm hover:bg-[#0b5f59] disabled:bg-slate-200 disabled:text-slate-500 sm:w-48 sm:self-end"
                     >
-                      {loading ? <Sparkles className="h-4 w-4 animate-pulse" /> : <Check className="h-4 w-4" />}
+                      {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
                       {loading ? "생성 중..." : "시작하기"}
                     </Button>
                   </div>

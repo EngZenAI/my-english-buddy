@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from starlette.concurrency import run_in_threadpool
 
+from backend.articles.chunking import estimate_tokens, split_article_text
 from backend.articles.retrieval import select_relevant_chunks
 from backend.articles.tutor import (
     answer_article_question,
@@ -35,6 +36,28 @@ from backend.usage.tracking import start_usage_capture
 
 router = APIRouter(tags=["articles"])
 logger = logging.getLogger(__name__)
+
+
+def _study_chunks(chunks: list[dict]) -> list[dict]:
+    """Return paragraph-level chunks for study, even for older stored articles."""
+    out = []
+    next_id = 1
+    for chunk in chunks or []:
+        parts = split_article_text(chunk.get("text") or "", max_chars=900)
+        if not parts:
+            continue
+        for part in parts:
+            out.append(
+                {
+                    **chunk,
+                    "id": next_id,
+                    "chunk_index": next_id - 1,
+                    "text": part,
+                    "token_count": estimate_tokens(part),
+                }
+            )
+            next_id += 1
+    return out or chunks or []
 
 
 @router.get(
@@ -128,6 +151,7 @@ async def article_session_detail(
         raise HTTPException(
             status_code=404, detail="뉴스 리딩 세션을 찾을 수 없습니다."
         )
+    data["chunks"] = _study_chunks(data.get("chunks") or [])
     return data
 
 
@@ -144,14 +168,15 @@ async def article_study(session_id: int, session: SessionDep, _user: CurrentUser
             raise HTTPException(
                 status_code=404, detail="뉴스 리딩 세션을 찾을 수 없습니다."
             )
+        chunks = _study_chunks(data.get("chunks") or [])
         study = await run_in_threadpool(
             generate_article_study,
             data.get("title") or "",
             data.get("source") or "",
-            data.get("chunks") or [],
+            chunks,
         )
         await update_article_study(session, _user["id"], session_id, study)
-        return {"ok": True, "study": study, "chunks": data.get("chunks") or []}
+        return {"ok": True, "study": study, "chunks": chunks}
     finally:
         await persist_usage_capture(usage_token, _user)
 
@@ -240,17 +265,18 @@ async def article_save_words(
             raise HTTPException(
                 status_code=404, detail="뉴스 리딩 세션을 찾을 수 없습니다."
             )
-        tag = (payload.tag or "뉴스").strip() or "뉴스"
+        default_tag = (payload.tag or "뉴스").strip() or "뉴스"
         labels = await get_labels(session, _user["id"])
-        if tag not in labels:
-            labels, ok = await add_label(session, _user["id"], tag)
-            if not ok and tag not in labels:
-                tag = "미지정"
         items = []
         for it in payload.items:
             word = (it.get("word") or "").strip()
             if not word:
                 continue
+            tag = (it.get("tag") or default_tag).strip() or default_tag
+            if tag not in labels:
+                labels, ok = await add_label(session, _user["id"], tag)
+                if not ok and tag not in labels:
+                    tag = "미지정"
             korean = (it.get("korean") or "").strip()
             if needs_translation(korean):
                 korean = await run_in_threadpool(translate_korean, word)
@@ -269,6 +295,6 @@ async def article_save_words(
         if not items:
             return {"ok": False, "added": 0, "updated": 0, "skipped": 0}
         result = await insert_words(session, _user["id"], items)
-        return {"ok": True, **result, "tag": tag}
+        return {"ok": True, **result, "tag": default_tag}
     finally:
         await persist_usage_capture(usage_token, _user)

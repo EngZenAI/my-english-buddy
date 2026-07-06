@@ -5,6 +5,7 @@ from datetime import datetime
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from starlette.concurrency import run_in_threadpool
 
+from backend.articles.chunking import estimate_tokens, split_article_text
 from backend.articles.feeds import fetch_feed_entries
 from backend.articles.sources import SUPPORTED_SOURCES
 from backend.db.dependencies import SessionDep
@@ -259,12 +260,13 @@ async def article_admin_status(_user: CurrentUserDep):
 )
 async def article_admin_list(
     page: int = 1,
+    q: str = "",
     *,
     session: SessionDep,
     _user: CurrentUserDep,
 ):
     _require_article_admin(_user)
-    return await list_admin_articles(session, page=page)
+    return await list_admin_articles(session, page=page, q=q.strip())
 
 
 @router.post(
@@ -292,7 +294,10 @@ async def article_admin_create(
     if not content:
         raise HTTPException(status_code=400, detail="본문을 입력해주세요.")
     source_key = "manual-" + uuid.uuid5(uuid.NAMESPACE_URL, source_name.lower()).hex[:16]
-    chunks = [{"chunk_index": 0, "text": content, "token_count": max(1, len(content) // 4)}]
+    chunks = [
+        {"chunk_index": index, "text": chunk, "token_count": estimate_tokens(chunk)}
+        for index, chunk in enumerate(split_article_text(content))
+    ]
     article_id = await upsert_article_with_chunks(
         session,
         {

@@ -24,9 +24,9 @@ def split_article_text(text: str, max_chars: int = 1200) -> list[str]:
         paragraphs = [compact] if compact else []
 
     chunks: list[str] = []
-    current = ""
     for paragraph in paragraphs:
         if len(paragraph) > max_chars:
+            current = ""
             for sentence in re.split(r"(?<=[.!?])\s+", paragraph):
                 sentence = normalize_whitespace(sentence)
                 if not sentence:
@@ -43,15 +43,11 @@ def split_article_text(text: str, max_chars: int = 1200) -> list[str]:
                     current = sentence
                 else:
                     current = f"{current} {sentence}".strip()
+            if current:
+                chunks.append(current)
             continue
-        if current and len(current) + len(paragraph) + 2 > max_chars:
-            chunks.append(current)
-            current = paragraph
-        else:
-            current = f"{current}\n\n{paragraph}".strip()
-    if current:
-        chunks.append(current)
-    return chunks[:12]
+        chunks.append(paragraph)
+    return chunks
 
 
 def estimate_tokens(text: str) -> int:

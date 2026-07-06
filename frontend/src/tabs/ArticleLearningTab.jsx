@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   BookOpen,
+  ChevronDown,
   ExternalLink,
   Highlighter,
+  Languages,
   Loader2,
   PanelRightOpen,
   Save,
@@ -79,7 +81,6 @@ function articleImageUrl(url) {
       return parsed.toString();
     }
     if (parsed.hostname.endsWith("i.guim.co.uk") && parsed.searchParams.has("width")) {
-      parsed.searchParams.set("width", "1000");
       return parsed.toString();
     }
     return url;
@@ -162,25 +163,6 @@ function HighlightedText({ text, expressions, enabled, onExpressionClick }) {
       </mark>
     );
   });
-}
-
-function TopicPill({ item, selected, onClick }) {
-  return (
-    <Button
-      type="button"
-      variant={selected ? "default" : "outline"}
-      size="sm"
-      onClick={onClick}
-      className={cn(
-        "rounded-full px-4 font-semibold",
-        selected
-          ? "border-brand-700 bg-brand-900 text-white hover:bg-brand-800"
-          : "border-slate-200 bg-white text-slate-600 hover:border-brand-200 hover:bg-brand-50 hover:text-brand-800"
-      )}
-    >
-      {item.label}
-    </Button>
-  );
 }
 
 function ArticleListItem({ article, active, pending, onPreview, onStart }) {
@@ -277,13 +259,6 @@ function ReaderPlaceholder({ article, user, onStart, onRequireLogin, pending }) 
             >
               {pending ? "분석 준비 중" : user ? "AI로 기사 분석" : "로그인하고 AI 분석"}
             </Button>
-            {article.url && (
-              <Button type="button" variant="outline" asChild>
-                <a href={article.url} target="_blank" rel="noreferrer">
-                  원문 보기 <ExternalLink />
-                </a>
-              </Button>
-            )}
           </div>
         </div>
       </div>
@@ -315,6 +290,7 @@ function StudyParagraph({
   chunk,
   fontClassName,
   showExplanations,
+  showTranslations,
   showHighlights,
   onExpressionClick,
 }) {
@@ -341,15 +317,15 @@ function StudyParagraph({
               onExpressionClick={onExpressionClick}
             />
           </p>
+          {showTranslations && paragraph.translation_ko && (
+            <div className="mt-4 border-l-2 border-slate-300 pl-4">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">직역</p>
+              <p className="mt-1 text-sm leading-7 text-slate-600">{paragraph.translation_ko}</p>
+            </div>
+          )}
           {showExplanations && (
             <div className="mt-3 rounded-md border border-brand-100 bg-brand-50/60 p-3">
               <p className="text-sm leading-6 text-slate-700">{paragraph.explanation_ko}</p>
-              {paragraph.check_question && (
-                <div className="mt-3 border-t border-brand-100 pt-3 text-sm">
-                  <p className="font-semibold text-slate-800">{paragraph.check_question}</p>
-                  {paragraph.answer_ko && <p className="mt-1 text-slate-500">{paragraph.answer_ko}</p>}
-                </div>
-              )}
             </div>
           )}
         </div>
@@ -367,34 +343,58 @@ function ExpressionsPanel({
   saveSelected,
   savePending,
   saveResult,
+  labels,
+  tag,
+  onTagChange,
+  itemTags,
+  onItemTagChange,
 }) {
   if (expressions.length === 0) return null;
 
   return (
-    <section className="rounded-md border border-slate-200 bg-white p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-bold text-slate-950">표현 저장</h3>
-          <p className="mt-1 text-xs text-slate-500">기사에서 뽑은 표현을 골라 단어장에 저장하세요.</p>
+    <section className="space-y-3">
+      <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-sm font-bold text-slate-950">표현 저장</h3>
+            <p className="mt-1 text-xs leading-5 text-slate-500">기사에서 뽑은 표현을 골라 단어장에 저장하세요.</p>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            onClick={saveSelected}
+            disabled={!selectedCount || savePending}
+            className="shrink-0 bg-brand-700 hover:bg-brand-800"
+          >
+            <Save />
+            {savePending ? "저장 중" : `${selectedCount}개 저장`}
+          </Button>
         </div>
-        <Button
-          type="button"
-          size="sm"
-          onClick={saveSelected}
-          disabled={!selectedCount || savePending}
-          className="bg-brand-700 hover:bg-brand-800"
-        >
-          <Save />
-          {savePending ? "저장 중" : `선택 ${selectedCount}개 저장`}
-        </Button>
+        {labels.length > 0 && (
+          <label className="mt-3 grid gap-1.5 text-xs font-semibold text-slate-500">
+            선택 항목 전체 태그
+            <select
+              value={tag}
+              onChange={(event) => onTagChange(event.target.value)}
+              className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 outline-none focus:border-brand-400"
+            >
+              {labels.map((label) => (
+                <option key={label} value={label}>
+                  {label}
+                </option>
+              ))}
+              {!labels.includes("뉴스") && <option value="뉴스">뉴스</option>}
+            </select>
+          </label>
+        )}
       </div>
       {saveResult && (
-        <p className="mt-2 text-xs text-emerald-600">
+        <p className="text-xs font-medium text-emerald-600">
           {saveResult.added || 0}개 저장
           {Number(saveResult.skipped || 0) > 0 && `, ${saveResult.skipped}개 건너뜀`}
         </p>
       )}
-      <div className="mt-3 grid gap-2">
+      <div className="space-y-2">
         {expressions.map((item) => {
           const saved = savedWords.has(normalizeWord(item.word));
           const selected = !saved && selectedKeys.has(item.key);
@@ -422,12 +422,12 @@ function ExpressionsPanel({
                     : "border-slate-200 bg-white hover:border-slate-300"
               )}
             >
-              <div className="flex items-start justify-between gap-2">
+              <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-bold text-slate-900">{item.word}</p>
-                  {item.korean && <p className="mt-1 text-sm text-slate-600">{item.korean}</p>}
+                  <p className="break-words text-sm font-bold leading-5 text-slate-900">{item.word}</p>
+                  {item.korean && <p className="mt-1 break-words text-sm leading-5 text-slate-600">{item.korean}</p>}
                 </div>
-                <div className="flex shrink-0 items-center gap-1">
+                <div className="flex shrink-0 items-start gap-1">
                   {saved && <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">저장됨</Badge>}
                   <span onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
                     <AudioButton word={item.word} lang="en" />
@@ -435,6 +435,27 @@ function ExpressionsPanel({
                   {!saved && <Checkbox checked={selected} aria-label={`${item.word} 선택`} />}
                 </div>
               </div>
+              {!saved && selected && labels.length > 0 && (
+                <label
+                  className="mt-3 grid gap-1.5 rounded-md border border-brand-100 bg-white/70 p-2 text-xs font-semibold text-slate-500"
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
+                >
+                  이 표현 태그
+                  <select
+                    value={itemTags[item.key] || tag}
+                    onChange={(event) => onItemTagChange(item.key, event.target.value)}
+                    className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 outline-none focus:border-brand-400"
+                  >
+                    {labels.map((label) => (
+                      <option key={label} value={label}>
+                        {label}
+                      </option>
+                    ))}
+                    {!labels.includes("뉴스") && <option value="뉴스">뉴스</option>}
+                  </select>
+                </label>
+              )}
               {item.english_def && <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">{item.english_def}</p>}
             </div>
           );
@@ -458,7 +479,12 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
   const [isExpressionsOpen, setExpressionsOpen] = useState(false);
   const [fontStep, setFontStep] = useState(1);
   const [showExplanations, setShowExplanations] = useState(true);
+  const [showTranslations, setShowTranslations] = useState(true);
   const [showHighlights, setShowHighlights] = useState(true);
+  const [wordTag, setWordTag] = useState("뉴스");
+  const [expressionTags, setExpressionTags] = useState({});
+  const readerHistoryPushedRef = useRef(false);
+  const viewModeRef = useRef(viewMode);
 
   const catalogQuery = useQuery({
     queryKey: queryKeys.articleCatalog(topic, "", q, catalogPage),
@@ -480,6 +506,12 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
     queryFn: () => api.listWords(""),
     enabled: !!user,
   });
+  const labelsQuery = useQuery({
+    queryKey: queryKeys.labels,
+    queryFn: api.listLabels,
+    enabled: !!user,
+    staleTime: 5 * 60_000,
+  });
 
   const studyMutation = useMutation({
     mutationFn: (id) => api.articleStudy(id),
@@ -497,6 +529,7 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
       studyMutation.reset();
       setActiveSessionId(data.session_id);
       setSelectedKeys(new Set());
+      setExpressionTags({});
       setViewMode("reader");
       queryClient.invalidateQueries({ queryKey: queryKeys.articleSessions });
       studyMutation.mutate(data.session_id);
@@ -504,7 +537,7 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
   });
 
   const saveWordsMutation = useMutation({
-    mutationFn: (items) => api.articleSaveWords(activeSessionId, items, "뉴스"),
+    mutationFn: (items) => api.articleSaveWords(activeSessionId, items, wordTag || "뉴스"),
     onSuccess: (_data, items) => {
       setSavedExpressionWords((prev) => {
         const next = new Set(prev);
@@ -523,6 +556,41 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
     if (!catalogQuery.data) return;
     if (catalogPage > catalogTotalPages) setCatalogPage(catalogTotalPages);
   }, [catalogQuery.data, catalogPage, catalogTotalPages]);
+
+  useEffect(() => {
+    viewModeRef.current = viewMode;
+    if (viewMode === "reader" && !readerHistoryPushedRef.current) {
+      window.history.pushState({ englishBuddyArticleReader: true }, "");
+      readerHistoryPushedRef.current = true;
+    }
+    if (viewMode === "catalog") {
+      readerHistoryPushedRef.current = false;
+    }
+  }, [viewMode]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      if (viewModeRef.current !== "reader") return;
+      setViewMode("catalog");
+      readerHistoryPushedRef.current = false;
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  const showCatalog = () => {
+    if (
+      viewModeRef.current === "reader" &&
+      readerHistoryPushedRef.current &&
+      typeof window !== "undefined"
+    ) {
+      readerHistoryPushedRef.current = false;
+      setViewMode("catalog");
+      window.history.back();
+      return;
+    }
+    setViewMode("catalog");
+  };
 
   const sessionData = sessionQuery.data || null;
   const study = sessionData?.study_json || studyMutation.data?.study || {};
@@ -559,18 +627,23 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
 
   const selectedExpressions = expressions.filter(
     (item) => selectedKeys.has(item.key) && !savedWords.has(normalizeWord(item.word))
-  );
+  ).map((item) => ({ ...item, tag: expressionTags[item.key] || wordTag || "뉴스" }));
   const hasStudyData = hasStudy(study);
   const activeArticleId = sessionData?.article_id || sessionData?.id;
-  const previewArticle = useMemo(
-    () => articles.find((article) => article.id === selectedArticleId) || articles[0] || null,
+  const visibleSelectedArticleId = useMemo(
+    () => (articles.some((article) => article.id === selectedArticleId) ? selectedArticleId : null),
     [articles, selectedArticleId]
+  );
+  const previewArticle = useMemo(
+    () => articles.find((article) => article.id === visibleSelectedArticleId) || articles[0] || null,
+    [articles, visibleSelectedArticleId]
   );
   const displayArticle = sessionData || previewArticle;
 
   const submitSearch = (event) => {
     event.preventDefault();
     setCatalogPage(1);
+    setSelectedArticleId(null);
     setQ(qInput.trim());
   };
 
@@ -589,6 +662,7 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
     setSelectedArticleId(articleId);
     setActiveSessionId(null);
     setSelectedKeys(new Set());
+    setExpressionTags({});
     studyMutation.reset();
     setViewMode("reader");
   };
@@ -601,6 +675,23 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
       next.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
+  };
+
+  const setBulkExpressionTag = (tag) => {
+    setWordTag(tag);
+    setExpressionTags(() => {
+      const next = {};
+      for (const item of expressions) {
+        if (!savedWords.has(normalizeWord(item.word))) {
+          next[item.key] = tag;
+        }
+      }
+      return next;
+    });
+  };
+
+  const setExpressionTag = (key, tag) => {
+    setExpressionTags((prev) => ({ ...prev, [key]: tag }));
   };
 
   const saveSelected = () => {
@@ -621,6 +712,7 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
 
   const font = FONT_STEPS[fontStep];
   const catalogPages = paginationRange(catalogPage, catalogTotalPages);
+  const labels = labelsQuery.data?.labels || [];
 
   const renderArticleList = ({ framed = false } = {}) => (
     <section
@@ -642,19 +734,6 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
             <Search className="h-4 w-4" />
           </Button>
         </form>
-        <div className="flex flex-wrap gap-2">
-          {TOPICS.map((item) => (
-            <TopicPill
-              key={item.value}
-              item={item}
-              selected={topic === item.value}
-              onClick={() => {
-                setCatalogPage(1);
-                setTopic(item.value);
-              }}
-            />
-          ))}
-        </div>
       </div>
 
       <div className="scrollbar-soft min-h-0 flex-1 overflow-y-auto p-4">
@@ -675,7 +754,7 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
               <ArticleListItem
                 key={article.id}
                 article={article}
-                active={article.id === (activeArticleId || selectedArticleId || previewArticle?.id)}
+                active={article.id === (activeArticleId || visibleSelectedArticleId || previewArticle?.id)}
                 pending={false}
                 onPreview={() => openArticle(article.id)}
                 onStart={() => openArticle(article.id)}
@@ -695,6 +774,7 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
                   disabled={catalogPage <= 1}
                   onClick={(event) => {
                     event.preventDefault();
+                    setSelectedArticleId(null);
                     setCatalogPage((page) => Math.max(1, page - 1));
                   }}
                 />
@@ -711,6 +791,7 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
                       isActive={page === catalogPage}
                       onClick={(event) => {
                         event.preventDefault();
+                        setSelectedArticleId(null);
                         setCatalogPage(page);
                       }}
                     >
@@ -725,6 +806,7 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
                   disabled={catalogPage >= catalogTotalPages}
                   onClick={(event) => {
                     event.preventDefault();
+                    setSelectedArticleId(null);
                     setCatalogPage((page) => Math.min(catalogTotalPages, page + 1));
                   }}
                 />
@@ -749,6 +831,19 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
               {displayArticle.published_at && <span>|</span>}
               {displayArticle.published_at && <span>{formatDate(displayArticle.published_at)}</span>}
               {displayArticle.topic && <Badge variant="outline">{displayArticle.topic}</Badge>}
+            </div>
+          )}
+          {displayArticle?.url && (
+            <div className="mt-5 flex">
+              <Button
+                type="button"
+                asChild
+                className="h-11 shrink-0 bg-brand-700 px-5 text-sm font-bold text-white hover:bg-brand-800"
+              >
+                <a href={displayArticle.url} target="_blank" rel="noreferrer">
+                  원문 사이트에서 보기 <ExternalLink className="h-4 w-4" />
+                </a>
+              </Button>
             </div>
           )}
         </div>
@@ -817,6 +912,16 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
                     </Button>
                     <Button
                       type="button"
+                      variant={showTranslations ? "secondary" : "ghost"}
+                      size="sm"
+                      onClick={() => setShowTranslations((value) => !value)}
+                      aria-label="문단 번역 표시 변경"
+                    >
+                      <Languages />
+                      번역
+                    </Button>
+                    <Button
+                      type="button"
                       variant={showExplanations ? "secondary" : "ghost"}
                       size="sm"
                       onClick={() => setShowExplanations((value) => !value)}
@@ -835,6 +940,7 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
                       chunk={chunkMap[paragraph.chunk_id]}
                       fontClassName={font.className}
                       showExplanations={showExplanations}
+                      showTranslations={showTranslations}
                       showHighlights={showHighlights}
                       onExpressionClick={openExpressionPanel}
                     />
@@ -849,42 +955,67 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
   );
 
   return (
-    <div className="w-full space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-2xl font-bold tracking-normal text-slate-950">뉴스 리딩</h2>
-          <p className="mt-1 text-sm text-slate-500">읽을 기사를 고르고 핵심 표현만 단어장에 저장하세요.</p>
-        </div>
-        {viewMode === "reader" && (
-          <div className="flex flex-wrap items-center gap-2">
+    <div className="-mx-4 -mt-6 w-auto space-y-4 md:-mx-8">
+      <div className="sticky -top-6 z-30 shrink-0 border-b border-slate-800/60 bg-[#10171b] px-3 py-2 text-white shadow-[0_10px_26px_rgba(15,23,42,0.18)] md:px-5">
+        <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
+          <div className="grid min-w-0 flex-1 grid-cols-1 gap-2 md:max-w-md">
+            <label className="grid grid-cols-[2rem_1fr] items-center gap-2 text-xs text-slate-300">
+              <span>주제</span>
+              <span className="relative min-w-0">
+                <select
+                  value={topic}
+                  onChange={(event) => {
+                    setCatalogPage(1);
+                    setSelectedArticleId(null);
+                    setTopic(event.target.value);
+                    showCatalog();
+                  }}
+                  className="h-9 w-full appearance-none rounded-md border border-white/10 bg-white/10 px-3 pr-9 text-sm font-semibold text-white outline-none ring-offset-[#10171b] transition hover:bg-white/20 focus:ring-2 focus:ring-brand-400"
+                >
+                  {TOPICS.map((item) => (
+                    <option key={item.value} value={item.value} className="text-slate-900">
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-300" />
+              </span>
+            </label>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2">
             <Button
               type="button"
               variant="outline"
-              onClick={() => setViewMode("catalog")}
-              className="border-brand-200 bg-brand-50 text-brand-800 hover:bg-brand-100 hover:text-brand-900"
+              size="sm"
+              onClick={showCatalog}
+              className="h-9 border-white/20 bg-white/10 px-3 text-white hover:bg-white/20 hover:text-white"
             >
-              <ArrowLeft />
-              목록으로
+              <ArrowLeft className="h-4 w-4" />
+              <span>목록보기</span>
             </Button>
             <Button
               type="button"
+              size="sm"
               onClick={() => setExpressionsOpen(true)}
-              className="bg-brand-700 text-white hover:bg-brand-800"
+              className="h-9 border border-brand-500 bg-brand-600 px-3 text-white hover:bg-brand-500"
             >
-              <PanelRightOpen />
-              표현 저장
+              <PanelRightOpen className="h-4 w-4" />
+              <span>저장할 단어</span>
               {expressions.length > 0 && (
                 <Badge className="ml-1 bg-white/90 text-brand-800 hover:bg-white">{expressions.length}</Badge>
               )}
             </Button>
           </div>
-        )}
+        </div>
       </div>
 
-      {viewMode === "catalog" ? renderArticleList({ framed: true }) : renderReader()}
+      <div className="px-4 md:px-8">
+        {viewMode === "catalog" ? renderArticleList({ framed: true }) : renderReader()}
+      </div>
 
       <Drawer open={isExpressionsOpen} onOpenChange={setExpressionsOpen} direction="right">
-        <DrawerContent side="right" className="p-0">
+        <DrawerContent side="right" className="w-[min(94vw,520px)] p-0">
           <DrawerHeader className="border-b border-slate-100 text-left">
             <DrawerTitle>저장할 표현</DrawerTitle>
             <DrawerDescription>기사에서 추출한 표현을 골라 단어장에 저장하세요.</DrawerDescription>
@@ -909,6 +1040,11 @@ export default function ArticleLearningTab({ user, onRequireLogin }) {
                 saveSelected={saveSelected}
                 savePending={saveWordsMutation.isPending}
                 saveResult={saveWordsMutation.isSuccess ? saveWordsMutation.data : null}
+                labels={labels}
+                tag={wordTag}
+                onTagChange={setBulkExpressionTag}
+                itemTags={expressionTags}
+                onItemTagChange={setExpressionTag}
               />
             )}
           </div>

@@ -4,8 +4,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Scatter,
-  ScatterChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -21,6 +19,8 @@ import { cn } from "@/lib/utils";
 const TYPE_LABELS = {
   meaning_choice: "뜻/단어",
   context_choice: "문맥 빈칸",
+  collocation_choice: "언어/표현",
+  usage_choice: "올바른 사용",
   short_answer: "단답형",
   sentence_answer: "문장형 영작",
 };
@@ -220,26 +220,23 @@ function HighIncorrectRateWordsChart({ data }) {
   return (
     <ChartContainer>
       <ResponsiveContainer width="100%" height="100%">
-        <ScatterChart margin={{ top: 8, right: 18, left: -20, bottom: 0 }}>
+        <BarChart data={data} layout="vertical" margin={{ top: 8, right: 18, left: 14, bottom: 0 }}>
           <CartesianGrid stroke="#e5e7eb" vertical={false} />
           <XAxis
             type="number"
-            dataKey="attempts"
-            name="풀이"
-            allowDecimals={false}
-            tickLine={false}
-            axisLine={false}
-            tick={{ fontSize: 11, fill: "#64748b" }}
-          />
-          <YAxis
-            type="number"
-            dataKey="incorrectRate"
-            name="오답률"
             domain={[0, 100]}
             tickFormatter={(value) => `${value}%`}
             tickLine={false}
             axisLine={false}
             tick={{ fontSize: 11, fill: "#64748b" }}
+          />
+          <YAxis
+            type="category"
+            dataKey="word"
+            width={92}
+            tickLine={false}
+            axisLine={false}
+            tick={{ fontSize: 11, fill: "#334155" }}
           />
           <Tooltip
             content={({ active, payload }) => {
@@ -254,8 +251,8 @@ function HighIncorrectRateWordsChart({ data }) {
               );
             }}
           />
-          <Scatter name="단어" data={data} fill="#f59e0b" />
-        </ScatterChart>
+          <Bar dataKey="incorrectRate" name="오답률" fill="#f59e0b" radius={[0, 4, 4, 0]} />
+        </BarChart>
       </ResponsiveContainer>
     </ChartContainer>
   );
@@ -401,7 +398,7 @@ export default function QuizStatsPanel({ statsQuery, range, onRangeChange, onOpe
 
   if (statsQuery.isPending) {
     return (
-      <div className="animate-fadeIn space-y-5 select-none">
+      <div className="animate-fadeIn space-y-5">
         <ReportHeader range={range} onRangeChange={onRangeChange} loading />
         <div className="flex justify-center rounded-lg border border-slate-200 bg-white p-8">
           <LoadingSpinner label="학습 통계를 불러오는 중" />
@@ -412,7 +409,7 @@ export default function QuizStatsPanel({ statsQuery, range, onRangeChange, onOpe
 
   if (statsQuery.error) {
     return (
-      <div className="animate-fadeIn space-y-5 select-none">
+      <div className="animate-fadeIn space-y-5">
         <ReportHeader range={range} onRangeChange={onRangeChange} loading={statsQuery.isFetching} />
         <div className="rounded-lg border border-rose-200 bg-rose-50/70 px-4 py-3 text-xs font-semibold text-rose-700">
           {statsQuery.error.message}
@@ -423,7 +420,7 @@ export default function QuizStatsPanel({ statsQuery, range, onRangeChange, onOpe
 
   if (!hasStats) {
     return (
-      <div className="animate-fadeIn space-y-5 select-none">
+      <div className="animate-fadeIn space-y-5">
         <ReportHeader range={range} onRangeChange={onRangeChange} loading={statsQuery.isFetching} />
         <EmptyState
           title="선택한 기간의 학습 통계가 없습니다"
@@ -453,7 +450,7 @@ export default function QuizStatsPanel({ statsQuery, range, onRangeChange, onOpe
     }));
 
   return (
-    <div className="animate-fadeIn space-y-5 select-none">
+    <div className="animate-fadeIn space-y-5">
       <ReportHeader range={range} onRangeChange={onRangeChange} loading={statsQuery.isFetching} />
 
       <div className="grid gap-5 lg:grid-cols-2">

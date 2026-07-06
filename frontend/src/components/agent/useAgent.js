@@ -2,8 +2,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api";
 import { queryKeys } from "@/queryClient";
-import { isServerAgentTool } from "./actionTypes";
+import {
+  PROPOSE_BULK_WORD_UPDATE,
+  PROPOSE_DELETE_WORDS,
+  PROPOSE_RENAME_LABEL,
+  isServerAgentTool,
+} from "./actionTypes";
 import { isAgentJobActive } from "./constants";
+
+const CONFIRM_ACTION_TYPES = new Set([
+  PROPOSE_BULK_WORD_UPDATE,
+  PROPOSE_DELETE_WORDS,
+  PROPOSE_RENAME_LABEL,
+]);
 
 const agentMessage = (message, extra = {}) => ({
   role: "agent",
@@ -38,6 +49,8 @@ export function useAgent({ user, currentTab, hidden, onRequireLogin, onAction })
   const [messages, setMessages] = useState([]);
   const [jobId, setJobId] = useState("");
   const [hasUnreadNotice, setHasUnreadNotice] = useState(false);
+  const [pendingAction, setPendingAction] = useState(null);
+  const pendingActionRef = useRef(null);
 
   const createMessage = (role, data) => {
     messageSeqRef.current += 1;
@@ -138,6 +151,7 @@ export function useAgent({ user, currentTab, hidden, onRequireLogin, onAction })
       onRequireLogin?.();
       return;
     }
+    if (pendingActionRef.current || confirmMutation.isPending) return;
     if (!isServerAgentTool(action)) {
       onAction?.(action);
       setMessages((prev) => [
@@ -146,10 +160,25 @@ export function useAgent({ user, currentTab, hidden, onRequireLogin, onAction })
       ]);
       return;
     }
-    if (action.destructive && !window.confirm("이 작업은 데이터를 삭제할 수 있습니다. 계속할까요?")) {
+    if (action.requires_confirmation || action.destructive || CONFIRM_ACTION_TYPES.has(action.type)) {
+      pendingActionRef.current = action;
+      setPendingAction(action);
       return;
     }
     confirmMutation.mutate(action);
+  };
+
+  const confirmPendingAction = () => {
+    if (!pendingAction) return;
+    const action = pendingAction;
+    pendingActionRef.current = null;
+    setPendingAction(null);
+    confirmMutation.mutate(action);
+  };
+
+  const cancelPendingAction = () => {
+    pendingActionRef.current = null;
+    setPendingAction(null);
   };
 
   const toggleOpen = () => {
@@ -170,10 +199,13 @@ export function useAgent({ user, currentTab, hidden, onRequireLogin, onAction })
     suggestionsQuery,
     latestJob: jobQuery.data?.job,
     visibleActions,
+    pendingAction,
     hasNotice: Boolean(user && !open && hasUnreadNotice),
     busy: chatMutation.isPending || confirmMutation.isPending,
     sendMessage,
     runAction,
+    confirmPendingAction,
+    cancelPendingAction,
     toggleOpen,
   };
 }

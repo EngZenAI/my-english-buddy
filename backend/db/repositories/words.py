@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta
 
 from sqlalchemy import Integer, bindparam, delete, func, insert, select, text, update
@@ -256,11 +257,13 @@ async def bulk_update_words(session: AsyncSession, user_id: str, items) -> dict:
     if not parsed:
         return {"ok": True, "updated": 0, "skipped": 0, "conflicts": []}
 
+    user_uuid = _uuid(user_id)
     result = await session.execute(
-        text("SELECT id, lower(word) AS word FROM words WHERE user_id = :user_id"),
-        {"user_id": user_id},
+        text("SELECT id, word, lower(word) AS lower_word FROM words WHERE user_id = :user_id"),
+        {"user_id": user_uuid},
     )
-    current_words = {row["id"]: row["word"] for row in result.mappings().all()}
+    current_rows = {row["id"]: row for row in result.mappings().all()}
+    current_words = {word_id: row["lower_word"] for word_id, row in current_rows.items()}
 
     target = dict(current_words)
     new_word = {}
@@ -285,44 +288,68 @@ async def bulk_update_words(session: AsyncSession, user_id: str, items) -> dict:
             conflict_ids.add(word_id)
             conflicts.append(parsed[word_id].get("word") or new_word[word_id])
 
-    updated = 0
+    params = []
+    for word_id in order:
+        if word_id not in current_words or word_id in conflict_ids:
+            continue
+        item = parsed[word_id]
+        raw_word = (item.get("word") or "").strip()
+        params.append(
+            {
+                "id": word_id,
+                "word": raw_word or current_rows[word_id]["word"],
+                "korean": item.get("korean", "") or "",
+                "korean_detail": item.get("korean_detail", "") or "",
+                "english_def": item.get("english_def", "") or "",
+                "example": item.get("example", "") or "",
+                "tag": item.get("tag") or "미지정",
+                "next_review": (item.get("next_review") or "").strip(),
+            }
+        )
+    if not params:
+        return {"ok": True, "updated": 0, "skipped": len(conflict_ids), "conflicts": conflicts}
+
     try:
-        for word_id in order:
-            if word_id not in current_words or word_id in conflict_ids:
-                continue
-            item = parsed[word_id]
-            result = await session.execute(
-                text(
-                    """UPDATE words
-                       SET word = :word,
-                           korean = :korean,
-                           korean_detail = :korean_detail,
-                           english_def = :english_def,
-                           example = :example,
-                           tag = :tag,
-                           next_review = CASE :next_review
-                               WHEN '1d' THEN NOW() + INTERVAL '1 day'
-                               WHEN '1w' THEN NOW() + INTERVAL '7 days'
-                               WHEN '1m' THEN NOW() + INTERVAL '1 month'
-                               WHEN '3m' THEN NOW() + INTERVAL '3 months'
-                               WHEN '' THEN next_review
-                               ELSE CAST(:next_review AS timestamp)
-                           END
-                       WHERE id = :id AND user_id = :user_id"""
-                ),
-                {
-                    "word": new_word[word_id],
-                    "korean": item.get("korean", "") or "",
-                    "korean_detail": item.get("korean_detail", "") or "",
-                    "english_def": item.get("english_def", "") or "",
-                    "example": item.get("example", "") or "",
-                    "tag": item.get("tag") or "미지정",
-                    "next_review": (item.get("next_review") or "").strip(),
-                    "id": word_id,
-                    "user_id": user_id,
-                },
-            )
-            updated += result.rowcount or 0
+        result = await session.execute(
+            text(
+                """WITH payload AS (
+                       SELECT *
+                       FROM jsonb_to_recordset(CAST(:items AS jsonb)) AS item(
+                           id int,
+                           word text,
+                           korean text,
+                           korean_detail text,
+                           english_def text,
+                           example text,
+                           tag text,
+                           next_review text
+                       )
+                   )
+                   UPDATE words AS w
+                   SET word = NULLIF(BTRIM(payload.word), ''),
+                       korean = COALESCE(payload.korean, ''),
+                       korean_detail = COALESCE(payload.korean_detail, ''),
+                       english_def = COALESCE(payload.english_def, ''),
+                       example = COALESCE(payload.example, ''),
+                       tag = COALESCE(NULLIF(payload.tag, ''), '미지정'),
+                       next_review = CASE COALESCE(payload.next_review, '')
+                           WHEN '1d' THEN NOW() + INTERVAL '1 day'
+                           WHEN '1w' THEN NOW() + INTERVAL '7 days'
+                           WHEN '1m' THEN NOW() + INTERVAL '1 month'
+                           WHEN '3m' THEN NOW() + INTERVAL '3 months'
+                           WHEN '' THEN w.next_review
+                           ELSE CAST(payload.next_review AS timestamp)
+                       END
+                   FROM payload
+                   WHERE w.id = payload.id AND w.user_id = :user_id
+                   RETURNING w.id"""
+            ),
+            {
+                "items": json.dumps(params, ensure_ascii=False),
+                "user_id": user_uuid,
+            },
+        )
+        updated = len(result.scalars().all())
         await session.commit()
     except IntegrityError:
         await session.rollback()

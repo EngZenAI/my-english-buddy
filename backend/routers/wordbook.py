@@ -5,6 +5,7 @@ from fastapi import APIRouter, File, UploadFile
 
 from backend.db.dependencies import SessionDep
 from backend.db.repositories import (
+    add_label,
     bulk_delete_words,
     bulk_update_words,
     delete_word,

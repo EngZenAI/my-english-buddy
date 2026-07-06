@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Bookmark,
-  CheckCircle2,
   Loader2,
   Plus,
   Search,
   Sparkles,
+  Star,
   Tags,
   X,
 } from "lucide-react";
@@ -47,6 +46,7 @@ const getRecentKey = (entry) =>
 const SaveButton = ({ saved, onClick, disabled, full = false }) => (
   <button
     type="button"
+    title={saved ? "이미 단어장에 저장된 단어입니다." : "단어장에 저장합니다."}
     onClick={onClick}
     disabled={disabled}
     className={`inline-flex items-center justify-center gap-1.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60
@@ -54,24 +54,24 @@ const SaveButton = ({ saved, onClick, disabled, full = false }) => (
         full
           ? `h-12 w-full rounded-xl text-sm shadow-sm active:scale-[0.99] ${
               saved
-                ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
-                : "bg-brand-600 text-white hover:bg-brand-700"
+                ? "border border-brand-200 bg-white text-brand-700 hover:bg-brand-50"
+                : "border border-brand-200 bg-white text-brand-700 hover:bg-brand-50"
             }`
           : `h-9 min-w-[104px] rounded-full border px-3.5 text-sm ${
               saved
-                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                : "border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100"
+                ? "border-brand-200 bg-white text-brand-700 hover:bg-brand-50"
+                : "border-brand-200 bg-white text-brand-700 hover:bg-brand-50"
             }`
       }`}
-  >
+    >
     {saved ? (
       <>
-        <CheckCircle2 className="h-4 w-4 animate-save-pop" />
-        저장됨
+        <Star className="h-4 w-4 fill-amber-400 text-amber-400 animate-save-pop" />
+        저장된 단어
       </>
     ) : (
       <>
-        <Bookmark className="h-4 w-4" />
+        <Star className="h-4 w-4 text-amber-400" />
         단어장에 저장
       </>
     )}
@@ -586,7 +586,10 @@ export default function SearchTab({ user, onRequireLogin }) {
       />
 
       {gate && !user && (
-        <MemberNotice feature={gate} onRequireLogin={onRequireLogin} />
+        <MemberNotice
+          message={`로그인하면 ${gate} 기능을 바로 사용할 수 있어요.`}
+          onRequireLogin={onRequireLogin}
+        />
       )}
 
         <section className="rounded-lg border border-slate-200 bg-white shadow-sm">

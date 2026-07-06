@@ -13,6 +13,8 @@ const REVIEW_INTERVAL_OPTIONS = [
 const TYPE_LABELS = {
   meaning_choice: "뜻/단어",
   context_choice: "문맥 빈칸",
+  collocation_choice: "언어/표현",
+  usage_choice: "올바른 사용",
   short_answer: "단답형",
   sentence_answer: "문장형",
 };
@@ -29,7 +31,7 @@ export default function QuizResult({
   if (!gradeResult) return null;
 
   return (
-    <Card className="shadow-[0_4px_20px_rgba(0,0,0,0.03)] border-slate-100/90 rounded-2xl overflow-hidden mt-6 animate-fadeIn select-none">
+    <Card className="shadow-[0_4px_20px_rgba(0,0,0,0.03)] border-slate-100/90 rounded-2xl overflow-hidden mt-6 animate-fadeIn">
       <CardHeader className="bg-brand-50/70 dark:bg-brand-900/20 border-b border-brand-100 p-5 flex items-center justify-between flex-row">
         <div>
           <CardTitle className="text-sm font-bold text-slate-800 flex items-center gap-1.5">

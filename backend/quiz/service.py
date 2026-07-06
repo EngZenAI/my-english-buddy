@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import time
 from datetime import datetime, timedelta
 from typing import Any
@@ -35,10 +36,10 @@ from backend.quiz.schemas import (
 from backend.usage.tracking import extract_token_usage, track_llm_usage
 
 logger = logging.getLogger(__name__)
-quiz_llm = llm_module.get_llm("quiz")
+quiz_llm = llm_module.get_llm("quiz_generate")
 
 DEFAULT_QUESTION_COUNT = 10
-MAX_QUESTION_COUNT = 20
+MAX_QUESTION_COUNT = 10
 MAX_CANDIDATES = 50
 TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24
 WORD_PAYLOAD_TEXT_LIMIT = 220
@@ -46,16 +47,22 @@ CHOICE_IDS = ("A", "B", "C", "D")
 QUESTION_TYPES = (
     "meaning_choice",
     "context_choice",
+    "collocation_choice",
+    "usage_choice",
     "short_answer",
     "sentence_answer",
 )
 CHOICE_QUESTION_TYPES = {
     "meaning_choice",
     "context_choice",
+    "collocation_choice",
+    "usage_choice",
 }
 SAVED_GRAMMAR_BLANK_CHOICE_ALIASES = {"_".join(("to" + "eic", "part5"))}
 GENERATION_ATTEMPTS = 3
-
+GENERATION_BATCH_SIZE = 5
+GENERATION_SPLIT_THRESHOLD = 6
+WORD_CANDIDATES_PER_QUESTION = 1
 
 class _GeneratedChoice(BaseModel):
     id: str = Field(description="A, B, C, or D")
@@ -101,7 +108,6 @@ class _SubjectiveGrade(BaseModel):
 
 _quiz_parser = PydanticOutputParser(pydantic_object=_GeneratedQuiz)
 _subjective_parser = PydanticOutputParser(pydantic_object=_SubjectiveGrade)
-
 
 def _clamp_question_count(value: int | None) -> int:
     try:
@@ -167,7 +173,7 @@ def _read_answer_token(user_id: str, token: str) -> dict[str, Any]:
     return payload
 
 
-def _word_payload(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _word_payload(words: list[dict[str, Any]], candidate_limit: int = MAX_CANDIDATES) -> list[dict[str, Any]]:
     def compact(value: Any, limit: int = WORD_PAYLOAD_TEXT_LIMIT) -> str:
         text = " ".join(str(value or "").split())
         if len(text) <= limit:
@@ -179,19 +185,23 @@ def _word_payload(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "id": int(w["id"]),
             "word": compact(w.get("word"), 80),
             "korean": compact(w.get("korean"), 120),
-            "english_def": compact(w.get("english_def")),
+            "english_def": compact(w.get("english_def"), 220),
+            "example": compact(w.get("example"), 220),
             "tag": w.get("tag") or "미지정",
         }
-        for w in words[:MAX_CANDIDATES]
+        for w in words[: max(1, min(candidate_limit, MAX_CANDIDATES))]
     ]
 
 
 def _goal_payload(goal: QuizGenerateIn) -> dict[str, Any]:
-    type_counts = {
-        key: max(0, int(value or 0))
-        for key, value in (goal.question_type_counts or {}).items()
-        if key in QUESTION_TYPES
-    }
+    type_counts = {}
+    remaining = MAX_QUESTION_COUNT
+    for key in QUESTION_TYPES:
+        value = max(0, int((goal.question_type_counts or {}).get(key) or 0))
+        if value <= 0 or remaining <= 0:
+            continue
+        type_counts[key] = min(value, remaining)
+        remaining -= type_counts[key]
     return {
         "mode": goal.mode or "random",
         "tag": goal.tag or "",
@@ -213,6 +223,10 @@ def _normalize_question_type(qtype: str | None) -> str:
         return "context_choice"
     if raw == "grammar_blank_choice":
         return "context_choice"
+    if raw in {"collocation_blank_choice", "phrase_choice"}:
+        return "collocation_choice"
+    if raw in {"usage_judgement", "usage_judgment", "usage_sentence_choice"}:
+        return "usage_choice"
     if raw in QUESTION_TYPES:
         return raw
     return "meaning_choice"
@@ -264,6 +278,157 @@ def _objective_explanations(question: dict[str, Any]) -> tuple[str, dict[str, st
     return answer_explanation, choice_explanations, study_note
 
 
+def _is_low_quality_objective_prompt(qtype: str, prompt: str, passage: str, target: str) -> bool:
+    prompt_text = " ".join((prompt or "").split())
+    passage_text = " ".join((passage or "").split())
+    prompt_lower = prompt_text.lower()
+    passage_lower = passage_text.lower()
+    target_lower = (target or "").strip().lower()
+    direct_patterns = (
+        "뜻으로 가장 알맞",
+        "뜻으로 알맞",
+        "의 뜻은",
+        "의 의미는",
+        "meaning of",
+        "the word means",
+    )
+    if any(pattern in prompt_lower or pattern in passage_lower for pattern in direct_patterns):
+        return True
+    if passage_lower.startswith("the word means") or passage_lower.startswith("the word is"):
+        return True
+    if qtype == "meaning_choice":
+        if len(passage_text) < 25:
+            return True
+        if _contains_hangul(passage_text):
+            return True
+        if "___" in prompt_text or "____" in prompt_text or "___" in passage_text or "____" in passage_text:
+            return True
+        if not _choice_text_appears_in_text(target, passage_text):
+            return True
+        if target_lower and target_lower in prompt_lower and ("뜻" in prompt_text or "의미" in prompt_text):
+            return True
+    if qtype in {"context_choice", "collocation_choice"}:
+        if len(passage_text) < 35:
+            return True
+        if "____" not in passage_text and "___" not in passage_text and "blank" not in prompt_lower:
+            return True
+        if _contains_hangul(passage_text):
+            return True
+    if qtype == "usage_choice":
+        if len(prompt_text) < 15:
+            return True
+        if passage_text:
+            return True
+    return False
+
+
+def _contains_hangul(value: Any) -> bool:
+    return bool(re.search(r"[가-힣]", str(value or "")))
+
+
+def _is_low_quality_text_prompt(qtype: str, prompt: str, passage: str, target: str) -> bool:
+    prompt_text = " ".join((prompt or "").split())
+    passage_text = " ".join((passage or "").split())
+    prompt_lower = prompt_text.lower()
+    target_key = _choice_word_key(target)
+    if qtype == "sentence_answer":
+        if not target_key:
+            return True
+        return target_key not in _choice_word_key(prompt_text)
+    if qtype == "short_answer":
+        bad_patterns = (
+            "에 해당하는 영어 단어",
+            "에 해당하는 영어 표현",
+            "한국어 '",
+            "한국어 ‘",
+            "한국어 \"",
+        )
+        if any(pattern in prompt_text for pattern in bad_patterns):
+            return True
+        if _contains_hangul(passage_text):
+            return True
+        has_english_clue = len(re.findall(r"[A-Za-z]{3,}", prompt_text + " " + passage_text)) >= 3
+        has_blank = "___" in prompt_text or "____" in prompt_text or "___" in passage_text or "____" in passage_text
+        if has_blank and _contains_hangul(prompt_text) and not has_english_clue:
+            return True
+        return not (has_english_clue or has_blank or "definition" in prompt_lower)
+    return False
+
+
+def _choice_word_key(value: Any) -> str:
+    text = " ".join(str(value or "").lower().split())
+    return re.sub(r"^[^\w]+|[^\w]+$", "", text)
+
+
+def _word_tokens(value: Any) -> list[str]:
+    return re.findall(r"[a-z0-9]+", str(value or "").lower())
+
+
+def _choice_text_appears_in_text(choice: Any, text: Any) -> bool:
+    choice_tokens = _word_tokens(choice)
+    text_tokens = _word_tokens(text)
+    if not choice_tokens or not text_tokens:
+        return False
+    if len(choice_tokens) == 1:
+        return choice_tokens[0] in text_tokens
+    return " ".join(choice_tokens) in " ".join(text_tokens)
+
+
+def _is_bad_objective_choices(
+    qtype: str,
+    choices: list[dict[str, str]],
+    correct_choice_id: str,
+    prompt: str,
+    passage: str,
+    target: str,
+    source_word: str,
+) -> bool:
+    correct_text = next(
+        (choice.get("text") or "" for choice in choices if choice.get("id") == correct_choice_id),
+        "",
+    )
+    target_key = _choice_word_key(target)
+    source_key = _choice_word_key(source_word)
+    if qtype == "meaning_choice":
+        if any(not _contains_hangul(choice.get("text")) for choice in choices):
+            return True
+        return any(
+            _choice_word_key(choice.get("text")) in {target_key, source_key}
+            or _choice_text_appears_in_text(target, choice.get("text"))
+            or _choice_text_appears_in_text(source_word, choice.get("text"))
+            for choice in choices
+        )
+    if qtype in {"context_choice", "collocation_choice"}:
+        return _choice_text_appears_in_text(correct_text, prompt) or _choice_text_appears_in_text(correct_text, passage)
+    if qtype == "usage_choice":
+        if any(_contains_hangul(choice.get("text")) for choice in choices):
+            return True
+        return any(not _choice_text_appears_in_text(target, choice.get("text")) for choice in choices)
+    return False
+
+
+def _wordbook_distractor_count(
+    choices: list[dict[str, str]],
+    correct_choice_id: str,
+    word_map: dict[int, dict[str, Any]],
+    target: str,
+) -> int:
+    wordbook_words = {
+        _choice_word_key(word.get("word"))
+        for word in word_map.values()
+        if _choice_word_key(word.get("word"))
+    }
+    target_key = _choice_word_key(target)
+    count = 0
+    for choice in choices:
+        if choice.get("id") == correct_choice_id:
+            continue
+        choice_key = _choice_word_key(choice.get("text"))
+        if choice_key and choice_key != target_key and choice_key in wordbook_words:
+            count += 1
+    return count
+
+
 def _normalize_generated(generated: _GeneratedQuiz, words: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:
     word_map = {int(w["id"]): w for w in words}
     normalized: list[dict[str, Any]] = []
@@ -301,8 +466,38 @@ def _normalize_generated(generated: _GeneratedQuiz, words: list[dict[str, Any]],
             acceptable = [target]
         if not target or not item.prompt.strip():
             continue
+        if qtype in CHOICE_QUESTION_TYPES and _is_low_quality_objective_prompt(
+            qtype,
+            item.prompt,
+            item.passage,
+            target,
+        ):
+            continue
+        if qtype in CHOICE_QUESTION_TYPES and _is_bad_objective_choices(
+            qtype,
+            choices,
+            correct_choice_id,
+            item.prompt,
+            item.passage,
+            target,
+            source.get("word") or "",
+        ):
+            continue
+        if qtype not in CHOICE_QUESTION_TYPES and _is_low_quality_text_prompt(
+            qtype,
+            item.prompt,
+            item.passage,
+            target,
+        ):
+            continue
+        if (
+            qtype in CHOICE_QUESTION_TYPES
+            and _wordbook_distractor_count(choices, correct_choice_id, word_map, target) >= 2
+        ):
+            continue
 
         is_derived = bool(item.is_derived)
+        relation_type = item.relation_type.strip()
         source_word_text = (source.get("word") or "").strip().lower()
         target_text = target.strip().lower()
         target_differs_from_source = bool(
@@ -312,12 +507,13 @@ def _normalize_generated(generated: _GeneratedQuiz, words: list[dict[str, Any]],
             target_differs_from_source
             and qtype not in CHOICE_QUESTION_TYPES
             and not is_derived
+            and not bool(item.is_related)
+            and relation_type not in {"derived", "synonym", "antonym", "collocation", "word_family", "contextual"}
         ):
             continue
-        is_related = bool(item.is_related) or (
+        is_related = bool(item.is_related) or bool(relation_type) or (
             qtype in CHOICE_QUESTION_TYPES and target_differs_from_source
         )
-        relation_type = item.relation_type.strip()
         suggested_korean = item.suggested_korean.strip()
         suggested_english_def = item.suggested_english_def.strip()
         suggested_example = item.suggested_example.strip()
@@ -383,6 +579,60 @@ def _question_type_totals(questions: list[dict[str, Any]]) -> dict[str, int]:
     return totals
 
 
+def _generation_batch_sizes(count: int) -> list[int]:
+    if count <= GENERATION_SPLIT_THRESHOLD:
+        return [count]
+    sizes = []
+    remaining = count
+    while remaining > 0:
+        batch_size = min(GENERATION_BATCH_SIZE, remaining)
+        sizes.append(batch_size)
+        remaining -= batch_size
+    return sizes
+
+
+def _batch_type_counts(
+    requested_type_counts: dict[str, int],
+    produced_counts: dict[str, int],
+    batch_size: int,
+) -> dict[str, int]:
+    if not requested_type_counts:
+        return {}
+
+    allocated: dict[str, int] = {}
+    remaining_slots = batch_size
+    for qtype in QUESTION_TYPES:
+        remaining_for_type = max(
+            0,
+            int(requested_type_counts.get(qtype, 0) or 0) - produced_counts.get(qtype, 0),
+        )
+        if remaining_for_type <= 0:
+            continue
+        count = min(remaining_for_type, remaining_slots)
+        if count:
+            allocated[qtype] = count
+            remaining_slots -= count
+        if remaining_slots <= 0:
+            break
+    return allocated
+
+
+def _batch_candidate_words(
+    quiz_words: list[dict[str, Any]],
+    batch_index: int,
+    batch_size: int,
+) -> list[dict[str, Any]]:
+    if not quiz_words:
+        return []
+
+    window_size = min(
+        len(quiz_words),
+        max(batch_size, batch_size * WORD_CANDIDATES_PER_QUESTION),
+    )
+    start = (batch_index * window_size) % len(quiz_words)
+    return [quiz_words[(start + offset) % len(quiz_words)] for offset in range(window_size)]
+
+
 def _reindex_questions(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for idx, question in enumerate(questions, start=1):
         question["id"] = f"q{idx}"
@@ -396,23 +646,27 @@ def _is_connection_refused(exc: Exception) -> bool:
     ) or "[Errno 111]" in str(exc)
 
 
-def _active_model_name() -> str:
+def _quiz_feature_for_operation(operation: str) -> str:
+    return "quiz_grade" if operation == "grade_subjective" else "quiz_generate"
+
+
+def _active_model_name(operation: str = "generate_quiz") -> str:
     get_active_model_name = getattr(llm_module, "get_active_model_name", None)
     if get_active_model_name:
-        return get_active_model_name("quiz")
+        return get_active_model_name(_quiz_feature_for_operation(operation))
     return getattr(llm_module, "ACTIVE_MODEL", "unknown")
 
 
-def _quiz_llm():
+def _quiz_llm(operation: str):
     get_llm = getattr(llm_module, "get_llm", None)
-    return get_llm("quiz") if get_llm else quiz_llm
+    return get_llm(_quiz_feature_for_operation(operation)) if get_llm else quiz_llm
 
 
 def _invoke_quiz_llm(operation: str, prompt_value: Any) -> Any:
     started = time.perf_counter()
-    model_name = _active_model_name()
+    model_name = _active_model_name(operation)
     try:
-        response = _quiz_llm().invoke(prompt_value)
+        response = _quiz_llm(operation).invoke(prompt_value)
     except QUIZ_LLM_ERRORS:
         track_llm_usage(
             feature="quiz",
@@ -511,73 +765,85 @@ def _generate_llm_questions(
     seen: set[tuple[Any, ...]] = set()
     goal_payload = _goal_payload(goal)
     requested_type_counts = goal_payload.get("question_type_counts") or {}
+    batch_sizes = _generation_batch_sizes(count)
 
-    for attempt in range(GENERATION_ATTEMPTS):
-        remaining = count - len(generated_questions)
-        if remaining <= 0:
+    for batch_index, batch_size in enumerate(batch_sizes):
+        if len(generated_questions) >= count:
             break
-        attempt_goal_payload = dict(goal_payload)
-        if requested_type_counts:
-            produced: dict[str, int] = {}
-            for question in generated_questions:
-                qtype = _normalize_question_type(question.get("question_type"))
-                produced[qtype] = produced.get(qtype, 0) + 1
-            attempt_goal_payload["question_type_counts"] = {
-                qtype: max(0, int(target_count) - produced.get(qtype, 0))
-                for qtype, target_count in requested_type_counts.items()
-                if max(0, int(target_count) - produced.get(qtype, 0)) > 0
-            }
-            attempt_goal_payload["question_count"] = sum(attempt_goal_payload["question_type_counts"].values()) or remaining
-        generation_note = (
-            "Initial generation. Create original questions and sentences with the LLM."
-            if attempt == 0
-            else (
-                f"Retry generation. The previous attempt produced only "
-                f"{len(generated_questions)} valid distinct questions. Generate {remaining} "
-                "additional valid questions. Do not repeat any prior prompt, passage, "
-                "choice set, or target/question_type combination."
-            )
-        )
-        raw_generated = ""
-        try:
-            prompt_value = build_quiz_generation_prompt(
-                question_count=remaining,
-                goal_json=json.dumps(attempt_goal_payload, ensure_ascii=False),
-                wordbook_json=json.dumps(quiz_words, ensure_ascii=False),
-                generation_note=generation_note,
-                format_instructions=_quiz_parser.get_format_instructions(),
-            )
-            raw_generated = _invoke_quiz_llm("generate_quiz", prompt_value)
-            generated = _parse_generated_quiz(raw_generated)
-        except QUIZ_LLM_ERRORS as exc:
-            raw_preview = _raw_text(raw_generated).strip()[:500]
-            logger.warning(
-                "LLM quiz generation attempt %s failed on model %s: %s; raw_preview=%r",
-                attempt + 1,
-                _active_model_name(),
-                exc,
-                raw_preview,
-            )
-            if _is_connection_refused(exc):
-                break
-            continue
 
-        normalized = _normalize_generated(generated, quiz_words, remaining)
-        produced = _question_type_totals(generated_questions)
-        for question in normalized:
-            qtype = _normalize_question_type(question.get("question_type"))
-            if requested_type_counts:
-                target_type_count = int(requested_type_counts.get(qtype, 0) or 0)
-                if target_type_count <= 0 or produced.get(qtype, 0) >= target_type_count:
-                    continue
-            signature = _question_signature(question)
-            if signature in seen:
-                continue
-            seen.add(signature)
-            generated_questions.append(question)
-            produced[qtype] = produced.get(qtype, 0) + 1
-            if len(generated_questions) >= count:
+        batch_target = min(batch_size, count - len(generated_questions))
+        batch_questions: list[dict[str, Any]] = []
+        batch_words = _batch_candidate_words(quiz_words, batch_index, batch_target)
+
+        for attempt in range(GENERATION_ATTEMPTS):
+            remaining = batch_target - len(batch_questions)
+            if remaining <= 0:
                 break
+
+            produced = _question_type_totals(generated_questions + batch_questions)
+            batch_type_counts = _batch_type_counts(requested_type_counts, produced, remaining)
+            attempt_goal_payload = dict(goal_payload)
+            if requested_type_counts:
+                attempt_goal_payload["question_type_counts"] = batch_type_counts
+                attempt_goal_payload["question_count"] = sum(batch_type_counts.values()) or remaining
+            else:
+                attempt_goal_payload["question_count"] = remaining
+            generation_note = (
+                f"Batch {batch_index + 1} of {len(batch_sizes)}. "
+                "Create original questions and sentences with the LLM."
+                if attempt == 0
+                else (
+                    f"Retry batch {batch_index + 1}. This batch produced only "
+                    f"{len(batch_questions)} valid distinct questions. Generate {remaining} "
+                    "additional valid questions. Do not repeat any prior prompt, passage, "
+                    "choice set, or target/question_type combination."
+                )
+            )
+
+            raw_generated = ""
+            try:
+                prompt_value = build_quiz_generation_prompt(
+                    question_count=remaining,
+                    goal_json=json.dumps(attempt_goal_payload, ensure_ascii=False),
+                    wordbook_json=json.dumps(batch_words, ensure_ascii=False),
+                    generation_note=generation_note,
+                    format_instructions=_quiz_parser.get_format_instructions(),
+                )
+                raw_generated = _invoke_quiz_llm("generate_quiz", prompt_value)
+                generated = _parse_generated_quiz(raw_generated)
+            except QUIZ_LLM_ERRORS as exc:
+                raw_preview = _raw_text(raw_generated).strip()[:500]
+                logger.warning(
+                    "LLM quiz generation batch %s/%s attempt %s failed on model %s: %s; raw_preview=%r",
+                    batch_index + 1,
+                    len(batch_sizes),
+                    attempt + 1,
+                    _active_model_name("generate_quiz"),
+                    exc,
+                    raw_preview,
+                )
+                if _is_connection_refused(exc):
+                    break
+                continue
+
+            normalized = _normalize_generated(generated, batch_words, remaining)
+            produced = _question_type_totals(generated_questions + batch_questions)
+            for question in normalized:
+                qtype = _normalize_question_type(question.get("question_type"))
+                if requested_type_counts:
+                    target_type_count = int(requested_type_counts.get(qtype, 0) or 0)
+                    if target_type_count <= 0 or produced.get(qtype, 0) >= target_type_count:
+                        continue
+                signature = _question_signature(question)
+                if signature in seen:
+                    continue
+                seen.add(signature)
+                batch_questions.append(question)
+                produced[qtype] = produced.get(qtype, 0) + 1
+                if len(batch_questions) >= batch_target:
+                    break
+
+        generated_questions.extend(batch_questions)
 
     return _reindex_questions(generated_questions[:count])
 
@@ -611,7 +877,8 @@ async def generate_assignment(
     goal: QuizGenerateIn,
 ) -> QuizGenerateResponse:
     count = _requested_question_count(goal)
-    quiz_words = _word_payload(words)
+    candidate_limit = min(MAX_CANDIDATES, max(count + 4, count * 2, 12))
+    quiz_words = _word_payload(words, candidate_limit=candidate_limit)
     if not quiz_words:
         return QuizGenerateResponse(
             ok=False,
@@ -630,16 +897,16 @@ async def generate_assignment(
         return QuizGenerateResponse(
             ok=False,
             message=(
-                "AI가 유효한 퀴즈를 생성하지 못했습니다. "
-                "잠시 후 다시 시도하거나 출제 지시문을 더 구체적으로 입력해주세요."
+                "AI 응답이 불안정해 퀴즈를 만들지 못했습니다. "
+                "잠시 후 다시 시도해주세요."
             ),
         )
 
     message = f"{len(generated_questions)}문제를 생성했습니다."
     if len(generated_questions) < target_count:
         message = (
-            f"AI가 요청한 {target_count}문항 중 유효한 {len(generated_questions)}문항만 생성했습니다. "
-            "코드가 임의 문항을 보충하지 않았습니다."
+            f"요청한 {target_count}문항 중 {len(generated_questions)}문항을 생성했습니다. "
+            "단어 수나 출제 조건을 넓히면 더 많이 만들 수 있습니다."
         )
 
     session_id = await create_quiz_session(

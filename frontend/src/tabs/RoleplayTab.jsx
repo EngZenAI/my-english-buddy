@@ -1028,7 +1028,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
                     음성 채팅
                   </option>
                 </select>
-                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-200" />
+                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-white/90" />
               </span>
             </label>
           </div>
@@ -1061,7 +1061,10 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
 
       {!user && (
         <div className="shrink-0 px-4 pt-4">
-          <MemberNotice feature="롤플레잉" onRequireLogin={onRequireLogin} />
+          <MemberNotice
+            message="로그인하면 롤플레잉을 바로 사용할 수 있어요."
+            onRequireLogin={onRequireLogin}
+          />
         </div>
       )}
 

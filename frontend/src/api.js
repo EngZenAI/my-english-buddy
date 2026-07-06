@@ -388,7 +388,11 @@ export const api = {
   },
   articleSources: () => jsonFetch("/api/article-sources"),
   articleAdminStatus: () => jsonFetch("/api/article-admin/status"),
-  articleAdminList: (page = 1) => jsonFetch(`/api/admin/articles?page=${page}`),
+  articleAdminList: (page = 1, q = "") => {
+    const params = new URLSearchParams({ page: String(page) });
+    if (q) params.set("q", q);
+    return jsonFetch(`/api/admin/articles?${params.toString()}`);
+  },
   articleAdminCreate: (payload) =>
     jsonFetch("/api/admin/articles", {
       method: "POST",

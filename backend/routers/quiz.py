@@ -28,7 +28,7 @@ async def quiz_generate(payload: QuizGenerateIn, session: SessionDep, _user: Cur
         max(0, int(value or 0))
         for value in (payload.question_type_counts or {}).values()
     )
-    question_count = max(1, min(int(type_total or payload.question_count or 10), 20))
+    question_count = max(1, min(int(type_total or payload.question_count or 10), 10))
     words = await get_words_for_quiz(
         session,
         _user["id"],

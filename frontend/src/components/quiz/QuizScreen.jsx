@@ -35,6 +35,8 @@ const STATUS_LABELS = {
 const TYPE_LABELS = {
   meaning_choice: "뜻/단어",
   context_choice: "문맥 빈칸",
+  collocation_choice: "언어/표현",
+  usage_choice: "올바른 사용",
   short_answer: "단답형",
   sentence_answer: "문장형",
 };
@@ -59,6 +61,36 @@ function resultTone(status) {
   if (status === "partial") return "border-amber-200 bg-amber-50 text-amber-800";
   if (status === "incorrect") return "border-rose-200 bg-rose-50 text-rose-800";
   return "border-slate-200 bg-white text-slate-600";
+}
+
+function formatAcceptableAnswers(answers = []) {
+  return answers.filter(Boolean).join(" 또는 ");
+}
+
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function HighlightedPassage({ text, target, active = false }) {
+  if (!active || !text || !target) return text;
+
+  const pattern = new RegExp(`(${escapeRegExp(target)})`, "gi");
+  const parts = String(text).split(pattern);
+  if (parts.length <= 1) return text;
+
+  return parts.map((part, index) => {
+    if (part.toLowerCase() !== String(target).toLowerCase()) {
+      return <span key={`${part}-${index}`}>{part}</span>;
+    }
+    return (
+      <mark
+        key={`${part}-${index}`}
+        className="rounded bg-amber-100 px-1 py-0.5 font-black text-amber-950 ring-1 ring-amber-300"
+      >
+        {part}
+      </mark>
+    );
+  });
 }
 
 function QuestionList({ questions, answers, resultByQuestion, currentIndex, onSelect }) {
@@ -163,7 +195,7 @@ function ResultExplanation({ result }) {
         {(result.correct_text || result.acceptable_answers?.length > 0) && (
           <p className="text-sm font-black text-slate-950">
             정답: {result.correct_choice_id ? `${result.correct_choice_id}. ` : ""}
-            {result.correct_text || result.acceptable_answers.join(" | ")}
+            {result.correct_text || formatAcceptableAnswers(result.acceptable_answers)}
           </p>
         )}
       </div>
@@ -191,48 +223,46 @@ function ResultExplanation({ result }) {
   );
 }
 
-function SuggestedWordbookSection({ results, onSaveSuggestedWord, savingWord, savedWords }) {
-  const items = (results || []).filter((item) => item.can_add_to_wordbook && item.suggested_word);
-  if (!items.length) return null;
+function SuggestedWordInline({ result, questionNumber, onSaveSuggestedWord, savingWord, savedWords }) {
+  if (!result?.can_add_to_wordbook || !result?.suggested_word) return null;
 
+  const word = result.suggested_word;
+  const saved = savedWords?.has(word);
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4">
-      <div className="mb-3 flex items-center gap-2">
-        <BookPlus className="h-4.5 w-4.5 text-[#0f766e]" />
-        <h3 className="text-sm font-black text-slate-950">단어장에 추가</h3>
+    <div className="mt-3 rounded-md border border-brand-200 bg-brand-50/70 p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <BookPlus className="h-4.5 w-4.5 text-brand-700" />
+        <h3 className="text-sm font-black text-slate-950">저장할 단어</h3>
+        <Badge className="rounded-md bg-white text-brand-700 hover:bg-white">
+          문제 {questionNumber}
+        </Badge>
       </div>
-      <div className="space-y-2">
-        {items.map((item) => {
-          const word = item.suggested_word;
-          const saved = savedWords?.has(word);
-          return (
-            <div
-              key={`${item.question_id}-${word}`}
-              className="grid gap-3 rounded-md bg-slate-50/80 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
-            >
-              <div className="min-w-0">
-                <p className="truncate text-sm font-black text-slate-950">{word}</p>
-                <p className="mt-0.5 truncate text-xs font-medium text-slate-600">
-                  {item.suggested_korean || item.target_word || "추가 추천 단어"}
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant={saved ? "outline" : "default"}
-                disabled={saved || savingWord === word}
-                onClick={() => onSaveSuggestedWord?.(item)}
-                className={cn(
-                  "h-9 rounded-md px-4 text-xs font-black",
-                  saved
-                    ? "border-slate-200 text-slate-500"
-                    : "bg-[#0f766e] text-white hover:bg-[#0b5f59]",
-                )}
-              >
-                {saved ? "추가됨" : savingWord === word ? "추가 중..." : "추가"}
-              </Button>
-            </div>
-          );
-        })}
+      <div className="grid gap-3 rounded-md bg-white p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-black text-slate-950">{word}</p>
+          <p className="mt-0.5 truncate text-xs font-medium text-slate-600">
+            {result.suggested_korean || result.target_word || "추가 추천 단어"}
+          </p>
+          {result.source_word && (
+            <p className="mt-1 text-[11px] font-semibold text-slate-500">
+              원래 문제 단어: {result.source_word}
+            </p>
+          )}
+        </div>
+        <Button
+          type="button"
+          variant={saved ? "outline" : "default"}
+          disabled={saved || savingWord === word}
+          onClick={() => onSaveSuggestedWord?.(result)}
+          className={cn(
+            "h-9 rounded-md px-4 text-xs font-black",
+            saved
+              ? "border-slate-200 text-slate-500"
+              : "bg-[#0f766e] text-white hover:bg-[#0b5f59]",
+          )}
+        >
+          {saved ? "추가됨" : savingWord === word ? "추가 중..." : "추가"}
+        </Button>
       </div>
     </div>
   );
@@ -344,7 +374,11 @@ export default function QuizScreen({
               {question.passage && (
                 <div className="border-y border-slate-200 py-5">
                   <p className="font-serif text-xl leading-10 text-slate-950">
-                    {question.passage}
+                    <HighlightedPassage
+                      text={question.passage}
+                      target={question.target_word}
+                      active={normalizedType === "meaning_choice"}
+                    />
                   </p>
                 </div>
               )}
@@ -413,13 +447,9 @@ export default function QuizScreen({
             {result && (
               <div className="mt-8 rounded-md border border-slate-200 bg-slate-50/70 p-4">
                 <ResultExplanation result={result} />
-              </div>
-            )}
-
-            {gradeResult && (
-              <div className="mt-6">
-                <SuggestedWordbookSection
-                  results={gradeResult.results}
+                <SuggestedWordInline
+                  result={result}
+                  questionNumber={safeIndex + 1}
                   onSaveSuggestedWord={onSaveSuggestedWord}
                   savingWord={savingSuggestedWord}
                   savedWords={savedSuggestedWords}

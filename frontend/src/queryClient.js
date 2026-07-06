@@ -23,7 +23,7 @@ export const queryKeys = {
   ],
   articleSources: ["articles", "sources"],
   articleAdminStatus: ["articles", "admin-status"],
-  articleAdminList: (page = 1) => ["articles", "admin-list", page],
+  articleAdminList: (page = 1, q = "") => ["articles", "admin-list", page, q.trim().toLowerCase()],
   articleAdminDetail: (id = "") => ["articles", "admin-detail", id],
   articleRefreshJob: (jobId) => ["articles", "refresh-job", jobId],
   articleSession: (id) => ["articles", "session", id],

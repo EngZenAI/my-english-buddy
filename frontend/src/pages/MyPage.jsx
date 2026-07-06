@@ -602,7 +602,10 @@ export default function MyPage({ user, onRequireLogin, onOAuthStart }) {
     return (
       <div>
         <h1 className="mb-4 text-2xl font-bold">마이페이지</h1>
-        <MemberNotice feature="마이페이지" onRequireLogin={onRequireLogin} />
+        <MemberNotice
+          message="로그인하면 마이페이지를 사용할 수 있어요."
+          onRequireLogin={onRequireLogin}
+        />
       </div>
     );
   }

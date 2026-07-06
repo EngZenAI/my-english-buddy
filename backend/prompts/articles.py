@@ -5,12 +5,17 @@ from backend.prompts.common import render_prompt
 STUDY_PROMPT = ChatPromptTemplate.from_template(
     """
 You are an English reading tutor for Korean learners.
-Create short study material from the article title and lead excerpt.
+Create compact study material from the article title and excerpt chunks.
 
 Rules:
 - Do not add facts that are not in the provided title/excerpt.
-- Keep explanations in Korean, but keep useful English expressions in English.
 - Extract practical vocabulary/expressions suitable for saving to a wordbook.
+- Return one paragraph item for each input chunk, preserving chunk_id.
+- translation_ko must be a direct literal Korean translation of the English
+  chunk. Do not add interpretation, background, summary, or tutoring comments
+  to translation_ko.
+- explanation_ko must be a short Korean reading note, separate from translation.
+- Do not create quizzes, check questions, or answer keys.
 - Return only JSON.
 
 Article title: {title}
@@ -25,7 +30,8 @@ JSON shape:
     {{
       "chunk_id": 1,
       "chunk_index": 0,
-      "explanation_ko": "기사 핵심 해설",
+      "translation_ko": "직역에 가까운 한국어 번역",
+      "explanation_ko": "짧은 독해 메모",
       "key_expressions": [
         {{
           "word": "expression",
@@ -33,9 +39,7 @@ JSON shape:
           "english_def": "plain English meaning",
           "example": "exact or lightly trimmed sentence from the chunk"
         }}
-      ],
-      "check_question": "한국어 확인 질문",
-      "answer_ko": "짧은 모범 답안"
+      ]
     }}
   ]
 }}
@@ -56,20 +60,13 @@ JSON shape:
 {{
   "summary_ko": "전체 요약 3-5문장",
   "main_claim_ko": "기사의 핵심 주장 또는 핵심 사건",
+  "summary_title_ko": "요약 소제목",
   "vocab": [
     {{
       "word": "useful word or phrase",
       "korean": "한국어 뜻",
       "english_def": "plain English meaning",
       "example": "article sentence"
-    }}
-  ],
-  "quiz": [
-    {{
-      "type": "main_idea|detail|vocab|inference",
-      "question": "Korean question",
-      "answer": "Korean answer",
-      "evidence_chunk_id": 1
     }}
   ]
 }}

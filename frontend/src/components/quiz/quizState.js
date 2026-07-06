@@ -1,6 +1,8 @@
 export const DEFAULT_QUESTION_TYPE_COUNTS = {
-  meaning_choice: 4,
-  context_choice: 4,
+  meaning_choice: 2,
+  context_choice: 2,
+  collocation_choice: 2,
+  usage_choice: 2,
   short_answer: 1,
   sentence_answer: 1,
 };
