@@ -7,7 +7,6 @@ from fastapi import APIRouter, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import Response, StreamingResponse
 
-from backend.api_usage import start_usage_capture
 from backend.db.dependencies import SessionDep
 from backend.db.repositories import (
     delete_roleplay_session,
@@ -16,7 +15,6 @@ from backend.db.repositories import (
     insert_words,
     save_roleplay_session,
 )
-from backend.dictionary import translate_korean
 from backend.exceptions import ROLEPLAY_CONTEXT_ERRORS, ROLEPLAY_RUNTIME_ERRORS, log_exception
 from backend.llm import (
     LLMConcurrencyLimitError,
@@ -26,7 +24,7 @@ from backend.llm import (
     stream_roleplay_reply,
     summarize_roleplay,
 )
-from backend.roleplay_tts import (
+from backend.roleplay.tts import (
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
     normalize_tts_text,
@@ -41,6 +39,8 @@ from backend.schemas.roleplay import (
     RoleplaySummaryIn,
     RoleplayTtsIn,
 )
+from backend.search.dictionary import translate_korean
+from backend.usage.tracking import start_usage_capture
 
 router = APIRouter(tags=["roleplay"])
 logger = logging.getLogger(__name__)

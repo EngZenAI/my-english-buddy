@@ -1,11 +1,11 @@
 from fastapi import APIRouter, BackgroundTasks, Request
 from starlette.concurrency import run_in_threadpool
 
-from backend.api_usage import start_usage_capture
 from backend.auth.users import get_current_user_from_cookie
 from backend.db.dependencies import SessionDep
 from backend.routers.common import defer_usage_capture
-from backend.services import search_from_english, search_from_korean, synthesize_tts
+from backend.search.service import search_from_english, search_from_korean, synthesize_tts
+from backend.usage.tracking import start_usage_capture
 
 router = APIRouter(tags=["search"])
 

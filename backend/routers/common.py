@@ -3,11 +3,11 @@ from typing import Annotated
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Request
 
-from backend.api_usage import stop_usage_capture
 from backend.auth.users import get_current_user_from_cookie
 from backend.db.dependencies import SessionDep
 from backend.db.repositories import record_api_usage_events
 from backend.exceptions import SQLALCHEMY_ERRORS, log_exception
+from backend.usage.tracking import stop_usage_capture
 
 logger = logging.getLogger(__name__)
 

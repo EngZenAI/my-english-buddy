@@ -5,8 +5,8 @@ from collections import OrderedDict
 import requests
 from dotenv import load_dotenv
 
-from backend.api_usage import track_external_usage
 from backend.exceptions import HTTP_JSON_ERRORS
+from backend.usage.tracking import track_external_usage
 
 load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_TRANSLATE_API_KEY")

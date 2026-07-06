@@ -9,12 +9,10 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import backend.llm as llm_module
-from backend.api_usage import extract_token_usage, track_llm_usage
 from backend.config import settings
 from backend.db.repositories import (
     apply_quiz_review_schedule,
@@ -23,6 +21,7 @@ from backend.db.repositories import (
     save_results_and_complete_session,
 )
 from backend.exceptions import DATA_COERCION_ERRORS, QUIZ_LLM_ERRORS
+from backend.prompts.quiz import build_quiz_generation_prompt, build_subjective_grade_prompt
 from backend.quiz.schemas import (
     QuizChoice,
     QuizGenerateIn,
@@ -33,6 +32,7 @@ from backend.quiz.schemas import (
     QuizReviewScheduleApplyResponse,
     QuizReviewScheduleItem,
 )
+from backend.usage.tracking import extract_token_usage, track_llm_usage
 
 logger = logging.getLogger(__name__)
 quiz_llm = llm_module.get_llm("quiz")
@@ -102,99 +102,6 @@ class _SubjectiveGrade(BaseModel):
 _quiz_parser = PydanticOutputParser(pydantic_object=_GeneratedQuiz)
 _subjective_parser = PydanticOutputParser(pydantic_object=_SubjectiveGrade)
 
-_quiz_prompt = ChatPromptTemplate.from_template(
-    """
-You are an English academy teacher creating vocabulary homework for a Korean
-student. Use the student's saved wordbook as the source, but you may include
-derived forms of saved words when it helps learning.
-
-Create {question_count} questions. Mix these types from easy to hard:
-- meaning_choice: simple meaning or word matching
-- context_choice: choose a word/form that fits a sentence
-- short_answer: type the target word or derived form
-- sentence_answer: write a short English sentence using the target word
-
-Rules:
-- Use only provided word_id values as source_word_id/word_id anchors.
-- question_type must be one of: meaning_choice, context_choice,
-  short_answer, sentence_answer.
-- If Goal.question_type_counts is present, create exactly that many questions
-  for each listed question_type. The sum is the requested question_count.
-- For context_choice, put the English sentence with the blank in passage and
-  put only the Korean instruction/question in prompt.
-- Create fresh original contexts and sentences. Do not copy, lightly rewrite,
-  or imitate any saved example sentence. If examples are absent, invent natural
-  new contexts from the word meaning.
-- Vary situations, collocations, part-of-speech usage, sentence structure, and
-  distractor logic across questions.
-- For derived words, keep word_id/source_word_id as the original saved word id,
-  set is_derived=true, target_word to the derived word, and derived_from_word_id.
-- Objective questions may use a related target_word that is not in the saved
-  wordbook when it improves learning: derived forms, synonyms, antonyms,
-  collocations, same word family, or a contextually natural expression. Keep
-  source_word_id anchored to the saved word, set is_related=true, and set
-  relation_type to one of: derived, synonym, antonym, collocation, word_family,
-  contextual.
-- When target_word is not the saved source word, fill suggested_korean,
-  suggested_english_def, suggested_example, and suggested_tag so the learner can
-  add the missed target to the wordbook after grading.
-- Subjective text questions must ask for the saved word or a clear derived form
-  only. Do not require a synonym or unrelated related expression as the typed
-  answer.
-- Objective questions must have exactly four choices A-D and correct_choice_id.
-- Objective wrong choices must not be limited to saved wordbook words. Generate
-  realistic distractors that could be confused by part of speech, meaning,
-  spelling, word form, collocation, or sentence context.
-- Do not reuse the same generic wrong choices across questions. Each objective
-  question's distractors must be specific to its target word and sentence.
-- For every objective question, include answer_explanation, choice_explanations
-  with keys A-D, and study_note. Explain every choice, not just the selected one.
-- Text questions must have acceptable_answers and no choices.
-- Write prompts and explanations in Korean. English passages/examples are allowed.
-- Do not reveal the answer in the prompt.
-- Respect the user's instruction if present.
-- Return only one valid JSON object that matches the schema. Do not return
-  markdown fences, comments, prose, or null.
-
-Generation note:
-{generation_note}
-
-Goal:
-{goal_json}
-
-Wordbook JSON:
-{wordbook_json}
-
-{format_instructions}
-"""
-)
-
-_subjective_prompt = ChatPromptTemplate.from_template(
-    """
-You are grading an English vocabulary quiz answer from a Korean learner.
-
-Question:
-{prompt}
-
-Target word:
-{target_word}
-
-Acceptable answers:
-{acceptable_answers}
-
-User answer:
-{user_answer}
-
-Grade with this policy:
-- correct: clearly uses or identifies the expected word/form correctly.
-- partial: understandable but has a typo, weak grammar, or incomplete use.
-- incorrect: wrong word, missing answer, or meaning does not match.
-- confidence should be lower when several interpretations are possible.
-- Feedback must be concise Korean.
-
-{format_instructions}
-"""
-)
 
 def _clamp_question_count(value: int | None) -> int:
     try:
@@ -633,14 +540,12 @@ def _generate_llm_questions(
         )
         raw_generated = ""
         try:
-            prompt_value = _quiz_prompt.invoke(
-                {
-                    "question_count": remaining,
-                    "goal_json": json.dumps(attempt_goal_payload, ensure_ascii=False),
-                    "wordbook_json": json.dumps(quiz_words, ensure_ascii=False),
-                    "generation_note": generation_note,
-                    "format_instructions": _quiz_parser.get_format_instructions(),
-                }
+            prompt_value = build_quiz_generation_prompt(
+                question_count=remaining,
+                goal_json=json.dumps(attempt_goal_payload, ensure_ascii=False),
+                wordbook_json=json.dumps(quiz_words, ensure_ascii=False),
+                generation_note=generation_note,
+                format_instructions=_quiz_parser.get_format_instructions(),
             )
             raw_generated = _invoke_quiz_llm("generate_quiz", prompt_value)
             generated = _parse_generated_quiz(raw_generated)
@@ -762,14 +667,12 @@ def _grade_subjective(question: dict[str, Any], user_answer: str) -> _Subjective
             feedback="답변이 비어 있습니다.",
         )
     try:
-        prompt_value = _subjective_prompt.invoke(
-            {
-                "prompt": question["prompt"],
-                "target_word": question.get("target_word") or question.get("source_word") or "",
-                "acceptable_answers": ", ".join(question.get("acceptable_answers", [])),
-                "user_answer": user_answer,
-                "format_instructions": _subjective_parser.get_format_instructions(),
-            }
+        prompt_value = build_subjective_grade_prompt(
+            prompt=question["prompt"],
+            target_word=question.get("target_word") or question.get("source_word") or "",
+            acceptable_answers=", ".join(question.get("acceptable_answers", [])),
+            user_answer=user_answer,
+            format_instructions=_subjective_parser.get_format_instructions(),
         )
         response = _invoke_quiz_llm("grade_subjective", prompt_value)
         return _subjective_parser.parse(_raw_text(response))

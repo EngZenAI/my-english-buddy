@@ -2,12 +2,12 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException
 
-from backend.api_usage import start_usage_capture
 from backend.db.dependencies import SessionDep
 from backend.db.repositories import get_quiz_session_detail, get_quiz_stats, get_words_for_quiz
 from backend.quiz.schemas import QuizGenerateIn, QuizGradeIn, QuizReviewScheduleApplyIn
 from backend.quiz.service import apply_review_schedule, generate_assignment, grade_assignment
 from backend.routers.common import CurrentUserDep, safe_persist_usage_capture
+from backend.usage.tracking import start_usage_capture
 
 router = APIRouter(tags=["quiz"])
 
