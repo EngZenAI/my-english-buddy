@@ -3,7 +3,6 @@ import logging
 from fastapi import APIRouter, HTTPException
 from starlette.concurrency import run_in_threadpool
 
-from backend.api_usage import start_usage_capture
 from backend.articles.retrieval import select_relevant_chunks
 from backend.articles.tutor import (
     answer_article_question,
@@ -25,13 +24,14 @@ from backend.db.repositories import (
     update_article_completion,
     update_article_study,
 )
-from backend.dictionary import translate_korean
 from backend.routers.common import (
     CurrentUserDep,
     needs_translation,
     persist_usage_capture,
 )
 from backend.schemas.articles import ArticleAskIn, ArticleSaveWordsIn
+from backend.search.dictionary import translate_korean
+from backend.usage.tracking import start_usage_capture
 
 router = APIRouter(tags=["articles"])
 logger = logging.getLogger(__name__)

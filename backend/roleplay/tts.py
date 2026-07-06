@@ -8,9 +8,9 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-from backend.api_usage import track_external_usage
 from backend.exceptions import ROLEPLAY_TTS_ERRORS
 from backend.prompts.tts import build_roleplay_tts_prompt
+from backend.usage.tracking import track_external_usage
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", encoding="utf-8-sig")
 

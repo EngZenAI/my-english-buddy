@@ -18,7 +18,6 @@ from backend.db.repositories import (
 )
 from backend.exceptions import FILE_IMPORT_ERRORS
 from backend.routers.common import CurrentUserDep
-from backend.starter_packs import get_starter_pack, list_starter_packs
 from backend.schemas.wordbook import (
     BulkUpdateIn,
     IdsIn,
@@ -26,6 +25,7 @@ from backend.schemas.wordbook import (
     SaveWordIn,
     UpdateWordIn,
 )
+from backend.wordbook.starter_packs import get_starter_pack, list_starter_packs
 
 router = APIRouter(tags=["wordbook"])
 

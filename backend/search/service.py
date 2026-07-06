@@ -14,14 +14,14 @@ from concurrent.futures import ThreadPoolExecutor
 
 from gtts import gTTS
 
-from backend.api_usage import track_external_usage
-from backend.dictionary import (
+from backend.exceptions import GTTS_ERRORS
+from backend.search.dictionary import (
     search_word,
     translate_english,
     translate_korean,
     translate_many_korean,
 )
-from backend.exceptions import GTTS_ERRORS
+from backend.usage.tracking import track_external_usage
 
 # 외부 API(HTTP) 병렬 호출용 스레드풀
 _executor = ThreadPoolExecutor(max_workers=8)

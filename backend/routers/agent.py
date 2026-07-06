@@ -8,9 +8,9 @@ from backend.agents.service import (
     get_agent_suggestions,
     run_agent_chat,
 )
-from backend.api_usage import start_usage_capture
 from backend.db.dependencies import SessionDep
 from backend.routers.common import CurrentUserDep, safe_persist_usage_capture
+from backend.usage.tracking import start_usage_capture
 
 router = APIRouter(tags=["agent"])
 

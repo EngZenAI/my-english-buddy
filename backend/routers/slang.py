@@ -1,11 +1,11 @@
 from fastapi import APIRouter
 from starlette.concurrency import run_in_threadpool
 
-from backend.api_usage import start_usage_capture
 from backend.db.dependencies import SessionDep
 from backend.llm import explain_slang
 from backend.routers.common import CurrentUserDep, safe_persist_usage_capture
 from backend.schemas.slang import SlangIn
+from backend.usage.tracking import start_usage_capture
 
 router = APIRouter(tags=["slang"])
 

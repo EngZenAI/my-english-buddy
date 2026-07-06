@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import backend.llm as llm_module
-from backend.api_usage import extract_token_usage, track_llm_usage
 from backend.config import settings
 from backend.db.repositories import (
     apply_quiz_review_schedule,
@@ -33,6 +32,7 @@ from backend.quiz.schemas import (
     QuizReviewScheduleApplyResponse,
     QuizReviewScheduleItem,
 )
+from backend.usage.tracking import extract_token_usage, track_llm_usage
 
 logger = logging.getLogger(__name__)
 quiz_llm = llm_module.get_llm("quiz")

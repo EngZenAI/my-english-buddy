@@ -31,7 +31,6 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_ollama import ChatOllama
 from langgraph.graph import END, StateGraph
 
-from backend.api_usage import track_llm_usage
 from backend.exceptions import JSON_PARSE_ERRORS, LLM_PROVIDER_ERRORS
 from backend.prompts.quiz import build_legacy_grade_prompt, build_legacy_quiz_prompt
 from backend.prompts.roleplay import (
@@ -41,6 +40,7 @@ from backend.prompts.roleplay import (
     build_roleplay_summary_prompt,
 )
 from backend.prompts.slang import build_slang_explanation_prompt
+from backend.usage.tracking import track_llm_usage
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", encoding="utf-8-sig")
 logger = logging.getLogger(__name__)
