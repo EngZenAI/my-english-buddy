@@ -450,7 +450,7 @@ function ApiUsageTab({ enabled }) {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-2xl font-black tracking-normal text-slate-950">API 사용량 및 비용</h2>
-            <p className="mt-1 text-sm text-slate-500">기능별 호출량, 실패율, WatsonX 단가 기준 비용을 확인합니다.</p>
+            <p className="mt-1 text-sm text-slate-500">기능별 호출량, 실패율, 사용 비용을 확인합니다.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex rounded-md border border-slate-200 bg-white p-1">
@@ -523,7 +523,7 @@ function ApiUsageTab({ enabled }) {
         <div className="grid gap-3 md:grid-cols-3">
           <MiniStat label="선택 기간 요청 수" value={number(summary.request_count)} helper="로그인 사용자 기준 기록" />
           <MiniStat label="실패 요청" value={number(summary.failed_count)} helper="success=false 이벤트" tone={summary.failed_count ? "danger" : "default"} />
-          <MiniStat label="사용 비용" value={money(summary.estimated_cost_usd)} helper="모델별 WatsonX 토큰 단가 기준" />
+          <MiniStat label="사용 비용" value={money(summary.estimated_cost_usd)} helper="현재 단가 기준" />
         </div>
 
         {usageQuery.isPending ? (
