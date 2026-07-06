@@ -33,28 +33,33 @@ LEGACY_GRADE_PROMPT = ChatPromptTemplate.from_template("""
 QUIZ_GENERATION_PROMPT = ChatPromptTemplate.from_template(
     """
 You are an English academy teacher creating vocabulary homework for a Korean
-student. Use the student's saved wordbook as the source, but you may include
-derived forms of saved words when it helps learning.
+learner. Saved wordbook items are anchors/topics, not mandatory answers.
+target_word may be a saved word, derived form, related expression, synonym,
+antonym, collocation, or contextual trap when that makes a better question.
 
 Create {question_count} questions. Mix these types from easy to hard:
-- meaning_choice: simple meaning or word matching
-- context_choice: choose a word/form that fits a sentence
+- meaning_choice: choose the Korean meaning/nuance of a target word used in an English sentence
+- context_choice: choose the word/form that fits a natural English blank sentence
+- collocation_choice: choose the natural word/phrase for a common collocation or expression
+- usage_choice: choose the English sentence that uses the target word naturally
 - short_answer: type the target word or derived form
 - sentence_answer: write a short English sentence using the target word
 
 Rules:
 - Use only provided word_id values as source_word_id/word_id anchors.
 - question_type must be one of: meaning_choice, context_choice,
-  short_answer, sentence_answer.
-- If Goal.question_type_counts is present, create exactly that many questions
-  for each listed question_type. The sum is the requested question_count.
-- For context_choice, put the English sentence with the blank in passage and
-  put only the Korean instruction/question in prompt.
-- Create fresh original contexts and sentences. Do not copy, lightly rewrite,
-  or imitate any saved example sentence. If examples are absent, invent natural
-  new contexts from the word meaning.
-- Vary situations, collocations, part-of-speech usage, sentence structure, and
-  distractor logic across questions.
+  collocation_choice, usage_choice, short_answer, sentence_answer.
+- If Goal.question_type_counts is present, follow those counts exactly.
+- meaning_choice: passage is an English sentence containing target_word. Choices are Korean meanings/nuances only, never English target words.
+- context_choice/collocation_choice: passage is an English sentence with one blank. The correct choice must not appear in prompt or passage.
+- usage_choice: choices are four English sentences. All four include target_word, but exactly one uses it naturally.
+- short_answer: ask from an English clue or English blank sentence. Do not ask "한국어 '...'에 해당하는 영어 단어" or use Korean example sentences.
+- sentence_answer: prompt must name the exact target_word, e.g. "다음 단어를 사용해 영어 문장을 작성하세요: target_word".
+- Korean is for instructions/explanations only. Every example sentence,
+  situation sentence, passage, and blank sentence must be English.
+- Objective questions must test usage in context, not dictionary recall. Do not use direct-definition prompts like "'word'의 뜻은?".
+- Create fresh contexts; do not copy or lightly rewrite saved examples.
+- Vary situations, collocations, parts of speech, and sentence structures.
 - For derived words, keep word_id/source_word_id as the original saved word id,
   set is_derived=true, target_word to the derived word, and derived_from_word_id.
 - Objective questions may use a related target_word that is not in the saved
@@ -66,19 +71,18 @@ Rules:
 - When target_word is not the saved source word, fill suggested_korean,
   suggested_english_def, suggested_example, and suggested_tag so the learner can
   add the missed target to the wordbook after grading.
-- Subjective text questions must ask for the saved word or a clear derived form
-  only. Do not require a synonym or unrelated related expression as the typed
-  answer.
+- Text questions may ask for a saved, derived, or closely related answer, but
+  the clue must be enough to infer it from English context.
 - Objective questions must have exactly four choices A-D and correct_choice_id.
-- Objective wrong choices must not be limited to saved wordbook words. Generate
-  realistic distractors that could be confused by part of speech, meaning,
-  spelling, word form, collocation, or sentence context.
-- Do not reuse the same generic wrong choices across questions. Each objective
-  question's distractors must be specific to its target word and sentence.
+- Wrong choices must usually be newly generated distractors, not other saved
+  wordbook words. Use plausible distractors by meaning, part of speech,
+  spelling, word form, collocation, or context.
+- Do not use generic wrong choices such as "related meaning", "opposite
+  meaning", or "unrelated meaning".
 - For every objective question, include answer_explanation, choice_explanations
   with keys A-D, and study_note. Explain every choice, not just the selected one.
 - Text questions must have acceptable_answers and no choices.
-- Write prompts and explanations in Korean. English passages/examples are allowed.
+- Write prompts and explanations in Korean. Write passages/examples in English.
 - Do not reveal the answer in the prompt.
 - Respect the user's instruction if present.
 - Return only one valid JSON object that matches the schema. Do not return

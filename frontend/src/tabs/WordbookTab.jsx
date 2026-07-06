@@ -40,6 +40,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
   const lastIndexRef = useRef(null); // Shift+클릭 범위 선택용 (현재 페이지 기준 인덱스)
   const userId = user?.id || "";
   const [filter, setFilter] = useState(""); // "" = 전체
+  const [wordSearch, setWordSearch] = useState("");
   const [page, setPage] = useState(0); // 0-based 페이지
 
   // 태그 편집 모드
@@ -118,7 +119,23 @@ export default function WordbookTab({ user, onRequireLogin }) {
     gcTime: 30 * 60_000,
   });
   const allWords = wordsQuery.data?.words || [];
-  const words = filter ? allWords.filter((w) => w.tag === filter) : allWords;
+  const taggedWords = filter ? allWords.filter((w) => w.tag === filter) : allWords;
+  const searchNeedle = wordSearch.trim().toLowerCase();
+  const words = searchNeedle
+    ? taggedWords.filter((w) =>
+        [
+          w.word,
+          w.korean,
+          w.korean_detail,
+          w.english_def,
+          w.example,
+          w.tag,
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(searchNeedle)
+      )
+    : taggedWords;
 
   useEffect(() => {
     setSelected(new Set());
@@ -128,7 +145,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
   // 필터가 바뀌면 1페이지로
   useEffect(() => {
     setPage(0);
-  }, [filter]);
+  }, [filter, wordSearch]);
 
   const renameLabelMutation = useMutation({
     mutationFn: ({ orig, val }) => api.renameLabel(orig, val),
@@ -397,7 +414,26 @@ export default function WordbookTab({ user, onRequireLogin }) {
   const saveAll = async () => {
     setSavingAll(true);
     try {
-      const items = words.map((w) => ({ id: w.id, ...drafts[w.id] }));
+      const items = words
+        .map((w) => {
+          const draft = drafts[w.id];
+          if (!draft) return null;
+          const changed =
+            (draft.word || "") !== (w.word || "") ||
+            (draft.korean || "") !== (w.korean || "") ||
+            (draft.korean_detail || "") !== (w.korean_detail || "") ||
+            (draft.english_def || "") !== (w.english_def || "") ||
+            (draft.example || "") !== (w.example || "") ||
+            (draft.tag || "미지정") !== (w.tag || "미지정") ||
+            Boolean((draft.next_review || "").trim());
+          return changed ? { id: w.id, ...draft } : null;
+        })
+        .filter(Boolean);
+      if (items.length === 0) {
+        setRowEdit(false);
+        setDrafts({});
+        return;
+      }
       const res = await api.bulkUpdateWords(items);
       if (res.ok === false) {
         // swap 등으로 전체 실패 → 편집 모드 유지(사용자가 고칠 수 있게)
@@ -527,7 +563,12 @@ export default function WordbookTab({ user, onRequireLogin }) {
 
   return (
     <div>
-      {!user && <MemberNotice feature="단어장" onRequireLogin={onRequireLogin} />}
+      {!user && (
+        <MemberNotice
+          message="로그인하면 단어장을 바로 사용할 수 있어요."
+          onRequireLogin={onRequireLogin}
+        />
+      )}
 
       <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
         <h3 className="text-base font-semibold">
@@ -604,6 +645,22 @@ export default function WordbookTab({ user, onRequireLogin }) {
             </>
           )}
         </div>
+      </div>
+
+      <div className="mb-3">
+        <input
+          type="search"
+          value={wordSearch}
+          onChange={(event) => setWordSearch(event.target.value)}
+          placeholder="단어, 뜻, 예문 검색"
+          disabled={!user || rowEdit}
+          className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-brand-400 focus:ring-2 focus:ring-brand-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400 md:max-w-sm"
+        />
+        {searchNeedle && (
+          <span className="mt-1 block text-xs text-slate-400">
+            {taggedWords.length}개 중 {words.length}개 표시
+          </span>
+        )}
       </div>
 
       {/* 태그 줄: 보기 모드=필터 / 편집 모드=이름편집+삭제 */}
@@ -806,9 +863,17 @@ export default function WordbookTab({ user, onRequireLogin }) {
 
           {!loading && words.length === 0 && (
             <EmptyState
-              title={filter ? `'${filter}' 태그의 단어가 없어요.` : "저장된 단어가 없어요."}
+              title={
+                searchNeedle
+                  ? "검색 결과가 없어요."
+                  : filter
+                    ? `'${filter}' 태그의 단어가 없어요.`
+                    : "저장된 단어가 없어요."
+              }
               description={
-                filter
+                searchNeedle
+                  ? "다른 검색어로 다시 찾아보세요."
+                  : filter
                   ? "다른 태그를 골라보거나 단어를 추가해 보세요."
                   : "단어 검색 탭에서 저장하거나 CSV를 가져와보세요!"
               }

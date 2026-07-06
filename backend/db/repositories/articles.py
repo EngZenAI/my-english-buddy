@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.articles.chunking import estimate_tokens, split_article_text
 from backend.db.repositories.common import _rows
 
 
@@ -136,7 +137,10 @@ async def upsert_feed_articles(
         if not lead:
             skipped += 1
             continue
-        chunks = [{"chunk_index": 0, "text": lead, "token_count": max(1, len(lead) // 4)}]
+        chunks = [
+            {"chunk_index": index, "text": text, "token_count": estimate_tokens(text)}
+            for index, text in enumerate(split_article_text(lead, max_chars=700))
+        ]
         article_id = await upsert_article_with_chunks(
             session,
             entry,
@@ -200,7 +204,7 @@ async def list_published_articles(
                               PARTITION BY
                                   source_key,
                                   COALESCE(NULLIF(topic, ''), 'uncategorized')
-                              ORDER BY published_at DESC NULLS LAST, updated_at DESC, id DESC
+                              ORDER BY COALESCE(published_at, updated_at, created_at) DESC, id DESC
                           ) AS topic_rank
                    FROM articles
                    WHERE {where_sql}
@@ -210,7 +214,7 @@ async def list_published_articles(
                       feed_entry_id, license_status, collection_method, created_at, updated_at
                FROM ranked
                WHERE topic_rank <= :per_topic_limit
-               ORDER BY published_at DESC NULLS LAST, updated_at DESC, id DESC
+               ORDER BY COALESCE(published_at, updated_at, created_at) DESC, id DESC
                LIMIT :limit OFFSET :offset"""
         ),
         params,
@@ -223,7 +227,7 @@ async def list_published_articles(
                               PARTITION BY
                                   source_key,
                                   COALESCE(NULLIF(topic, ''), 'uncategorized')
-                              ORDER BY published_at DESC NULLS LAST, updated_at DESC, id DESC
+                              ORDER BY COALESCE(published_at, updated_at, created_at) DESC, id DESC
                           ) AS topic_rank
                    FROM articles
                    WHERE {where_sql}
@@ -239,25 +243,35 @@ async def list_admin_articles(
     session: AsyncSession,
     page: int = 1,
     page_size: int = 30,
+    q: str = "",
 ) -> dict:
     page = max(1, int(page or 1))
     page_size = max(1, min(int(page_size or 30), 100))
+    clauses = ["LOWER(COALESCE(topic, '')) <> 'opinion'"]
+    params: dict[str, Any] = {"limit": page_size, "offset": (page - 1) * page_size}
+    if q:
+        clauses.append(
+            "(title ILIKE :q OR description ILIKE :q OR source ILIKE :q OR url ILIKE :q OR topic ILIKE :q)"
+        )
+        params["q"] = f"%{q}%"
+    where_sql = " AND ".join(clauses)
     result = await session.execute(
         text(
-            """SELECT id, source_key, source, title, url, image_url, published_at,
+            f"""SELECT id, source_key, source, title, url, image_url, published_at,
                       topic, level, is_published, description,
                       extraction_status, feed_entry_id, license_status, collection_method,
                       created_at, updated_at
                FROM articles
-               WHERE LOWER(COALESCE(topic, '')) <> 'opinion'
-               ORDER BY updated_at DESC, id DESC
+               WHERE {where_sql}
+               ORDER BY COALESCE(published_at, updated_at, created_at) DESC, id DESC
                LIMIT :limit OFFSET :offset"""
         ),
-        {"limit": page_size, "offset": (page - 1) * page_size},
+        params,
     )
     rows = _rows(result)
     count_result = await session.execute(
-        text("SELECT COUNT(*)::int FROM articles WHERE LOWER(COALESCE(topic, '')) <> 'opinion'")
+        text(f"SELECT COUNT(*)::int FROM articles WHERE {where_sql}"),
+        {k: v for k, v in params.items() if k not in {"limit", "offset"}},
     )
     return {
         "articles": rows,
@@ -483,21 +497,27 @@ async def update_admin_article(
     if not result.rowcount:
         await session.rollback()
         return False
+    chunk_rows = [
+        {
+            "article_id": int(article_id),
+            "chunk_index": index,
+            "text": chunk_text,
+            "token_count": estimate_tokens(chunk_text),
+        }
+        for index, chunk_text in enumerate(split_article_text(content))
+    ]
     await session.execute(
         text("DELETE FROM article_chunks WHERE article_id = :article_id"),
         {"article_id": int(article_id)},
     )
-    await session.execute(
-        text(
-            """INSERT INTO article_chunks (article_id, chunk_index, text, token_count)
-               VALUES (:article_id, 0, :text, :token_count)"""
-        ),
-        {
-            "article_id": int(article_id),
-            "text": content,
-            "token_count": max(1, len(content) // 4),
-        },
-    )
+    if chunk_rows:
+        await session.execute(
+            text(
+                """INSERT INTO article_chunks (article_id, chunk_index, text, token_count)
+                   VALUES (:article_id, :chunk_index, :text, :token_count)"""
+            ),
+            chunk_rows,
+        )
     await session.commit()
     return True
 

@@ -874,6 +874,8 @@ function LearnersTab({ enabled }) {
 function ArticlesTab({ enabled }) {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
+  const [articleSearchInput, setArticleSearchInput] = useState("");
+  const [articleSearch, setArticleSearch] = useState("");
   const [selectedId, setSelectedId] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [feedSourceKey, setFeedSourceKey] = useState("");
@@ -886,8 +888,8 @@ function ArticlesTab({ enabled }) {
   const editHydrationRef = useRef({ articleId: null, hydrated: false, dirtyFields: {} });
 
   const articlesQuery = useQuery({
-    queryKey: queryKeys.articleAdminList(page),
-    queryFn: () => api.articleAdminList(page),
+    queryKey: queryKeys.articleAdminList(page, articleSearch),
+    queryFn: () => api.articleAdminList(page, articleSearch),
     enabled,
   });
   const sourcesQuery = useQuery({
@@ -1468,7 +1470,31 @@ function ArticlesTab({ enabled }) {
         <div className="rounded-md border border-slate-200 bg-white">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
             <span className="text-sm font-bold text-slate-600">자료 목록</span>
-            <span className="text-xs text-slate-400">공개 상태는 행의 토글로 변경합니다.</span>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                setPage(1);
+                setArticleSearch(articleSearchInput.trim());
+              }}
+              className="relative w-full max-w-sm"
+            >
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                value={articleSearchInput}
+                onChange={(event) => setArticleSearchInput(event.target.value)}
+                placeholder="제목, 출처, URL 검색"
+                className="h-9 pl-9 pr-10"
+              />
+              <Button
+                type="submit"
+                variant="ghost"
+                size="icon"
+                className="absolute right-0 top-0 h-9 w-9"
+                aria-label="뉴스 자료 검색"
+              >
+                <Search className="h-4 w-4" />
+              </Button>
+            </form>
           </div>
           <div className="p-4">
             <DataTable

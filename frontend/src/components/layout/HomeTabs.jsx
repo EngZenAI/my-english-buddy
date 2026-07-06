@@ -1,11 +1,11 @@
-import { BookOpen, MessageCircle, Newspaper, PenLine, Search } from "lucide-react";
+import { BookOpen, MessageCircle, MessageCircleQuestionMark, Newspaper, Search } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const ICONS = {
   search: Search,
   wordbook: BookOpen,
   articles: Newspaper,
-  quiz: PenLine,
+  quiz: MessageCircleQuestionMark,
   roleplay: MessageCircle,
 };
 

@@ -149,6 +149,7 @@ export default function App() {
   };
 
   const startLogin = (target = currentReturnTarget()) => {
+    if (authLoading) return;
     saveReturnTarget(target);
     navigate(VIEW_PATHS.login);
   };
@@ -363,6 +364,7 @@ export default function App() {
           setView={goToView}
           onLogin={() => startLogin({ path: VIEW_PATHS.home, tab })}
           onLogout={logout}
+          authLoading={authLoading}
         />
       )}
 

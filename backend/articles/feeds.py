@@ -10,7 +10,7 @@ from email.utils import parsedate_to_datetime
 from html import unescape
 from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import urlparse, urlunparse
 from xml.etree import ElementTree
 
 import requests
@@ -207,12 +207,7 @@ def _upgrade_image_url(value: str) -> str:
         path = re.sub(r"/standard/\d{2,4}/", "/standard/976/", parsed.path)
         return urlunparse(parsed._replace(path=path))
     if host.endswith("i.guim.co.uk"):
-        query = dict(parse_qsl(parsed.query, keep_blank_values=True))
-        if "width" in query:
-            query["width"] = "1000"
-        if "quality" in query:
-            query["quality"] = "85"
-        return urlunparse(parsed._replace(query=urlencode(query)))
+        return url
     return url
 
 

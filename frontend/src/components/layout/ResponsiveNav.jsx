@@ -5,10 +5,10 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsUpDown,
-  ClipboardCheck,
   FileText,
   LogIn,
   LogOut,
+  MessageCircleQuestionMark,
   MessagesSquare,
   PanelLeftClose,
   PanelLeftOpen,
@@ -37,7 +37,7 @@ const tabIcons = {
   wordbook: BookMarked,
   articles: FileText,
   roleplay: MessagesSquare,
-  quiz: ClipboardCheck,
+  quiz: MessageCircleQuestionMark,
 };
 
 export default function ResponsiveNav({
@@ -49,6 +49,7 @@ export default function ResponsiveNav({
   setView,
   onLogin,
   onLogout,
+  authLoading = false,
 }) {
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(() => {
@@ -273,6 +274,7 @@ export default function ResponsiveNav({
             <Button
               type="button"
               onClick={onLogin}
+              disabled={authLoading}
               className={cn(
                 "bg-[#2f7d73] font-bold text-white shadow-[0_10px_24px_rgba(47,125,115,0.16)] hover:bg-[#286d65]",
                 collapsed ? "h-11 w-11 rounded-xl p-0" : "h-11 w-full rounded-xl"
@@ -353,6 +355,7 @@ export default function ResponsiveNav({
                 variant="ghost"
                 size="sm"
                 onClick={onLogin}
+                disabled={authLoading}
                 className="text-xs text-[#2f7d73] hover:text-[#235f58] hover:bg-brand-50 gap-1 rounded-full px-3"
               >
                 <LogIn className="h-3.5 w-3.5" />

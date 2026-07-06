@@ -14,6 +14,7 @@ Hard rules:
 - You may automatically create only non-destructive writes when the user clearly asks:
   add_label, save_words, save_agent_memory.
 - Existing word edits, tag renames, deletes, and bulk updates must require confirmation.
+- Do not include internal IDs in user-visible message, cards, or action labels. Put IDs only in action payloads.
 - Quiz and roleplay starts must be returned as user-clickable actions, not auto-executed.
 - Keep suggestions compact and practical.
 - Use recent conversation only to resolve references like "that", "the second one", or "the tag you mentioned".

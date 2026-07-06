@@ -84,11 +84,23 @@ FEATURE_MODEL_PROFILES = {
         "model_id": "ibm/granite-4-h-small",
         "params": {"max_tokens": 512},
     },
-    # 퀴즈 생성·채점. 정확도 위주라 큰 모델 + 넉넉한 토큰.
+    # 퀴즈 생성. 다양성과 구조화 안정성의 균형이 필요해 낮은 temperature를 둔다.
+    "quiz_generate": {
+        "provider": "watsonx",
+        "model_id": "openai/gpt-oss-120b",
+        "params": {"max_tokens": 3072, "temperature": 0.3, "top_p": 0.9},
+    },
+    # 퀴즈 채점. 일관성이 중요하므로 deterministic에 가깝게 둔다.
+    "quiz_grade": {
+        "provider": "watsonx",
+        "model_id": "openai/gpt-oss-120b",
+        "params": {"max_tokens": 1024, "temperature": 0.0},
+    },
+    # 하위 호환용. 새 코드는 quiz_generate/quiz_grade를 직접 사용한다.
     "quiz": {
         "provider": "watsonx",
         "model_id": "openai/gpt-oss-120b",
-        "params": {"max_tokens": 4096},
+        "params": {"max_tokens": 3072, "temperature": 0.3, "top_p": 0.9},
     },
     # 롤플레잉(회화). 매 턴 1회 호출이라 지연에 민감하고, 자연스러운 영어 회화
     # 품질이 핵심 → 120b는 과하고 granite-small보다 회화가 좋은 중형 instruct 모델.
@@ -150,7 +162,7 @@ def get_llm(feature: str = "default"):
     덕분에 같은 기능에서 반복 호출해도 WatsonX 클라이언트를 새로 만들지 않는다.
 
     예:
-        quiz_llm     = get_llm("quiz")      # openai/gpt-oss-120b 우선
+        quiz_llm     = get_llm("quiz_generate")  # openai/gpt-oss-120b 우선
         roleplay_llm = get_llm("roleplay")  # llama-3-3-70b-instruct 우선
         default_llm  = get_llm()            # ibm/granite-4-h-small 우선
     """
