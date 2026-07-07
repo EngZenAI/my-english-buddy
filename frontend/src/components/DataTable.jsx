@@ -96,7 +96,7 @@ export default function DataTable({
         </div>
       )}
 
-      <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+      <div className="overflow-x-auto overflow-y-hidden rounded-md border border-slate-200 bg-white">
         <Table className={minWidth}>
           <TableHeader className="bg-slate-50">
             {table.getHeaderGroups().map((headerGroup) => (
