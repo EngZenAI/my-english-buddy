@@ -61,36 +61,36 @@ const AGENT_POSITION_KEY = "englishBuddy.agent.launcherPosition";
 const AGENT_HELP_ITEMS = [
   {
     Icon: ClipboardList,
-    title: "오늘 학습 추천",
-    body: "복습 예정 단어, 최근 학습 기록, 약점 단어를 보고 지금 할 일을 골라줍니다.",
+    title: "오늘 학습 계획 잡기",
+    body: "복습할 단어와 최근 기록을 바탕으로 지금 시작할 학습을 추천받습니다.",
     example: "예: 오늘 뭐 공부할까?",
     prompt: "오늘 뭐 공부할까?",
   },
   {
     Icon: BookOpenCheck,
-    title: "퀴즈 바로 시작",
-    body: "복습일이 지난 단어 또는 특정 태그를 기준으로 퀴즈 목표를 만들어줍니다.",
+    title: "복습 퀴즈 만들기",
+    body: "복습 예정 단어, 약점 단어, 원하는 태그를 기준으로 퀴즈를 준비합니다.",
     example: "예: 복습할 단어로 퀴즈 시작해줘",
     prompt: "복습할 단어로 퀴즈 시작해줘",
   },
   {
     Icon: MessageCircle,
-    title: "롤플레잉 추천",
-    body: "상황 카드를 제안하고, 카드를 누르면 롤플레잉 탭으로 값이 넘어가 바로 시작됩니다.",
+    title: "회화 상황 만들기",
+    body: "연습하고 싶은 주제나 단어장 태그에 맞춰 롤플레잉 상황을 추천받습니다.",
     example: "예: 롤플레잉 상황 추천해줘",
     prompt: "롤플레잉 상황 추천해줘",
   },
   {
     Icon: Tags,
     title: "단어장 정리",
-    body: "태그 추가, 태그명 변경 제안, 단어장 점검 같은 정리 작업을 도와줍니다.",
+    body: "태그, 예문, 뜻이 비어 있는 단어를 점검하고 정리 방향을 제안받습니다.",
     example: "예: 단어장 점검해줘",
     prompt: "단어장 점검해줘",
   },
   {
     Icon: Sparkles,
-    title: "학습 기억 저장",
-    body: "목표, 선호 주제, 자주 틀리는 패턴 같은 개인 학습 메모를 저장해 다음 추천에 반영합니다.",
+    title: "내 학습 선호 기억시키기",
+    body: "목표, 관심 주제, 자주 틀리는 패턴을 저장해 다음 추천에 반영합니다.",
     example: "예: 일상 회화를 우선 연습하고 싶어. 기억해줘",
     prompt: "일상 회화를 우선 연습하고 싶어. 기억해줘",
   },
@@ -167,10 +167,10 @@ function AgentHelpDialog({ open, busy, onOpenChange, onRequest }) {
             <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
               <CircleHelp className="h-4 w-4" />
             </span>
-            Buddy Agent로 할 수 있는 일
+            Buddy Agent 활용 예시
           </DialogTitle>
           <DialogDescription>
-            아래 작업은 Agent에게 바로 요청할 수 있습니다. 실행 전 확인이 필요한 변경은 한 번 더 물어봅니다.
+            아래 예시를 눌러 바로 입력하거나, 원하는 방식으로 바꿔 요청해 보세요.
           </DialogDescription>
         </DialogHeader>
 
@@ -404,7 +404,7 @@ export default function AgentPanel({
                 className="rounded-md p-1 text-slate-500 hover:bg-slate-100"
                 onClick={() => setHelpOpen(true)}
                 aria-label="Buddy Agent 도움말"
-                title="Agent로 할 수 있는 일"
+                title="Agent 활용 예시"
               >
                 <CircleHelp className="h-4 w-4" />
               </button>

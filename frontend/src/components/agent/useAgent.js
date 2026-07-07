@@ -44,6 +44,7 @@ export function useAgent({ user, currentTab, hidden, onRequireLogin, onAction })
   const queryClient = useQueryClient();
   const messageSeqRef = useRef(0);
   const openRef = useRef(false);
+  const userIdRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState([]);
@@ -61,18 +62,39 @@ export function useAgent({ user, currentTab, hidden, onRequireLogin, onAction })
     };
   };
 
+  const resetSession = () => {
+    pendingActionRef.current = null;
+    setPendingAction(null);
+    setMessages([]);
+    setInput("");
+    setJobId("");
+    setHasUnreadNotice(false);
+  };
+
   useEffect(() => {
     openRef.current = open;
     if (open) setHasUnreadNotice(false);
   }, [open]);
+
+  useEffect(() => {
+    const userId = user?.id || "";
+    if (userIdRef.current === null) {
+      userIdRef.current = userId;
+      return;
+    }
+    if (userIdRef.current === userId) return;
+    userIdRef.current = userId;
+    resetSession();
+    setOpen(false);
+  }, [user?.id]);
 
   const markUnreadIfClosed = () => {
     if (!openRef.current) setHasUnreadNotice(true);
   };
 
   const suggestionsQuery = useQuery({
-    queryKey: queryKeys.agentSuggestions(user?.id || "", currentTab),
-    queryFn: () => api.agentSuggestions(currentTab),
+    queryKey: queryKeys.agentSuggestions(user?.id || ""),
+    queryFn: () => api.agentSuggestions(),
     enabled: Boolean(user) && !hidden,
     staleTime: 0,
   });
@@ -85,7 +107,7 @@ export function useAgent({ user, currentTab, hidden, onRequireLogin, onAction })
   });
 
   const chatMutation = useMutation({
-    mutationFn: ({ message, recentMessages }) => api.agentChat(message, currentTab, recentMessages),
+    mutationFn: ({ message, tab, recentMessages }) => api.agentChat(message, tab, recentMessages),
     onSuccess: (data) => {
       setMessages((prev) => [...prev, createMessage("agent", data)]);
       markUnreadIfClosed();
@@ -141,18 +163,10 @@ export function useAgent({ user, currentTab, hidden, onRequireLogin, onAction })
     setInput((current) => (current === text ? "" : current));
     chatMutation.mutate({
       message: clean,
+      tab: currentTab,
       draftText: text,
       recentMessages: buildRecentMessages(messages),
     });
-  };
-
-  const resetSession = () => {
-    pendingActionRef.current = null;
-    setPendingAction(null);
-    setMessages([]);
-    setInput("");
-    setJobId("");
-    setHasUnreadNotice(false);
   };
 
   const runAction = (action) => {

@@ -46,7 +46,7 @@ export const queryKeys = {
     pageSize,
   ],
   adminLearnerDetail: (learnerRef = "") => ["admin", "learner-detail", learnerRef],
-  agentSuggestions: (userId = "", tab = "") => ["agent", "suggestions", userId, tab],
+  agentSuggestions: (userId = "") => ["agent", "suggestions", userId],
   agentJob: (jobId = "") => ["agent", "job", jobId],
 };
 

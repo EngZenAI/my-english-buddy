@@ -7,7 +7,11 @@ from fastapi import BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.agents.action_types import START_AGENT_JOB, START_QUIZ_WITH_GOAL
-from backend.agents.context import build_agent_context, build_rule_based_suggestions
+from backend.agents.context import (
+    build_agent_context,
+    build_rule_based_suggestions,
+    normalize_learning_preference,
+)
 from backend.agents.graph import run_buddy_agent
 from backend.agents.jobs import create_wordbook_audit_job, run_wordbook_audit_job
 from backend.agents.schemas import AgentAction, AgentCard, AgentResponse, AgentSuggestionResponse
@@ -42,25 +46,7 @@ def _memory_note_from_message(message: str) -> str:
 
 
 def _memory_summary(note: str) -> str:
-    clean = " ".join(str(note or "").split()).strip(" .,!?:;。")
-    replacements = {
-        "공부하고싶": "공부하고 싶",
-        "공부하고 싶어": "공부",
-        "공부하고 싶다": "공부",
-        "우선 공부": "우선 학습",
-        "쪽을": "중심으로",
-        "말고": "보다",
-        "하고싶은데": "학습",
-        "하고 싶은데": "학습",
-    }
-    for source, target in replacements.items():
-        clean = clean.replace(source, target)
-    clean = clean.strip(" .,!?:;。")
-    if not clean:
-        return "개인 학습 선호 반영"
-    if not any(token in clean for token in ("학습", "연습", "회화", "목표", "선호")):
-        clean = f"{clean} 학습"
-    return clean[:80]
+    return normalize_learning_preference(note, fallback="개인 학습 선호")
 
 
 async def _save_learning_memory(session: AsyncSession, user_id: str, message: str) -> AgentResponse:

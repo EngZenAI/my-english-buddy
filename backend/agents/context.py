@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import Counter
 from typing import Any
 
@@ -27,38 +28,89 @@ def _word_brief(word: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _format_memory_note(note: str) -> str:
-    clean = " ".join(str(note or "").split()).strip(" .,!?:;。")
-    replacements = {
-        "공부하고싶": "공부하고 싶",
-        "공부하고 싶어": "공부",
-        "공부하고 싶다": "공부",
-        "우선 공부": "우선 학습",
-        "쪽을": "중심으로",
-        "말고": "보다",
-        "하고싶은데": "학습",
-        "하고 싶은데": "학습",
-    }
-    for source, target in replacements.items():
+_MEMORY_COMMAND_SUFFIXES = (
+    "기억해줘",
+    "기억해 줘",
+    "기억해",
+    "저장해줘",
+    "저장해 줘",
+)
+
+
+def _clean_text(value: str) -> str:
+    return " ".join(str(value or "").split()).strip(" .,!?:;。")
+
+
+def _strip_memory_command(value: str) -> str:
+    clean = _clean_text(value)
+    for suffix in _MEMORY_COMMAND_SUFFIXES:
+        if clean.endswith(suffix):
+            return _clean_text(clean[: -len(suffix)])
+    return clean
+
+
+def _dedupe_learning_terms(value: str) -> str:
+    clean = value
+    for term in ("학습", "공부", "연습", "회화"):
+        clean = clean.replace(f"{term}{term}", term)
+        clean = re.sub(rf"({re.escape(term)})(?:\s+\1)+", term, clean)
+    return _clean_text(clean)
+
+
+def normalize_learning_preference(note: str, fallback: str = "") -> str:
+    clean = _strip_memory_command(note)
+    replacements = (
+        ("공부하고싶", "공부하고 싶"),
+        ("연습하고싶", "연습하고 싶"),
+        ("학습하고싶", "학습하고 싶"),
+        ("쪽을", "중심으로"),
+        ("쪽으로", "중심으로"),
+        ("말고", "보다"),
+        ("우선 공부", "우선 학습"),
+    )
+    for source, target in replacements:
         clean = clean.replace(source, target)
-    clean = clean.strip(" .,!?:;。")
+
+    clean = _dedupe_learning_terms(clean)
+    clean = re.sub(r"\s*하고 싶(?:은데|어|다|습니다)?$", "", clean)
+    clean = re.sub(r"\s*하고 싶은(?:데|)$", "", clean)
+    clean = _dedupe_learning_terms(clean)
+
+    if "보다" in clean:
+        clean = _clean_text(clean.split("보다", 1)[1])
+
+    clean = clean.replace("중심으로", "중심")
+    clean = re.sub(r"(을|를)\s+(학습|공부|연습)$", r" \2", clean)
+    clean = re.sub(r"\b우선\s+(학습|공부|연습)$", r"\1", clean)
+    clean = re.sub(r"\s+우선\s+(학습|공부|연습)$", r" \1", clean)
+    clean = re.sub(r"(을|를)\s+(학습|공부|연습)$", r" \2", clean)
+    clean = re.sub(r"\s+", " ", clean)
+    clean = _dedupe_learning_terms(clean)
     if not clean:
-        return ""
-    if not any(token in clean for token in ("학습", "연습", "회화", "목표", "선호")):
+        return fallback
+    if not any(token in clean for token in ("학습", "연습", "회화", "목표", "선호", "약점")):
         clean = f"{clean} 학습"
-    return clean[:120]
+    return clean[:80]
 
 
 def _memory_note(memory_notes: list[Any], memory_summaries: list[Any] | None = None) -> str:
     for item in memory_summaries or []:
-        note = str(item or "").strip()
+        note = normalize_learning_preference(str(item or ""))
         if note:
-            return _format_memory_note(note)
+            return note
     for item in memory_notes:
-        note = str(item or "").strip()
+        note = normalize_learning_preference(str(item or ""))
         if note:
-            return _format_memory_note(note)
+            return note
     return ""
+
+
+def _memory_intro(memory_note: str) -> str:
+    if not memory_note:
+        return ""
+    if any(token in memory_note for token in ("목표", "약점")):
+        return f"저장된 학습 메모({memory_note})를 반영했어요."
+    return f"{memory_note} 선호를 반영했어요."
 
 
 async def build_agent_context(
@@ -117,35 +169,25 @@ def build_rule_based_suggestions(context: dict[str, Any]) -> dict[str, Any]:
     actions: list[dict[str, Any]] = []
     primary_memory_note = _memory_note(memory_notes, memory_summaries)
 
-    if primary_memory_note:
-        cards.append({
-            "title": "저장된 학습 기억",
-            "body": primary_memory_note,
-            "kind": "memory",
-        })
-
     if due_count > 0:
         preview = ", ".join(item["word"] for item in due_words[:5] if item.get("word"))
-        cards.append({
-            "title": f"복습 예정 단어 {due_count}개",
-            "body": preview or "오늘까지 복습할 단어가 있습니다.",
-            "kind": "review",
-        })
-        actions.append({
+        action = {
             "type": START_QUIZ_WITH_GOAL,
             "label": "복습 퀴즈 시작",
             "payload": {"scope_due": True, "question_count": min(10, due_count)},
             "requires_confirmation": True,
+        }
+        cards.append({
+            "title": f"복습 예정 {due_count}개",
+            "body": preview or "오늘까지 복습할 단어가 있습니다.",
+            "kind": "review",
+            "payload": {"action": action},
         })
+        actions.append(action)
 
     if tag_counts:
         top_tag = max(tag_counts, key=lambda item: int(item.get("count") or 0))
-        cards.append({
-            "title": f"#{top_tag['name']} 태그 연습",
-            "body": f"{top_tag['count']}개 단어를 회화 상황에서 써볼 수 있어요.",
-            "kind": "roleplay",
-        })
-        actions.append({
+        action = {
             "type": START_ROLEPLAY_WITH_SITUATION,
             "label": f"#{top_tag['name']} 롤플레잉",
             "payload": {
@@ -155,34 +197,46 @@ def build_rule_based_suggestions(context: dict[str, Any]) -> dict[str, Any]:
                 "situation": "",
             },
             "requires_confirmation": True,
+        }
+        cards.append({
+            "title": f"#{top_tag['name']} 회화 연습",
+            "body": f"{top_tag['count']}개 단어를 회화 상황에서 써볼 수 있어요.",
+            "kind": "roleplay",
+            "payload": {"action": action},
         })
+        actions.append(action)
 
     if weak_words:
+        weak_preview = ", ".join(
+            (item.get("word") or item.get("target_word") or "")
+            for item in weak_words[:5]
+            if item.get("word") or item.get("target_word")
+        )
         cards.append({
-            "title": "퀴즈 약점 단어",
-            "body": ", ".join((item.get("word") or item.get("target_word") or "") for item in weak_words[:5]),
+            "title": "약점 단어",
+            "body": weak_preview or "최근 퀴즈에서 반복해서 틀린 단어가 있습니다.",
             "kind": "weak_words",
         })
-
-    if recent_roleplays:
+    elif recent_roleplays:
         latest = recent_roleplays[0]
         cards.append({
-            "title": "최근 상황으로 다시 연습",
+            "title": "최근 상황 다시 연습",
             "body": latest.get("title") or latest.get("summary") or "지난 롤플레잉 상황을 새 대화로 다시 연습할 수 있어요.",
             "kind": "memory",
         })
 
     message = "오늘 학습 상태를 확인했어요."
+    prefix = _memory_intro(primary_memory_note)
     if primary_memory_note and due_count > 0:
-        message = f"{primary_memory_note}을 기준으로 보면, 오늘은 복습 예정 단어 {due_count}개부터 짧게 정리하는 흐름이 좋습니다."
+        message = f"{prefix} 오늘은 복습 예정 단어 {due_count}개를 먼저 짧게 점검해 보세요."
     elif primary_memory_note and tag_counts:
         top_tag = max(tag_counts, key=lambda item: int(item.get("count") or 0))
-        message = f"{primary_memory_note}을 기준으로 보면, 지금은 #{top_tag['name']} 태그로 회화 연습을 만들기 좋습니다."
+        message = f"{prefix} 지금은 #{top_tag['name']} 태그로 회화 연습을 만들기 좋습니다."
     elif primary_memory_note:
-        message = f"{primary_memory_note}을 기준으로 오늘 학습을 추천할 수 있어요."
+        message = f"{prefix} 오늘 학습은 이 방향에 맞춰 추천할게요."
     elif due_count > 0:
-        message = f"복습할 단어가 {due_count}개 있어요. 먼저 짧은 퀴즈로 시작하는 걸 추천합니다."
+        message = f"복습 예정 단어가 {due_count}개 있어요. 먼저 짧은 퀴즈로 점검해 보세요."
     elif tag_counts:
         message = "복습 예정 단어는 없지만, 단어장 태그로 회화 연습을 만들 수 있어요."
 
-    return {"message": message, "cards": cards[:4], "actions": actions[:3]}
+    return {"message": message, "cards": cards[:3], "actions": actions[:3]}
