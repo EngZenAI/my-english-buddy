@@ -62,6 +62,9 @@ async def run_wordbook_audit_job(user_id: str, job_id: str) -> None:
             result = {
                 "word_count": len(words),
                 "due_review_count": len(due_words),
+                "missing_example_count": len(missing_examples),
+                "missing_definition_count": len(missing_defs),
+                "untagged_count": len(untagged),
                 "missing_examples": missing_examples[:50],
                 "missing_definitions": missing_defs[:50],
                 "untagged_words": untagged[:50],

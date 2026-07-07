@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from backend.agents.schemas import AgentActionConfirmIn, AgentChatIn
@@ -73,8 +75,8 @@ async def agent_action_confirm(
     summary="AI 에이전트 작업 상태 조회",
     description="백그라운드로 실행 중인 에이전트 작업의 진행 상태와 결과를 조회합니다.",
 )
-async def agent_job_status(job_id: str, session: SessionDep, _user: CurrentUserDep):
-    job = await get_agent_job_status(session, _user["id"], job_id)
+async def agent_job_status(job_id: UUID, session: SessionDep, _user: CurrentUserDep):
+    job = await get_agent_job_status(session, _user["id"], str(job_id))
     if not job:
         raise HTTPException(status_code=404, detail="Agent 작업을 찾을 수 없습니다.")
     return {"job": job}

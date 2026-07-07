@@ -12,15 +12,19 @@ from backend.exceptions import DATA_COERCION_ERRORS, RECORD_MAPPING_ERRORS
 
 
 async def is_word_saved(session: AsyncSession, user_id: str, word: str) -> bool:
+    return await get_saved_word_id(session, user_id, word) is not None
+
+
+async def get_saved_word_id(session: AsyncSession, user_id: str, word: str) -> int | None:
     if not word or not word.strip():
-        return False
+        return None
     result = await session.execute(
         select(Word.id).where(
             Word.user_id == _uuid(user_id),
             func.lower(Word.word) == word.strip().lower(),
         )
     )
-    return result.scalar_one_or_none() is not None
+    return result.scalar_one_or_none()
 
 
 async def save_word(
@@ -54,14 +58,14 @@ async def save_word(
             )
         )
         await session.commit()
-        return "✏️ 단어 정보를 업데이트했어요!"
+        return {"message": "✏️ 단어 정보를 업데이트했어요!", "id": word_id}
     result = await session.execute(
         select(func.coalesce(func.min(Word.sort_order), 0) - 1).where(
             Word.user_id == user_uuid
         )
     )
     next_order = result.scalar_one()
-    await session.execute(
+    result = await session.execute(
         insert(Word).values(
             user_id=user_uuid,
             word=word,
@@ -72,10 +76,11 @@ async def save_word(
             tag=tag,
             sort_order=next_order,
             next_review=datetime.now() + timedelta(days=7),
-        )
+        ).returning(Word.id)
     )
+    word_id = result.scalar_one()
     await session.commit()
-    return "✅ 단어장에 저장됐어요!"
+    return {"message": "✅ 단어장에 저장됐어요!", "id": word_id}
 
 
 async def existing_words_lower(session: AsyncSession, user_id: str) -> set:

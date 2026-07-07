@@ -46,7 +46,7 @@ const getRecentKey = (entry) =>
 const SaveButton = ({ saved, onClick, disabled, full = false }) => (
   <button
     type="button"
-    title={saved ? "이미 단어장에 저장된 단어입니다." : "단어장에 저장합니다."}
+    title={saved ? "단어장에서 제거합니다." : "단어장에 저장합니다."}
     onClick={onClick}
     disabled={disabled}
     className={`inline-flex items-center justify-center gap-1.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60
@@ -289,6 +289,7 @@ export default function SearchTab({ user, onRequireLogin }) {
   });
 
   const saved = savedQuery.data?.saved === true;
+  const savedWordId = savedQuery.data?.id || null;
 
   const rememberSearch = (entry) => {
     const query = (entry.query || entry.word || "").trim();
@@ -338,7 +339,27 @@ export default function SearchTab({ user, onRequireLogin }) {
     mutationFn: (payload) => api.saveWord(payload),
     onSuccess: (res, payload) => {
       if (!res.saved) return;
-      queryClient.setQueryData(queryKeys.wordSaved(userId, payload.word), { saved: true });
+      queryClient.setQueryData(queryKeys.wordSaved(userId, payload.word), {
+        saved: true,
+        id: res.id || null,
+      });
+      queryClient.invalidateQueries({ queryKey: ["words"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.labels });
+      queryClient.invalidateQueries({ queryKey: ["label-word-count"] });
+    },
+  });
+
+  const deleteWordMutation = useMutation({
+    mutationFn: ({ id }) => api.deleteWord(id),
+    onSuccess: (_res, { id, word }) => {
+      queryClient.setQueryData(queryKeys.wordSaved(userId, word), {
+        saved: false,
+        id: null,
+      });
+      queryClient.setQueryData(queryKeys.words(""), (old) => {
+        if (!old?.words) return old;
+        return { ...old, words: old.words.filter((item) => item.id !== id) };
+      });
       queryClient.invalidateQueries({ queryKey: ["words"] });
       queryClient.invalidateQueries({ queryKey: queryKeys.labels });
       queryClient.invalidateQueries({ queryKey: ["label-word-count"] });
@@ -526,16 +547,31 @@ export default function SearchTab({ user, onRequireLogin }) {
     !!eng.trim() &&
     !saved &&
     !saveWordMutation.isPending &&
+    !deleteWordMutation.isPending &&
+    searchSettled &&
+    resultMatchesInput &&
+    savedCheckReady;
+  const canToggleSaved =
+    !!eng.trim() &&
+    saved &&
+    !!savedWordId &&
+    !saveWordMutation.isPending &&
+    !deleteWordMutation.isPending &&
     searchSettled &&
     resultMatchesInput &&
     savedCheckReady;
 
   const handleSave = async () => {
-    if (!canSave) return;
     if (!user) {
       setGate("단어장 저장");
       return;
     }
+    if (saved) {
+      if (!canToggleSaved) return;
+      deleteWordMutation.mutate({ id: savedWordId, word: eng.trim() });
+      return;
+    }
+    if (!canSave) return;
     saveWordMutation.mutate({
       word: eng.trim(),
       korean: kor,
@@ -574,7 +610,7 @@ export default function SearchTab({ user, onRequireLogin }) {
 
   const hasSearch = !!searchRequest;
   const searchLoading = searchQuery.isFetching && !searchQuery.data;
-  const saveDisabled = !canSave;
+  const saveDisabled = saved ? !canToggleSaved : !canSave;
   const isSearching = searchQuery.isFetching;
 
   return (
