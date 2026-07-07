@@ -1,10 +1,11 @@
-import { Search, BookOpen, MessageCircle, MessageCircleQuestionMark, Newspaper } from "lucide-react";
+import { Search, BookOpen, MessageCircle, MessageCircleQuestionMark, Newspaper, Video } from "lucide-react";
 
 export default function BottomNav({ tabs, value, onChange }) {
   const icons = {
     search: Search,
     wordbook: BookOpen,
     articles: Newspaper,
+    media: Video,
     quiz: MessageCircleQuestionMark,
     roleplay: MessageCircle,
   };

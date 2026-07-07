@@ -25,6 +25,7 @@ OPENAPI_TAGS = [
     {"name": "roleplay", "description": "AI 롤플레잉 대화 API입니다."},
     {"name": "slang", "description": "AI가 단어의 뉘앙스와 슬랭 용법을 설명하는 API입니다."},
     {"name": "articles", "description": "뉴스 리딩 학습과 기사 세션 관리 API입니다."},
+    {"name": "media", "description": "영상 링크와 자막을 리딩 학습 자료로 변환하는 API입니다."},
     {"name": "agent", "description": "AI 학습 에이전트 API입니다."},
     {"name": "account", "description": "마이페이지, 계정 상태, 비밀번호, OAuth 연결 관리 API입니다."},
     {"name": "admin", "description": "운영자 전용 학습자, 사용량, 뉴스 콘텐츠 관리 API입니다."},

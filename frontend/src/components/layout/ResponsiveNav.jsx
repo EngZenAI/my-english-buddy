@@ -15,6 +15,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  Video,
 } from "lucide-react";
 import englishBuddyLogo from "@/assets/english-buddy-logo.svg";
 import { Button } from "@/components/ui/button";
@@ -36,6 +37,7 @@ const tabIcons = {
   search: Search,
   wordbook: BookMarked,
   articles: FileText,
+  media: Video,
   roleplay: MessagesSquare,
   quiz: MessageCircleQuestionMark,
 };

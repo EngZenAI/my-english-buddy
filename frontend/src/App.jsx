@@ -8,6 +8,7 @@ import WordbookTab from "./tabs/WordbookTab";
 import QuizTab from "./tabs/QuizTab";
 import RoleplayTab from "./tabs/RoleplayTab";
 import ArticleLearningTab from "./tabs/ArticleLearningTab";
+import MediaLearningTab from "./tabs/MediaLearningTab";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
@@ -36,9 +37,14 @@ const TABS = [
   { id: "search", label: "단어 검색", Comp: SearchTab },
   { id: "wordbook", label: "단어장", Comp: WordbookTab },
   { id: "articles", label: "뉴스 리딩", Comp: ArticleLearningTab },
+  { id: "media", label: "미디어 학습", Comp: MediaLearningTab },
   { id: "quiz", label: "퀴즈", Comp: QuizTab },
   { id: "roleplay", label: "롤플레잉", Comp: RoleplayTab },
 ];
+
+function normalizeTabId(tabId) {
+  return tabId === ["you", "tube"].join("") ? "media" : tabId;
+}
 
 const AUTH_RETURN_KEY = "englishBuddy.authReturn";
 const VIEW_PATHS = {
@@ -144,7 +150,7 @@ export default function App() {
 
   const goToReturnTarget = () => {
     const target = popReturnTarget() || { path: VIEW_PATHS.home, tab: "search" };
-    if (target.tab) setTab(target.tab);
+    if (target.tab) setTab(normalizeTabId(target.tab));
     navigate(pathForTarget(target), { replace: true });
   };
 
@@ -159,7 +165,7 @@ export default function App() {
   };
 
   const goToHomeTab = (nextTab) => {
-    setTab(nextTab);
+    setTab(normalizeTabId(nextTab));
     navigate(VIEW_PATHS.home);
   };
 
@@ -248,8 +254,9 @@ export default function App() {
   const ActiveTab = TABS.find((t) => t.id === tab)?.Comp || SearchTab;
 
   const changeTab = (nextTab) => {
-    tabQueryPrefetch[nextTab]?.();
-    setTab(nextTab);
+    const normalizedTab = normalizeTabId(nextTab);
+    tabQueryPrefetch[normalizedTab]?.();
+    setTab(normalizedTab);
     if (location.pathname !== VIEW_PATHS.home) navigate(VIEW_PATHS.home);
   };
 
@@ -374,7 +381,7 @@ export default function App() {
             ? "min-h-0 min-w-0 flex-1 overflow-hidden"
             : isAuthRoute
               ? "min-h-0 min-w-0 flex-1 overflow-y-auto"
-              : tab === "roleplay"
+            : tab === "roleplay" || tab === "media"
                 ? "min-h-0 min-w-0 flex-1 overflow-hidden"
                 : "min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-6 pb-24 md:px-8 md:pb-6"
         }

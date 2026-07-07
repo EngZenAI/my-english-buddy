@@ -11,6 +11,7 @@ from backend.routers.admin import router as admin_router
 from backend.routers.agent import router as agent_router
 from backend.routers.articles import router as articles_router
 from backend.routers.labels import router as labels_router
+from backend.routers.media import router as media_router
 from backend.routers.quiz import router as quiz_router
 from backend.routers.roleplay import router as roleplay_router
 from backend.routers.search import router as search_router
@@ -28,3 +29,4 @@ router.include_router(roleplay_router)
 router.include_router(search_router)
 router.include_router(slang_router)
 router.include_router(wordbook_router)
+router.include_router(media_router)
