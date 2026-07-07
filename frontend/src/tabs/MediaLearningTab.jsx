@@ -43,7 +43,7 @@ const LANGUAGE_OPTIONS = [
   { value: "ko", label: "Korean" }
 ];
 
-const DEFAULT_TAG = "미디어";
+const DEFAULT_TAG = "미지정";
 const TRANSCRIPT_CACHE_PREFIX = "englishBuddy.mediaTranscript.";
 const TRANSCRIPT_CACHE_TTL_MS = 30 * 60_000;
 const TRANSCRIPT_CACHE_MAX_BYTES = 1_000_000;

@@ -74,7 +74,7 @@ export function useAgent({ user, currentTab, hidden, onRequireLogin, onAction })
     queryKey: queryKeys.agentSuggestions(user?.id || "", currentTab),
     queryFn: () => api.agentSuggestions(currentTab),
     enabled: Boolean(user) && !hidden,
-    staleTime: 30_000,
+    staleTime: 0,
   });
 
   const jobQuery = useQuery({
@@ -146,6 +146,15 @@ export function useAgent({ user, currentTab, hidden, onRequireLogin, onAction })
     });
   };
 
+  const resetSession = () => {
+    pendingActionRef.current = null;
+    setPendingAction(null);
+    setMessages([]);
+    setInput("");
+    setJobId("");
+    setHasUnreadNotice(false);
+  };
+
   const runAction = (action) => {
     if (!user) {
       onRequireLogin?.();
@@ -204,6 +213,7 @@ export function useAgent({ user, currentTab, hidden, onRequireLogin, onAction })
     busy: chatMutation.isPending || confirmMutation.isPending,
     sendMessage,
     runAction,
+    resetSession,
     confirmPendingAction,
     cancelPendingAction,
     toggleOpen,

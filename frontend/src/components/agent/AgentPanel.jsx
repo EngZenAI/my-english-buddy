@@ -9,6 +9,7 @@ import {
   MessageCircle,
   Minimize2,
   PencilLine,
+  RotateCcw,
   Send,
   Sparkles,
   Tags,
@@ -90,8 +91,8 @@ const AGENT_HELP_ITEMS = [
     Icon: Sparkles,
     title: "학습 기억 저장",
     body: "목표, 선호 주제, 자주 틀리는 패턴 같은 개인 학습 메모를 저장해 다음 추천에 반영합니다.",
-    example: "예: 나는 비즈니스 회화를 우선 공부하고 싶어. 기억해줘",
-    prompt: "내 영어 학습 목표를 기억해줘",
+    example: "예: 일상 회화를 우선 연습하고 싶어. 기억해줘",
+    prompt: "일상 회화를 우선 연습하고 싶어. 기억해줘",
   },
 ];
 
@@ -192,7 +193,7 @@ function AgentHelpDialog({ open, busy, onOpenChange, onRequest }) {
                   <span className="mt-2 block rounded-md bg-slate-50 px-2 py-1.5 text-xs leading-5 text-slate-700">
                     {example}
                   </span>
-                  <span className="mt-2 block text-xs font-medium text-emerald-700">요청하기</span>
+                  <span className="mt-2 block text-xs font-medium text-emerald-700">입력하기</span>
                 </span>
               </div>
             </button>
@@ -250,6 +251,7 @@ export default function AgentPanel({
   const [minimized, setMinimized] = useState(readMinimized);
   const [helpOpen, setHelpOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const inputRef = useRef(null);
   const suppressClickRef = useRef(false);
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -274,6 +276,7 @@ export default function AgentPanel({
     busy,
     sendMessage,
     runAction,
+    resetSession,
     confirmPendingAction,
     cancelPendingAction,
     toggleOpen,
@@ -285,7 +288,8 @@ export default function AgentPanel({
   const requestFromHelp = (text) => {
     setHelpOpen(false);
     setOpen(true);
-    sendFromPanel(text);
+    setInput(text);
+    window.setTimeout(() => inputRef.current?.focus(), 0);
   };
   const scrollerItemCount =
     messages.length +
@@ -385,6 +389,16 @@ export default function AgentPanel({
               </div>
             </div>
             <div className="flex items-center gap-1">
+              <button
+                type="button"
+                className="rounded-md p-1 text-slate-500 hover:bg-slate-100"
+                onClick={resetSession}
+                disabled={busy}
+                aria-label="Buddy Agent 세션 초기화"
+                title="대화 세션 초기화"
+              >
+                <RotateCcw className="h-4 w-4" />
+              </button>
               <button
                 type="button"
                 className="rounded-md p-1 text-slate-500 hover:bg-slate-100"
@@ -494,6 +508,7 @@ export default function AgentPanel({
               }}
             >
               <input
+                ref={inputRef}
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 placeholder="Buddy에게 요청하기"
