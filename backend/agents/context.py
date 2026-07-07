@@ -121,8 +121,8 @@ def build_rule_based_suggestions(context: dict[str, Any]) -> dict[str, Any]:
     if recent_roleplays:
         latest = recent_roleplays[0]
         cards.append({
-            "title": "최근 롤플레잉 이어가기",
-            "body": latest.get("title") or latest.get("summary") or "지난 대화 표현을 다시 써볼 수 있어요.",
+            "title": "최근 상황으로 다시 연습",
+            "body": latest.get("title") or latest.get("summary") or "지난 롤플레잉 상황을 새 대화로 다시 연습할 수 있어요.",
             "kind": "memory",
         })
 

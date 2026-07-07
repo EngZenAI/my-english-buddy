@@ -9,7 +9,7 @@ from backend.agents.action_types import (
 )
 from backend.agents.schemas import AgentAction
 
-PASSIVE_TABS = {"search", "wordbook", "articles"}
+PASSIVE_TABS = {"search", "wordbook", "articles", "media"}
 
 
 def _context_labels(context: dict[str, Any]) -> set[str]:
@@ -44,7 +44,11 @@ def _is_contextual_quiz_action(action: AgentAction, context: dict[str, Any]) -> 
 
 def _is_contextual_roleplay_action(action: AgentAction, context: dict[str, Any]) -> bool:
     payload = action.payload or {}
-    if str(payload.get("scenario") or "").strip() != "tag":
+    scenario = str(payload.get("scenario") or "").strip()
+    if scenario in {"general", "opic"}:
+        situation = str(payload.get("situation") or "").strip()
+        return 10 <= len(situation) <= 1200
+    if scenario != "tag":
         return False
     tag = str(payload.get("tag") or "").strip()
     return bool(tag and tag in _context_tags_with_words(context))

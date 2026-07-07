@@ -11,8 +11,8 @@ from backend.db.repositories import (
     delete_word,
     existing_words_lower,
     get_all_words,
+    get_saved_word_id,
     insert_words,
-    is_word_saved,
     reorder_words,
     save_word,
     update_word,
@@ -37,7 +37,8 @@ router = APIRouter(tags=["wordbook"])
     description="검색 결과에 표시할 수 있도록 현재 사용자의 단어장에 이미 저장된 단어인지 확인합니다.",
 )
 async def word_saved(word: str = "", *, session: SessionDep, _user: CurrentUserDep):
-    return {"saved": await is_word_saved(session, _user["id"], word)}
+    word_id = await get_saved_word_id(session, _user["id"], word)
+    return {"saved": word_id is not None, "id": word_id}
 
 
 @router.get(
@@ -66,7 +67,7 @@ async def create_word(payload: SaveWordIn, session: SessionDep, _user: CurrentUs
         return {"ok": False, "message": "단어가 비어 있습니다."}
     final_def = payload.slang_def.strip() or payload.english_def
     tag = payload.tag.strip() or "미지정"
-    message = await save_word(
+    result = await save_word(
         session,
         _user["id"],
         word.lower(),
@@ -76,7 +77,7 @@ async def create_word(payload: SaveWordIn, session: SessionDep, _user: CurrentUs
         payload.example,
         tag,
     )
-    return {"ok": True, "message": message, "saved": True}
+    return {"ok": True, "message": result["message"], "id": result["id"], "saved": True}
 
 
 @router.patch(

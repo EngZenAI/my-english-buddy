@@ -86,9 +86,8 @@ export function useAgent({ user, currentTab, hidden, onRequireLogin, onAction })
 
   const chatMutation = useMutation({
     mutationFn: ({ message, recentMessages }) => api.agentChat(message, currentTab, recentMessages),
-    onSuccess: (data, variables) => {
+    onSuccess: (data) => {
       setMessages((prev) => [...prev, createMessage("agent", data)]);
-      setInput((current) => (current === variables?.draftText ? "" : current));
       markUnreadIfClosed();
       if (data?.job_id) setJobId(data.job_id);
       queryClient.invalidateQueries({ queryKey: ["agent", "suggestions"] });
@@ -139,6 +138,7 @@ export function useAgent({ user, currentTab, hidden, onRequireLogin, onAction })
       return;
     }
     setMessages((prev) => [...prev, createMessage("user", { message: clean })]);
+    setInput((current) => (current === text ? "" : current));
     chatMutation.mutate({
       message: clean,
       draftText: text,

@@ -86,6 +86,14 @@ def _json_from_text(text: str) -> dict[str, Any]:
         return {}
 
 
+def _action_dict(action: Any) -> dict[str, Any]:
+    if hasattr(action, "model_dump"):
+        return action.model_dump()
+    if hasattr(action, "dict"):
+        return action.dict()
+    return {}
+
+
 async def _load_context(state: AgentState) -> AgentState:
     state["context"] = await build_agent_context(
         state["session"],
@@ -148,19 +156,24 @@ async def _execute_safe_tools(state: AgentState) -> AgentState:
         state["user_id"],
         actions,
     )
+    kept_actions_by_id = {action.id: action for action in kept_actions if getattr(action, "id", "")}
 
     cards = []
-    for item in raw_plan.get("cards") or []:
+    for index, item in enumerate(raw_plan.get("cards") or []):
         if not isinstance(item, dict):
             continue
         title = str(item.get("title") or "").strip()
         if not title:
             continue
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        action = kept_actions_by_id.get(f"agent-action-{index}")
+        if action:
+            payload = {**payload, "action": _action_dict(action)}
         cards.append(AgentCard(
             title=title[:80],
             body=str(item.get("body") or "")[:300],
             kind=str(item.get("kind") or "info")[:40],
-            payload=item.get("payload") if isinstance(item.get("payload"), dict) else {},
+            payload=payload,
         ))
 
     message = str(raw_plan.get("message") or "").strip()

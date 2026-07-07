@@ -3,12 +3,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Clock3,
+  CircleAlert,
   ExternalLink,
   FileText,
   GalleryHorizontalEnd,
   Languages,
   Loader2,
-  MousePointer2,
   Play,
   Save,
   Search,
@@ -20,7 +20,6 @@ import { queryKeys } from "../queryClient";
 import AudioButton from "../components/AudioButton";
 import { LoadingSpinner } from "../components/AsyncState";
 import SystemNotice from "../components/common/SystemNotice";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -375,7 +374,6 @@ function TranscriptList({
                   <Clock3 className="h-3.5 w-3.5" />
                   {formatTime(segment.start)}
                 </button>
-                {active && <Badge className="whitespace-nowrap bg-brand-600 text-white hover:bg-brand-600">재생 중</Badge>}
               </div>
               <div className="min-w-0">
                 <p className="text-[15px] leading-7 text-slate-900 md:text-base">
@@ -444,8 +442,12 @@ function WordSaveDialog({
   onSave,
   pending,
   message,
+  meaningStatus,
 }) {
   const tagOptions = Array.from(new Set([DEFAULT_TAG, ...labels.filter(Boolean), draft.tag].filter(Boolean)));
+  const meaningLoading = meaningStatus === "loading";
+  const meaningUnsupported = meaningStatus === "unsupported";
+  const meaningFailed = meaningStatus === "error";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -470,8 +472,24 @@ function WordSaveDialog({
             <Input
               value={draft.korean}
               onChange={(event) => setDraft((prev) => ({ ...prev, korean: event.target.value }))}
-              placeholder="뜻을 직접 입력"
+              placeholder={meaningLoading ? "뜻 불러오는 중" : "뜻을 직접 입력"}
             />
+            {meaningLoading && (
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                브라우저 번역으로 뜻을 불러오는 중입니다.
+              </span>
+            )}
+            {meaningUnsupported && (
+              <span className="text-xs font-medium text-slate-500">
+                이 브라우저에서는 자동 뜻 채우기를 지원하지 않아 직접 입력할 수 있습니다.
+              </span>
+            )}
+            {meaningFailed && (
+              <span className="text-xs font-medium text-slate-500">
+                뜻을 자동으로 불러오지 못했습니다. 직접 입력해 저장할 수 있습니다.
+              </span>
+            )}
           </label>
           <label className="grid gap-1.5 text-sm font-semibold text-slate-700">
             예문
@@ -574,24 +592,34 @@ function ScriptPanel({
   onWordClick,
   onToggleTranslation,
   onVisibleSegmentsChange,
+  compact = false,
 }) {
   const translationChecking = translatorStatus === "checking";
 
   return (
     <section className="flex min-h-[22rem] min-w-0 flex-col overflow-hidden rounded-md border border-slate-200 bg-white xl:h-full xl:min-h-0">
-      <div className="flex shrink-0 flex-col gap-3 border-b border-slate-100 px-4 py-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="min-w-0 truncate text-lg font-extrabold text-slate-950">
+      <div
+        className={cn(
+          "flex shrink-0 flex-col border-b border-slate-100",
+          compact
+            ? "relative gap-2 px-3 py-3"
+            : "gap-3 px-4 py-4 lg:flex-row lg:items-start lg:justify-between"
+        )}
+      >
+        <div className={cn("min-w-0", compact && "pr-20")}>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <h3 className={cn("min-w-0 truncate font-extrabold text-slate-950", compact ? "text-base" : "text-lg")}>
               {transcript?.title || "스크립트 리딩"}
             </h3>
           </div>
-          <p className="mt-1 flex items-center gap-1.5 text-sm text-slate-500">
-            <MousePointer2 className="h-4 w-4" />
-            문장의 단어를 클릭하면 예문과 함께 단어장에 저장할 수 있습니다.
-          </p>
+          {!compact && (
+            <p className="mt-1 flex items-start gap-1.5 text-sm text-slate-500">
+              <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+              <span className="min-w-0">실제 영상 싱크와 맞지 않을 수 있습니다.</span>
+            </p>
+          )}
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <div className={cn("flex shrink-0 flex-wrap items-center gap-2", compact && "absolute right-3 top-3")}>
           {pending && <LoadingSpinner label="스크립트 준비 중" />}
           <Button
             type="button"
@@ -600,7 +628,7 @@ function ScriptPanel({
             aria-pressed={translationEnabled}
             onClick={onToggleTranslation}
             disabled={translationChecking}
-            className="h-8 px-3"
+            className={cn("h-8 px-3", compact && "h-7 px-2.5 text-xs")}
           >
             {translationChecking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Languages className="h-4 w-4" />}
             번역
@@ -620,7 +648,7 @@ function ScriptPanel({
         </div>
       )}
 
-      <div className="flex min-h-40 flex-1 flex-col overflow-hidden px-4 py-4 xl:min-h-0">
+      <div className={cn("flex min-h-40 flex-1 flex-col overflow-hidden xl:min-h-0", compact ? "px-3 py-3" : "px-4 py-4")}>
         <TranscriptList
           segments={segments}
           activeIndex={activeIndex}
@@ -666,9 +694,14 @@ export default function MediaLearningTab({ user, onRequireLogin }) {
   const translationRunRef = useRef(0);
   const translationEnabledRef = useRef(false);
   const translatorStatusRef = useRef("idle");
+  const [meaningStatus, setMeaningStatus] = useState("idle");
+  const wordTranslatorRef = useRef(null);
+  const wordTranslationCacheRef = useRef(new Map());
+  const wordTranslationRunRef = useRef(0);
   const [draft, setDraft] = useState({
     word: "",
     korean: "",
+    korean_detail: "",
     english_def: "",
     example: "",
     tag: DEFAULT_TAG,
@@ -831,6 +864,8 @@ export default function MediaLearningTab({ user, onRequireLogin }) {
   useEffect(() => () => {
     translationRunRef.current += 1;
     translatorRef.current?.destroy?.();
+    wordTranslationRunRef.current += 1;
+    wordTranslatorRef.current?.destroy?.();
   }, []);
 
   useEffect(() => {
@@ -906,16 +941,95 @@ export default function MediaLearningTab({ user, onRequireLogin }) {
     return 0;
   }, [currentTime, segments]);
 
+  const translateWordMeaning = useCallback(async (word) => {
+    const normalized = cleanWord(word);
+    if (!normalized) {
+      setMeaningStatus("idle");
+      return;
+    }
+
+    const cached = wordTranslationCacheRef.current.get(normalized);
+    const requestId = wordTranslationRunRef.current + 1;
+    wordTranslationRunRef.current = requestId;
+
+    if (cached) {
+      setDraft((prev) =>
+        cleanWord(prev.word) === normalized && !prev.korean.trim()
+          ? { ...prev, korean: cached }
+          : prev
+      );
+      setMeaningStatus("ready");
+      return;
+    }
+
+    setMeaningStatus("loading");
+    if (!isSupportedChromeBrowser() || typeof globalThis === "undefined") {
+      setMeaningStatus("unsupported");
+      return;
+    }
+
+    const TranslatorApi = globalThis.Translator;
+    if (!TranslatorApi?.availability || !TranslatorApi?.create) {
+      setMeaningStatus("unsupported");
+      return;
+    }
+
+    try {
+      const options = {
+        sourceLanguage: TRANSLATION_SOURCE_LANGUAGE,
+        targetLanguage: TRANSLATION_TARGET_LANGUAGE,
+      };
+      const availability = await TranslatorApi.availability(options);
+      if (requestId !== wordTranslationRunRef.current) return;
+      if (availability === "unavailable") {
+        setMeaningStatus("unsupported");
+        return;
+      }
+
+      if (!wordTranslatorRef.current?.translate) {
+        wordTranslatorRef.current = await TranslatorApi.create(options);
+      }
+      if (requestId !== wordTranslationRunRef.current) return;
+
+      const translated = (await wordTranslatorRef.current.translate(normalized))?.trim() || "";
+      if (translated) {
+        wordTranslationCacheRef.current.set(normalized, translated);
+      }
+      if (requestId !== wordTranslationRunRef.current) return;
+
+      setDraft((prev) =>
+        cleanWord(prev.word) === normalized && !prev.korean.trim()
+          ? { ...prev, korean: translated }
+          : prev
+      );
+      setMeaningStatus(translated ? "ready" : "error");
+    } catch {
+      if (requestId === wordTranslationRunRef.current) setMeaningStatus("error");
+    }
+  }, []);
+
   const openSave = (word, segment) => {
+    const normalized = cleanWord(word);
     setSaveMessage("");
+    setMeaningStatus("idle");
     setDraft({
-      word,
+      word: normalized || word,
       korean: "",
+      korean_detail: "",
       english_def: transcript?.title ? `From media: ${transcript.title}` : "From media transcript",
       example: segment?.text || "",
       tag: DEFAULT_TAG,
     });
     setSaveOpen(true);
+    translateWordMeaning(normalized || word);
+  };
+
+  const handleSaveOpenChange = (open) => {
+    setSaveOpen(open);
+    if (!open) {
+      wordTranslationRunRef.current += 1;
+      setMeaningStatus("idle");
+    }
   };
 
   const seekTo = (seconds) => {
@@ -975,44 +1089,45 @@ export default function MediaLearningTab({ user, onRequireLogin }) {
       onWordClick={openSave}
       onToggleTranslation={toggleTranslation}
       onVisibleSegmentsChange={handleVisibleSegmentsChange}
+      compact={isTheaterMode}
     />
   );
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-slate-50">
-      <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-3 md:px-6">
-        <div className="mx-auto flex w-full max-w-[1500px] flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+      <div className="sticky top-0 z-30 shrink-0 border-b border-slate-800/60 bg-[#10171b] px-3 py-2 text-white shadow-[0_10px_26px_rgba(15,23,42,0.18)] md:px-5">
+        <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
           <form onSubmit={loadTranscript} className="grid min-w-0 flex-1 gap-2 md:grid-cols-[minmax(16rem,1fr)_8rem_auto_auto]">
             <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-300" />
               <Input
                 value={url}
                 onChange={(event) => setUrl(event.target.value)}
                 placeholder="미디어 링크 또는 영상 ID"
-                className="h-11 pl-9"
+                className="h-9 border-white/10 bg-white/10 pl-9 text-sm font-semibold text-white placeholder:text-slate-400 focus-visible:ring-brand-400"
               />
             </div>
             <select
               value={language}
               onChange={(event) => setLanguage(event.target.value)}
-              className="h-11 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 outline-none focus:border-brand-400"
+              className="h-9 rounded-md border border-white/10 bg-white/10 px-3 text-sm font-semibold text-white outline-none ring-offset-[#10171b] transition hover:bg-white/20 focus:ring-2 focus:ring-brand-400"
             >
               {LANGUAGE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
+                <option key={option.value} value={option.value} className="text-slate-900">
                   {option.label}
                 </option>
               ))}
             </select>
-            <Button type="submit" disabled={!url.trim() || fetchMutation.isPending} className="h-11 bg-brand-700 hover:bg-brand-800">
+            <Button type="submit" disabled={!url.trim() || fetchMutation.isPending} size="sm" className="h-9 border border-brand-500 bg-brand-600 px-3 text-white hover:bg-brand-500">
               {fetchMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Subtitles className="h-4 w-4" />}
               영상 가져오기
             </Button>
-            <Button type="button" variant="outline" onClick={() => setPasteOpen(true)} className="h-11">
+            <Button type="button" variant="outline" size="sm" onClick={() => setPasteOpen(true)} className="h-9 border-white/20 bg-white/10 px-3 text-white hover:bg-white/20 hover:text-white">
               <FileText className="h-4 w-4" />
               직접 자막 붙여넣기
             </Button>
           </form>
-          <div className="flex shrink-0 rounded-md border border-slate-200 bg-slate-50 p-1">
+          <div className="flex shrink-0 overflow-x-auto rounded-md border border-white/10 bg-white/10 p-1">
             {[
               { value: VIEW_MODES.BALANCED, label: "기본 보기" },
               { value: VIEW_MODES.THEATER, label: "영상 크게" },
@@ -1025,7 +1140,10 @@ export default function MediaLearningTab({ user, onRequireLogin }) {
                 variant={viewMode === item.value ? "secondary" : "ghost"}
                 size="sm"
                 onClick={() => setViewMode(item.value)}
-                className="h-8 px-3"
+                className={cn(
+                  "h-7 whitespace-nowrap px-3 text-xs font-bold text-white hover:bg-white/20 hover:text-white",
+                  viewMode === item.value && "bg-white text-slate-950 hover:bg-white hover:text-slate-950"
+                )}
               >
                 {item.value === VIEW_MODES.THEATER && <GalleryHorizontalEnd className="h-4 w-4" />}
                 {item.label}
@@ -1088,7 +1206,7 @@ export default function MediaLearningTab({ user, onRequireLogin }) {
 
       <WordSaveDialog
         open={saveOpen}
-        onOpenChange={setSaveOpen}
+        onOpenChange={handleSaveOpenChange}
         draft={draft}
         setDraft={setDraft}
         labels={labels}
@@ -1097,6 +1215,7 @@ export default function MediaLearningTab({ user, onRequireLogin }) {
         onSave={() => saveMutation.mutate()}
         pending={saveMutation.isPending}
         message={saveMessage}
+        meaningStatus={meaningStatus}
       />
     </div>
   );

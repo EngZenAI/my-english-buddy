@@ -41,9 +41,9 @@ DESTRUCTIVE_TOOL_TYPES = {
 ALL_AGENT_ACTION_TYPES = CLIENT_ACTION_TYPES | SERVER_TOOL_TYPES
 
 ALLOWED_ACTION_PROMPT_LINES = "\n".join([
-    f'- {OPEN_TAB} payload: {{"tab": "search|wordbook|articles"}}',
+    f'- {OPEN_TAB} payload: {{"tab": "search|wordbook|articles|media"}}',
     f"- {START_QUIZ_WITH_GOAL} payload: quiz goal fields such as scope_due, tag, scope_tags, question_count, instruction",
-    f'- {START_ROLEPLAY_WITH_SITUATION} payload: {{"level": "...", "scenario": "general|opic|tag", "tag": null|string, "situation": "..."}}',
+    f'- {START_ROLEPLAY_WITH_SITUATION} payload: {{"level": "...", "scenario": "general|opic|tag", "tag": null|string, "situation": "...", "title": "..."}}',
     f'- {ADD_LABEL} payload: {{"name": "..."}}',
     f'- {SAVE_WORDS} payload: {{"items": [{{"word": "...", "korean": "...", "english_def": "...", "example": "...", "tag": "..."}}]}}',
     f'- {SAVE_AGENT_MEMORY} payload: {{"key": "...", "value": object}}',

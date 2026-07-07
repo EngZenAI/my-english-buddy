@@ -231,6 +231,11 @@ async def get_mypage_learning(session: AsyncSession, user_id: str) -> dict:
         if int(item.get("incorrect_count") or 0) > 0
         or float(item.get("accuracy") or 0) < 0.8
     ][:5]
+    weak_question_types = [
+        item
+        for item in quiz_stats.get("type_stats", [])
+        if int(item.get("incorrect_count") or 0) > 0
+    ][:5]
 
     result = await session.execute(
         text(
@@ -260,6 +265,9 @@ async def get_mypage_learning(session: AsyncSession, user_id: str) -> dict:
         "due_review_count": int(word_summary.get("due_review_count") or 0),
         "quiz_attempt_count": int(quiz_summary.get("attempt_count") or 0),
         "quiz_accuracy": float(quiz_summary.get("accuracy") or 0),
+        "quiz_incorrect_count": int(quiz_summary.get("incorrect_count") or 0),
+        "weak_question_types": weak_question_types,
+        "recent_incorrect": quiz_stats.get("recent_incorrect", [])[:5],
         "roleplay_session_count": int(
             roleplay_summary.get("roleplay_session_count") or 0
         ),

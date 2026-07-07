@@ -1,6 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { DndContext, PointerSensor, useDraggable, useSensor, useSensors } from "@dnd-kit/core";
-import { AlertTriangle, Loader2, Minimize2, PencilLine, Send, X } from "lucide-react";
+import {
+  AlertTriangle,
+  BookOpenCheck,
+  CircleHelp,
+  ClipboardList,
+  Loader2,
+  MessageCircle,
+  Minimize2,
+  PencilLine,
+  Send,
+  Sparkles,
+  Tags,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -24,7 +37,6 @@ import { AGENT_QUICK_PROMPTS } from "./constants";
 import {
   AgentActionButton,
   AgentCardList,
-  AgentJobProgress,
   AgentMessageList,
   AgentTypingMessage,
 } from "./AgentUI";
@@ -44,6 +56,44 @@ function AgentReaderPosition() {
 
 const AGENT_MINIMIZED_KEY = "englishBuddy.agent.minimized";
 const AGENT_POSITION_KEY = "englishBuddy.agent.launcherPosition";
+
+const AGENT_HELP_ITEMS = [
+  {
+    Icon: ClipboardList,
+    title: "오늘 학습 추천",
+    body: "복습 예정 단어, 최근 학습 기록, 약점 단어를 보고 지금 할 일을 골라줍니다.",
+    example: "예: 오늘 뭐 공부할까?",
+    prompt: "오늘 뭐 공부할까?",
+  },
+  {
+    Icon: BookOpenCheck,
+    title: "퀴즈 바로 시작",
+    body: "복습일이 지난 단어 또는 특정 태그를 기준으로 퀴즈 목표를 만들어줍니다.",
+    example: "예: 복습할 단어로 퀴즈 시작해줘",
+    prompt: "복습할 단어로 퀴즈 시작해줘",
+  },
+  {
+    Icon: MessageCircle,
+    title: "롤플레잉 추천",
+    body: "상황 카드를 제안하고, 카드를 누르면 롤플레잉 탭으로 값이 넘어가 바로 시작됩니다.",
+    example: "예: 롤플레잉 상황 추천해줘",
+    prompt: "롤플레잉 상황 추천해줘",
+  },
+  {
+    Icon: Tags,
+    title: "단어장 정리",
+    body: "태그 추가, 태그명 변경 제안, 단어장 점검 같은 정리 작업을 도와줍니다.",
+    example: "예: 단어장 점검해줘",
+    prompt: "단어장 점검해줘",
+  },
+  {
+    Icon: Sparkles,
+    title: "학습 기억 저장",
+    body: "목표, 선호 주제, 자주 틀리는 패턴 같은 개인 학습 메모를 저장해 다음 추천에 반영합니다.",
+    example: "예: 나는 비즈니스 회화를 우선 공부하고 싶어. 기억해줘",
+    prompt: "내 영어 학습 목표를 기억해줘",
+  },
+];
 
 function readMinimized() {
   if (typeof window === "undefined") return false;
@@ -107,6 +157,52 @@ function pendingDialogCopy(action) {
   };
 }
 
+function AgentHelpDialog({ open, busy, onOpenChange, onRequest }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+              <CircleHelp className="h-4 w-4" />
+            </span>
+            Buddy Agent로 할 수 있는 일
+          </DialogTitle>
+          <DialogDescription>
+            아래 작업은 Agent에게 바로 요청할 수 있습니다. 실행 전 확인이 필요한 변경은 한 번 더 물어봅니다.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-2 sm:grid-cols-2">
+          {AGENT_HELP_ITEMS.map(({ Icon, title, body, example, prompt }) => (
+            <button
+              key={title}
+              type="button"
+              disabled={busy}
+              onClick={() => onRequest(prompt)}
+              className="group rounded-lg border border-slate-200 bg-white p-3 text-left transition hover:border-emerald-200 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <div className="flex items-start gap-2">
+                <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-600 group-hover:bg-white group-hover:text-emerald-700">
+                  <Icon className="h-4 w-4" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold text-slate-900">{title}</span>
+                  <span className="mt-1 block text-xs leading-5 text-slate-600">{body}</span>
+                  <span className="mt-2 block rounded-md bg-slate-50 px-2 py-1.5 text-xs leading-5 text-slate-700">
+                    {example}
+                  </span>
+                  <span className="mt-2 block text-xs font-medium text-emerald-700">요청하기</span>
+                </span>
+              </div>
+            </button>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function AgentLauncher({ style, dragging, hasNotice, onClick }) {
   const {
     attributes,
@@ -152,6 +248,7 @@ export default function AgentPanel({
   hidden = false,
 }) {
   const [minimized, setMinimized] = useState(readMinimized);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const suppressClickRef = useRef(false);
   const sensors = useSensors(
@@ -185,10 +282,14 @@ export default function AgentPanel({
     if (!text.trim() || busy) return;
     sendMessage(text);
   };
+  const requestFromHelp = (text) => {
+    setHelpOpen(false);
+    setOpen(true);
+    sendFromPanel(text);
+  };
   const scrollerItemCount =
     messages.length +
     (busy ? 1 : 0) +
-    (latestJob ? 1 : 0) +
     (visibleActions.length ? 1 : 0) +
     (!messages.length ? 1 : 0) +
     (!messages.length && suggestions?.cards?.length ? 1 : 0);
@@ -287,6 +388,15 @@ export default function AgentPanel({
               <button
                 type="button"
                 className="rounded-md p-1 text-slate-500 hover:bg-slate-100"
+                onClick={() => setHelpOpen(true)}
+                aria-label="Buddy Agent 도움말"
+                title="Agent로 할 수 있는 일"
+              >
+                <CircleHelp className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                className="rounded-md p-1 text-slate-500 hover:bg-slate-100"
                 onClick={minimizeAgent}
                 aria-label="Buddy Agent 최소화"
                 title="Agent 최소화"
@@ -323,16 +433,22 @@ export default function AgentPanel({
 
                   {!messages.length && Boolean(suggestions?.cards?.length) && (
                     <MessageScrollerItem messageId="agent-suggestions-cards">
-                      <AgentCardList cards={suggestions.cards} />
+                      <AgentCardList
+                        cards={suggestions.cards}
+                        actions={suggestions.actions || []}
+                        disabled={busy || Boolean(pendingAction)}
+                        onRun={runAction}
+                      />
                     </MessageScrollerItem>
                   )}
-                  <AgentMessageList messages={messages} user={user} />
+                  <AgentMessageList
+                    messages={messages}
+                    user={user}
+                    disabled={busy || Boolean(pendingAction)}
+                    onRunAction={runAction}
+                    latestJob={latestJob}
+                  />
                   {busy && <AgentTypingMessage user={user} />}
-                  {latestJob && (
-                    <MessageScrollerItem messageId={`agent-job-${latestJob.id || latestJob.job_id || "latest"}`}>
-                      <AgentJobProgress job={latestJob} />
-                    </MessageScrollerItem>
-                  )}
 
                   {Boolean(visibleActions.length) && (
                     <MessageScrollerItem messageId="agent-visible-actions">
@@ -390,6 +506,13 @@ export default function AgentPanel({
           </div>
         </section>
       )}
+
+      <AgentHelpDialog
+        open={helpOpen}
+        busy={busy}
+        onOpenChange={setHelpOpen}
+        onRequest={requestFromHelp}
+      />
 
       <Dialog
         open={Boolean(pendingAction)}

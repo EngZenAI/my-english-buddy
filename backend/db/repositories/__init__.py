@@ -72,6 +72,7 @@ from backend.db.repositories.words import (
     delete_word,
     existing_words_lower,
     get_all_words,
+    get_saved_word_id,
     get_words_to_review,
     insert_words,
     is_word_saved,
