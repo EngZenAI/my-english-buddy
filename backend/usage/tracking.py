@@ -20,6 +20,7 @@ class ApiUsageRecord:
     output_tokens: int | None = None
     total_tokens: int | None = None
     success: bool = True
+    error_message: str = ""
 
 
 _usage_events: ContextVar[list[ApiUsageRecord] | None] = ContextVar(
@@ -119,6 +120,32 @@ def emit_usage(record: ApiUsageRecord) -> None:
         events.append(record)
 
 
+def _clean_error_message(error_message: str | None, limit: int = 1000) -> str:
+    text = " ".join(str(error_message or "").split())
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit].rstrip()}..."
+
+
+def mark_latest_usage_failed(
+    *,
+    feature: str,
+    operation: str,
+    error_message: str | None,
+) -> bool:
+    events = _usage_events.get()
+    if not events:
+        return False
+
+    clean_message = _clean_error_message(error_message)
+    for event in reversed(events):
+        if event.feature == feature and event.operation == operation:
+            event.success = False
+            event.error_message = clean_message
+            return True
+    return False
+
+
 def track_llm_usage(
     *,
     feature: str,
@@ -128,6 +155,7 @@ def track_llm_usage(
     response: Any = None,
     output_value: Any = None,
     success: bool = True,
+    error_message: str | None = None,
 ) -> None:
     provider, model = split_model_name(model_name)
     usage = extract_token_usage(response)
@@ -143,6 +171,7 @@ def track_llm_usage(
             output_tokens=usage["output_tokens"],
             total_tokens=usage["total_tokens"],
             success=success,
+            error_message=_clean_error_message(error_message),
         )
     )
 
@@ -157,6 +186,7 @@ def track_external_usage(
     output_value: Any = None,
     units: int = 1,
     success: bool = True,
+    error_message: str | None = None,
 ) -> None:
     emit_usage(
         ApiUsageRecord(
@@ -168,5 +198,6 @@ def track_external_usage(
             input_chars=count_chars(input_value),
             output_chars=count_chars(output_value),
             success=success,
+            error_message=_clean_error_message(error_message),
         )
     )

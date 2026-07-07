@@ -88,19 +88,29 @@ FEATURE_MODEL_PROFILES = {
     "quiz_generate": {
         "provider": "watsonx",
         "model_id": "openai/gpt-oss-120b",
-        "params": {"max_tokens": 3072, "temperature": 0.3, "top_p": 0.9},
+        "params": {
+            "max_tokens": 4096,
+            "temperature": 0.3,
+            "top_p": 0.9,
+            "reasoning_effort": "low",
+        },
     },
     # 퀴즈 채점. 일관성이 중요하므로 deterministic에 가깝게 둔다.
     "quiz_grade": {
         "provider": "watsonx",
         "model_id": "openai/gpt-oss-120b",
-        "params": {"max_tokens": 1024, "temperature": 0.0},
+        "params": {"max_tokens": 1024, "temperature": 0.0, "reasoning_effort": "low"},
     },
     # 하위 호환용. 새 코드는 quiz_generate/quiz_grade를 직접 사용한다.
     "quiz": {
         "provider": "watsonx",
         "model_id": "openai/gpt-oss-120b",
-        "params": {"max_tokens": 3072, "temperature": 0.3, "top_p": 0.9},
+        "params": {
+            "max_tokens": 4096,
+            "temperature": 0.3,
+            "top_p": 0.9,
+            "reasoning_effort": "low",
+        },
     },
     # 롤플레잉(회화). 매 턴 1회 호출이라 지연에 민감하고, 자연스러운 영어 회화
     # 품질이 핵심 → 120b는 과하고 granite-small보다 회화가 좋은 중형 instruct 모델.
@@ -251,13 +261,14 @@ def _invoke_tracked_llm(feature: str, operation: str, prompt_value) -> str:
     try:
         with _llm_concurrency_slot(feature):
             response = get_llm(feature).invoke(prompt_value)
-    except LLM_PROVIDER_ERRORS:
+    except LLM_PROVIDER_ERRORS as exc:
         track_llm_usage(
             feature=feature,
             operation=operation,
             model_name=model_name,
             input_value=prompt_value,
             success=False,
+            error_message=str(exc),
         )
         raise
     text = parser.invoke(response)
@@ -321,7 +332,7 @@ def _stream_tracked_llm(feature: str, operation: str, prompt_value) -> Iterator[
                     continue
                 chunks.append(text)
                 yield text
-    except LLM_PROVIDER_ERRORS:
+    except LLM_PROVIDER_ERRORS as exc:
         output = "".join(chunks)
         track_llm_usage(
             feature=feature,
@@ -331,6 +342,7 @@ def _stream_tracked_llm(feature: str, operation: str, prompt_value) -> Iterator[
             response=_StreamUsageResponse(output, response_chunks),
             output_value=output,
             success=False,
+            error_message=str(exc),
         )
         raise
     output = "".join(chunks)

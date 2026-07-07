@@ -104,7 +104,7 @@ def synthesize_roleplay_tts(
         audio_b64 = inline["data"]
         mime_type = inline.get("mimeType") or inline.get("mime_type") or "audio/L16;rate=24000"
         wav_bytes = _audio_payload_to_wav(audio_b64, mime_type)
-    except ROLEPLAY_TTS_ERRORS:
+    except ROLEPLAY_TTS_ERRORS as exc:
         track_external_usage(
             feature="roleplay",
             operation="tts",
@@ -112,6 +112,7 @@ def synthesize_roleplay_tts(
             model=model,
             input_value=normalized,
             success=False,
+            error_message=str(exc),
         )
         raise
 
