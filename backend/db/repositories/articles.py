@@ -161,11 +161,9 @@ async def list_published_articles(
     q: str = "",
     page: int = 1,
     page_size: int = 12,
-    per_topic_limit: int = 1,
 ) -> dict:
     page = max(1, int(page or 1))
     page_size = max(1, min(int(page_size or 12), 30))
-    per_topic_limit = max(1, min(int(per_topic_limit or 1), 5))
     clauses = [
         "is_published = TRUE",
         "LOWER(COALESCE(topic, '')) <> 'opinion'",
@@ -182,7 +180,6 @@ async def list_published_articles(
     params: dict[str, Any] = {
         "limit": page_size,
         "offset": (page - 1) * page_size,
-        "per_topic_limit": per_topic_limit,
     }
     if topic:
         clauses.append("topic = :topic")
@@ -196,24 +193,11 @@ async def list_published_articles(
     where_sql = " AND ".join(clauses)
     result = await session.execute(
         text(
-            f"""WITH ranked AS (
-                   SELECT id, source_key, source, title, url, image_url, published_at,
-                          topic, level, description, extraction_status,
-                          feed_entry_id, license_status, collection_method, created_at, updated_at,
-                          ROW_NUMBER() OVER (
-                              PARTITION BY
-                                  source_key,
-                                  COALESCE(NULLIF(topic, ''), 'uncategorized')
-                              ORDER BY COALESCE(published_at, updated_at, created_at) DESC, id DESC
-                          ) AS topic_rank
-                   FROM articles
-                   WHERE {where_sql}
-               )
-               SELECT id, source_key, source, title, url, image_url, published_at,
+            f"""SELECT id, source_key, source, title, url, image_url, published_at,
                       topic, level, description, extraction_status,
                       feed_entry_id, license_status, collection_method, created_at, updated_at
-               FROM ranked
-               WHERE topic_rank <= :per_topic_limit
+               FROM articles
+               WHERE {where_sql}
                ORDER BY COALESCE(published_at, updated_at, created_at) DESC, id DESC
                LIMIT :limit OFFSET :offset"""
         ),
@@ -221,19 +205,7 @@ async def list_published_articles(
     )
     rows = _rows(result)
     count_result = await session.execute(
-        text(
-            f"""WITH ranked AS (
-                   SELECT ROW_NUMBER() OVER (
-                              PARTITION BY
-                                  source_key,
-                                  COALESCE(NULLIF(topic, ''), 'uncategorized')
-                              ORDER BY COALESCE(published_at, updated_at, created_at) DESC, id DESC
-                          ) AS topic_rank
-                   FROM articles
-                   WHERE {where_sql}
-               )
-               SELECT COUNT(*)::int FROM ranked WHERE topic_rank <= :per_topic_limit"""
-        ),
+        text(f"SELECT COUNT(*)::int FROM articles WHERE {where_sql}"),
         {k: v for k, v in params.items() if k not in {"limit", "offset"}},
     )
     return {"articles": rows, "page": page, "page_size": page_size, "total": int(count_result.scalar_one())}

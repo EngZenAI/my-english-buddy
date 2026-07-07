@@ -1,5 +1,6 @@
 import { ChevronLeft, User, LogIn, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import englishBuddyLogo from "@/assets/english-buddy-logo.svg";
 
 export default function MobileHeader({
   user,
@@ -24,21 +25,38 @@ export default function MobileHeader({
 
   return (
     <header className="sticky top-0 left-0 right-0 h-14 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-4 flex items-center justify-between z-40">
-      <div className="flex items-center gap-2">
-        {!isHome && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={onBack}
-            className="h-9 w-9 rounded-full"
-          >
-            <ChevronLeft className="h-5 w-5" />
-          </Button>
+      <div className="flex min-w-0 items-center gap-2">
+        {isHome ? (
+          <span className="flex min-w-0 items-center gap-2 rounded-lg text-left">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center">
+              <img
+                src={englishBuddyLogo}
+                alt=""
+                aria-hidden="true"
+                className="block h-9 w-9 drop-shadow-[0_8px_18px_rgba(47,125,115,0.18)]"
+                draggable="false"
+              />
+            </span>
+            <span className="truncate text-lg font-extrabold tracking-tight text-slate-900">
+              English Buddy
+            </span>
+          </span>
+        ) : (
+          <>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onBack}
+              className="h-9 w-9 rounded-full"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </Button>
+            <span className="truncate text-base font-bold tracking-tight text-foreground">
+              {getTitle()}
+            </span>
+          </>
         )}
-        <span className={`font-bold tracking-tight text-foreground ${isHome ? "text-lg text-brand-600 dark:text-brand-400 font-extrabold" : "text-base"}`}>
-          {getTitle()}
-        </span>
       </div>
 
       <div className="flex items-center gap-1">
