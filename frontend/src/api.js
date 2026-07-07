@@ -440,6 +440,18 @@ export const api = {
       body: JSON.stringify({ is_published: isPublished }),
     }),
 
+  // ── 미디어 학습 ──
+  mediaTranscript: ({ url, language = "en" }) =>
+    jsonFetch("/api/media/transcript", {
+      method: "POST",
+      body: JSON.stringify({ url, language }),
+    }),
+  mediaParseTranscript: ({ text, title = "" }) =>
+    jsonFetch("/api/media/transcript/parse", {
+      method: "POST",
+      body: JSON.stringify({ text, title }),
+    }),
+
   // ── 관리자 ──
   adminApiUsage: ({ date = "", startDate = "", endDate = "", groupBy = "hour", range = "day" } = {}) => {
     const params = new URLSearchParams();
