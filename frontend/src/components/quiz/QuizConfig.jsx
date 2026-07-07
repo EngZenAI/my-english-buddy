@@ -355,10 +355,10 @@ export default function QuizConfig({
                       key={label}
                       checked={selectedTags.includes(label)}
                       title={label}
-                      description={goal.scope_all ? "전체 단어 선택 중에는 사용할 수 없습니다" : "저장한 태그에서 출제"}
+                      description="저장한 태그에서 출제"
                       count={countByTag(words, label)}
                       onClick={() => toggleTag(label)}
-                      disabled={Boolean(goal.scope_all) || controlsDisabled}
+                      disabled={controlsDisabled}
                     />
                   ))
                 )}
@@ -372,14 +372,10 @@ export default function QuizConfig({
                 <ScopeRow
                   checked={Boolean(goal.scope_saved_date)}
                   title="저장 기간으로 출제"
-                  description={
-                    goal.scope_all
-                      ? "전체 단어 선택 중에는 사용할 수 없습니다"
-                      : `${formatDate(goal.saved_from)}부터 ${formatDate(goal.saved_to)}까지 저장한 단어`
-                  }
+                  description={`${formatDate(goal.saved_from)}부터 ${formatDate(goal.saved_to)}까지 저장한 단어`}
                   count={rangeWords.length}
                   onClick={() => updateScope({ scope_saved_date: !goal.scope_saved_date })}
-                  disabled={Boolean(goal.scope_all) || controlsDisabled}
+                  disabled={controlsDisabled}
                 />
                 <div className="grid gap-3 rounded-md bg-slate-50/70 px-3 py-3 sm:grid-cols-2">
                   <label className="space-y-1.5">
@@ -387,7 +383,7 @@ export default function QuizConfig({
                     <Input
                       type="date"
                       value={goal.saved_from}
-                      disabled={Boolean(goal.scope_all) || controlsDisabled}
+                      disabled={controlsDisabled}
                       onChange={(event) => {
                         updateScope({ scope_saved_date: true });
                         setGoalValue("saved_from", event.target.value);
@@ -400,7 +396,7 @@ export default function QuizConfig({
                     <Input
                       type="date"
                       value={goal.saved_to}
-                      disabled={Boolean(goal.scope_all) || controlsDisabled}
+                      disabled={controlsDisabled}
                       onChange={(event) => {
                         updateScope({ scope_saved_date: true });
                         setGoalValue("saved_to", event.target.value);
@@ -412,10 +408,10 @@ export default function QuizConfig({
                 <ScopeRow
                   checked={Boolean(goal.scope_due)}
                   title="오늘 복습 예정"
-                  description={goal.scope_all ? "전체 단어 선택 중에는 사용할 수 없습니다" : "복습일이 지난 단어를 함께 포함"}
+                  description="복습일이 지난 단어를 함께 포함"
                   count={dueWords.length}
                   onClick={() => updateScope({ scope_due: !goal.scope_due })}
-                  disabled={Boolean(goal.scope_all) || controlsDisabled}
+                  disabled={controlsDisabled}
                 />
               </Section>
 

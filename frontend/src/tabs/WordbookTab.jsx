@@ -9,6 +9,14 @@ import { queryKeys } from "../queryClient";
 import { EmptyState, LoadingSpinner, SkeletonBlock } from "../components/AsyncState";
 import MemberNotice from "../components/MemberNotice";
 import AudioButton from "../components/AudioButton";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
 
 const COLS = 10;
 const PAGE_SIZE = 40;
@@ -34,11 +42,54 @@ const WordRowsSkeleton = () =>
     </tr>
   ));
 
+function WordbookMessageDialog({ dialog, onClose }) {
+  if (!dialog) return null;
+  const isConfirm = dialog.type === "confirm";
+  const destructive = dialog.variant === "destructive";
+
+  return (
+    <Dialog open={Boolean(dialog)} onOpenChange={(open) => !open && onClose(false)}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{dialog.title}</DialogTitle>
+          <DialogDescription className="whitespace-pre-wrap leading-6">
+            {dialog.message}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          {isConfirm && (
+            <button
+              type="button"
+              onClick={() => onClose(false)}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              {dialog.cancelLabel || "취소"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => onClose(true)}
+            className={`rounded-lg px-4 py-2 text-sm font-semibold text-white ${
+              destructive
+                ? "bg-rose-600 hover:bg-rose-700"
+                : "bg-brand-600 hover:bg-brand-700"
+            }`}
+          >
+            {dialog.confirmLabel || "확인"}
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function WordbookTab({ user, onRequireLogin }) {
   const queryClient = useQueryClient();
   const fileInputRef = useRef(null);
   const lastIndexRef = useRef(null); // Shift+클릭 범위 선택용 (현재 페이지 기준 인덱스)
+  const dialogIdRef = useRef(0);
   const userId = user?.id || "";
+  const [messageDialog, setMessageDialog] = useState(null);
   const [filter, setFilter] = useState(""); // "" = 전체
   const [wordSearch, setWordSearch] = useState("");
   const [page, setPage] = useState(0); // 0-based 페이지
@@ -84,6 +135,38 @@ export default function WordbookTab({ user, onRequireLogin }) {
     else if (code === "3m") dt.setMonth(dt.getMonth() + 3);
     return fmtYMD2(dt);
   };
+
+  const closeMessageDialog = (confirmed = false) => {
+    setMessageDialog((current) => {
+      current?.resolve?.(confirmed);
+      return null;
+    });
+  };
+
+  const notify = (message, options = {}) => {
+    setMessageDialog({
+      id: ++dialogIdRef.current,
+      type: "alert",
+      title: options.title || "알림",
+      message,
+      confirmLabel: options.confirmLabel || "확인",
+      variant: options.variant,
+    });
+  };
+
+  const confirmDialog = (message, options = {}) =>
+    new Promise((resolve) => {
+      setMessageDialog({
+        id: ++dialogIdRef.current,
+        type: "confirm",
+        title: options.title || "확인",
+        message,
+        confirmLabel: options.confirmLabel || "확인",
+        cancelLabel: options.cancelLabel || "취소",
+        variant: options.variant,
+        resolve,
+      });
+    });
 
   // 드래그 정렬
   const [dragIndex, setDragIndex] = useState(null);
@@ -183,7 +266,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
     mutationFn: api.deleteLabel,
     onSuccess: (res, name) => {
       if (!res.ok) {
-        alert(res.message || "삭제에 실패했어요.");
+        notify(res.message || "삭제에 실패했어요.");
         return;
       }
       queryClient.setQueryData(queryKeys.labels, { labels: res.labels });
@@ -227,16 +310,16 @@ export default function WordbookTab({ user, onRequireLogin }) {
     try {
       const res = await api.importStarterPack(pack.id);
       if (res.ok === false) {
-        alert(res.message || "가져오기에 실패했어요.");
+        notify(res.message || "가져오기에 실패했어요.");
         return;
       }
       await queryClient.invalidateQueries({ queryKey: queryKeys.labels });
       await refreshWords();
       await starterQuery.refetch(); // '이미 담음' 개수 갱신
-      alert(res.message || "가져왔어요.");
+      notify(res.message || "가져왔어요.", { title: "가져오기 완료" });
       if (res.tag) setFilter(res.tag); // 가져온 태그로 바로 보기 이동
     } catch {
-      alert("가져오는 중 오류가 발생했어요.");
+      notify("가져오는 중 오류가 발생했어요.");
     } finally {
       setImportingPackId(null);
     }
@@ -251,7 +334,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
     try {
       const res = await api.importPreview(file);
       if (!res.ok) {
-        alert(res.message || "가져오기에 실패했어요.");
+        notify(res.message || "가져오기에 실패했어요.");
         return;
       }
       const defTag = filter || "미지정"; // 특정 태그 보는 중이면 그 태그를 기본값으로
@@ -269,7 +352,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
       setGuideOpen(false); // 안내 모달 닫고 미리보기로 전환
       setPreviewOpen(true);
     } catch {
-      alert("가져오는 중 오류가 발생했어요. 파일 형식을 확인해주세요.");
+      notify("가져오는 중 오류가 발생했어요. 파일 형식을 확인해주세요.");
     } finally {
       setImporting(false);
     }
@@ -306,22 +389,22 @@ export default function WordbookTab({ user, onRequireLogin }) {
         tag: r.tag,
       }));
     if (items.length === 0) {
-      alert("적용할 단어가 없어요.");
+      notify("적용할 단어가 없어요.");
       return;
     }
     setCommitting(true);
     try {
       const res = await api.importCommit(items, overwriteDup);
       if (res.ok === false) {
-        alert(res.message || "적용에 실패했어요.");
+        notify(res.message || "적용에 실패했어요.");
         return;
       }
       closePreview();
-      alert(res.message || "적용했어요.");
+      notify(res.message || "적용했어요.", { title: "적용 완료" });
       queryClient.invalidateQueries({ queryKey: queryKeys.labels });
       await refreshWords();
     } catch {
-      alert("적용 중 오류가 발생했어요.");
+      notify("적용 중 오류가 발생했어요.");
     } finally {
       setCommitting(false);
     }
@@ -352,7 +435,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
       if (!val || val === orig) continue;
       const res = await renameLabelMutation.mutateAsync({ orig, val });
       if (!res.ok) {
-        alert(res.message || "이름 변경에 실패했어요.");
+        notify(res.message || "이름 변경에 실패했어요.");
         return; // 편집 모드 유지
       }
     }
@@ -374,11 +457,16 @@ export default function WordbookTab({ user, onRequireLogin }) {
         })
       ).count;
     } catch {
-      alert("태그에 포함된 단어 수를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.");
+      notify("태그에 포함된 단어 수를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.");
       return;
     }
-    const ok = window.confirm(
-      `'${name}' 태그를 삭제하면 이 태그의 단어 ${count}개도 함께 삭제됩니다.\n계속하시겠습니까?`
+    const ok = await confirmDialog(
+      `'${name}' 태그를 삭제하면 이 태그의 단어 ${count}개도 함께 삭제됩니다.\n계속하시겠습니까?`,
+      {
+        title: "태그 삭제",
+        confirmLabel: "삭제",
+        variant: "destructive",
+      }
     );
     if (!ok) return;
     deleteLabelMutation.mutate(name);
@@ -437,18 +525,18 @@ export default function WordbookTab({ user, onRequireLogin }) {
       const res = await api.bulkUpdateWords(items);
       if (res.ok === false) {
         // swap 등으로 전체 실패 → 편집 모드 유지(사용자가 고칠 수 있게)
-        alert(res.message || "저장에 실패했어요.");
+        notify(res.message || "저장에 실패했어요.");
         return;
       }
       // 일부 충돌 행은 건너뛰고 저장됨 → 안내
       if (res.conflicts?.length) {
-        alert(res.message);
+        notify(res.message);
       }
       setRowEdit(false);
       setDrafts({});
       await refreshWords();
     } catch {
-      alert("저장 중 오류가 발생했어요.");
+      notify("저장 중 오류가 발생했어요.");
     } finally {
       setSavingAll(false);
     }
@@ -492,7 +580,11 @@ export default function WordbookTab({ user, onRequireLogin }) {
 
   const deleteSelected = async () => {
     if (selected.size === 0) return;
-    const ok = window.confirm(`선택한 ${selected.size}개 단어를 삭제할까요?`);
+    const ok = await confirmDialog(`선택한 ${selected.size}개 단어를 삭제할까요?`, {
+      title: "단어 삭제",
+      confirmLabel: "삭제",
+      variant: "destructive",
+    });
     if (!ok) return;
     const ids = [...selected];
     const idSet = new Set(ids);
@@ -506,14 +598,14 @@ export default function WordbookTab({ user, onRequireLogin }) {
     try {
       const res = await api.bulkDeleteWords(ids);
       if (res.ok === false) {
-        alert(res.message || "삭제에 실패했어요.");
+        notify(res.message || "삭제에 실패했어요.");
         queryClient.setQueryData(queryKeys.words(""), prev); // 롤백
         return;
       }
       queryClient.invalidateQueries({ queryKey: ["label-word-count"] });
       queryClient.invalidateQueries({ queryKey: ["starter-packs"] });
     } catch {
-      alert("삭제 중 오류가 발생했어요.");
+      notify("삭제 중 오류가 발생했어요.");
       queryClient.setQueryData(queryKeys.words(""), prev); // 롤백
     }
   };
@@ -544,7 +636,7 @@ export default function WordbookTab({ user, onRequireLogin }) {
       // 성공: 캐시가 이미 서버와 동일하므로 재조회하지 않음 (깜빡임/되돌림 방지)
     } catch {
       queryClient.setQueryData(queryKeys.words(""), prev); // 롤백
-      alert(
+      notify(
         "순서 저장에 실패했어요. 백엔드(/api/words/reorder)가 최신 코드로 켜져 있는지 확인해주세요."
       );
     }
@@ -1560,6 +1652,11 @@ export default function WordbookTab({ user, onRequireLogin }) {
           </div>
         </div>
       )}
+
+      <WordbookMessageDialog
+        dialog={messageDialog}
+        onClose={closeMessageDialog}
+      />
     </div>
   );
 }
