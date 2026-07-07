@@ -27,6 +27,40 @@ def _word_brief(word: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _format_memory_note(note: str) -> str:
+    clean = " ".join(str(note or "").split()).strip(" .,!?:;。")
+    replacements = {
+        "공부하고싶": "공부하고 싶",
+        "공부하고 싶어": "공부",
+        "공부하고 싶다": "공부",
+        "우선 공부": "우선 학습",
+        "쪽을": "중심으로",
+        "말고": "보다",
+        "하고싶은데": "학습",
+        "하고 싶은데": "학습",
+    }
+    for source, target in replacements.items():
+        clean = clean.replace(source, target)
+    clean = clean.strip(" .,!?:;。")
+    if not clean:
+        return ""
+    if not any(token in clean for token in ("학습", "연습", "회화", "목표", "선호")):
+        clean = f"{clean} 학습"
+    return clean[:120]
+
+
+def _memory_note(memory_notes: list[Any], memory_summaries: list[Any] | None = None) -> str:
+    for item in memory_summaries or []:
+        note = str(item or "").strip()
+        if note:
+            return _format_memory_note(note)
+    for item in memory_notes:
+        note = str(item or "").strip()
+        if note:
+            return _format_memory_note(note)
+    return ""
+
+
 async def build_agent_context(
     session: AsyncSession,
     user_id: str,
@@ -74,9 +108,21 @@ def build_rule_based_suggestions(context: dict[str, Any]) -> dict[str, Any]:
     ]
     weak_words = learning.get("weak_words") or []
     recent_roleplays = learning.get("recent_roleplay_sessions") or []
+    memories = context.get("memories") or {}
+    learning_preferences = memories.get("learning_preferences") if isinstance(memories.get("learning_preferences"), dict) else {}
+    memory_notes = learning_preferences.get("notes") if isinstance(learning_preferences.get("notes"), list) else []
+    memory_summaries = learning_preferences.get("summaries") if isinstance(learning_preferences.get("summaries"), list) else []
 
     cards: list[dict[str, Any]] = []
     actions: list[dict[str, Any]] = []
+    primary_memory_note = _memory_note(memory_notes, memory_summaries)
+
+    if primary_memory_note:
+        cards.append({
+            "title": "저장된 학습 기억",
+            "body": primary_memory_note,
+            "kind": "memory",
+        })
 
     if due_count > 0:
         preview = ", ".join(item["word"] for item in due_words[:5] if item.get("word"))
@@ -127,7 +173,14 @@ def build_rule_based_suggestions(context: dict[str, Any]) -> dict[str, Any]:
         })
 
     message = "오늘 학습 상태를 확인했어요."
-    if due_count > 0:
+    if primary_memory_note and due_count > 0:
+        message = f"{primary_memory_note}을 기준으로 보면, 오늘은 복습 예정 단어 {due_count}개부터 짧게 정리하는 흐름이 좋습니다."
+    elif primary_memory_note and tag_counts:
+        top_tag = max(tag_counts, key=lambda item: int(item.get("count") or 0))
+        message = f"{primary_memory_note}을 기준으로 보면, 지금은 #{top_tag['name']} 태그로 회화 연습을 만들기 좋습니다."
+    elif primary_memory_note:
+        message = f"{primary_memory_note}을 기준으로 오늘 학습을 추천할 수 있어요."
+    elif due_count > 0:
         message = f"복습할 단어가 {due_count}개 있어요. 먼저 짧은 퀴즈로 시작하는 걸 추천합니다."
     elif tag_counts:
         message = "복습 예정 단어는 없지만, 단어장 태그로 회화 연습을 만들 수 있어요."

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from datetime import UTC, datetime
 
 from fastapi import BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +12,7 @@ from backend.agents.graph import run_buddy_agent
 from backend.agents.jobs import create_wordbook_audit_job, run_wordbook_audit_job
 from backend.agents.schemas import AgentAction, AgentCard, AgentResponse, AgentSuggestionResponse
 from backend.agents.tools import execute_agent_action
-from backend.db.repositories import get_agent_job
+from backend.db.repositories import get_agent_job, get_agent_memories, upsert_agent_memory
 
 
 class UnsupportedAgentJob(ValueError):
@@ -21,6 +22,78 @@ class UnsupportedAgentJob(ValueError):
 def _is_weakness_request(message: str) -> bool:
     clean = (message or "").strip()
     return "약점" in clean and any(token in clean for token in ("분석", "알려", "찾아", "뭐", "체크"))
+
+
+def _is_memory_save_request(message: str) -> bool:
+    clean = (message or "").strip()
+    return any(token in clean for token in ("기억해", "기억해줘", "기억해 줘", "저장해줘", "저장해 줘")) and any(
+        token in clean for token in ("공부", "학습", "영어", "목표", "선호", "우선", "약점", "관심")
+    )
+
+
+def _memory_note_from_message(message: str) -> str:
+    note = (message or "").strip()
+    suffixes = ("기억해줘", "기억해 줘", "기억해", "저장해줘", "저장해 줘")
+    for suffix in suffixes:
+        if note.endswith(suffix):
+            note = note[: -len(suffix)].strip(" .,!?:;。")
+            break
+    return note or (message or "").strip()
+
+
+def _memory_summary(note: str) -> str:
+    clean = " ".join(str(note or "").split()).strip(" .,!?:;。")
+    replacements = {
+        "공부하고싶": "공부하고 싶",
+        "공부하고 싶어": "공부",
+        "공부하고 싶다": "공부",
+        "우선 공부": "우선 학습",
+        "쪽을": "중심으로",
+        "말고": "보다",
+        "하고싶은데": "학습",
+        "하고 싶은데": "학습",
+    }
+    for source, target in replacements.items():
+        clean = clean.replace(source, target)
+    clean = clean.strip(" .,!?:;。")
+    if not clean:
+        return "개인 학습 선호 반영"
+    if not any(token in clean for token in ("학습", "연습", "회화", "목표", "선호")):
+        clean = f"{clean} 학습"
+    return clean[:80]
+
+
+async def _save_learning_memory(session: AsyncSession, user_id: str, message: str) -> AgentResponse:
+    memories = await get_agent_memories(session, user_id)
+    current = memories.get("learning_preferences")
+    if not isinstance(current, dict):
+        current = {}
+    notes = current.get("notes") if isinstance(current.get("notes"), list) else []
+    note = _memory_note_from_message(message)
+    summary = _memory_summary(note)
+    clean_notes = [str(item).strip() for item in notes if str(item).strip() and str(item).strip() != note]
+    summaries = current.get("summaries") if isinstance(current.get("summaries"), list) else []
+    clean_summaries = [str(item).strip() for item in summaries if str(item).strip() and str(item).strip() != summary]
+    next_value = {
+        **current,
+        "notes": [note, *clean_notes][:20],
+        "summaries": [summary, *clean_summaries][:20],
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    result = await upsert_agent_memory(session, user_id, "learning_preferences", next_value)
+    if not result.get("ok"):
+        return AgentResponse(message=result.get("message") or "학습 기억을 저장하지 못했습니다.")
+    return AgentResponse(
+        message="기억했습니다. 앞으로 Agent 추천과 답변에서 이 학습 선호를 참고할게요.",
+        cards=[
+            AgentCard(
+                title="저장된 학습 기억",
+                body=summary,
+                kind="memory",
+            )
+        ],
+        tool_results=[{"type": "save_agent_memory", "ok": True, "key": "learning_preferences"}],
+    )
 
 
 def _percent(value: float) -> str:
@@ -153,6 +226,8 @@ async def run_agent_chat(
     clean = message.strip()
     if not clean:
         return AgentResponse(message="무엇을 도와드릴까요?")
+    if _is_memory_save_request(clean):
+        return await _save_learning_memory(session, user_id, clean)
     if _is_weakness_request(clean):
         context = await build_agent_context(session, user_id, current_tab)
         return _weakness_response(context)

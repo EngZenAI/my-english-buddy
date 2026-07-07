@@ -178,47 +178,50 @@ function RecentSearchChips({ items, onSelect, onRemove }) {
   if (items.length === 0) return null;
 
   return (
-    <div className="flex items-start gap-2 pt-2">
-      <span className="shrink-0 pt-1.5 text-xs font-semibold text-slate-500">최근 검색</span>
-      <div className="flex max-h-[5.5rem] min-w-0 flex-1 flex-wrap items-start gap-2 overflow-y-auto pr-1 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-200 hover:[&::-webkit-scrollbar-thumb]:bg-slate-300">
-      {items.map((item) => {
-        const title = item.word || item.query;
-        const subtitle = item.korean || "";
-        return (
-          <span
-            key={getRecentKey(item)}
-            className="group inline-flex max-w-[220px] items-center overflow-hidden rounded-full border border-slate-200 bg-white text-xs shadow-sm transition hover:border-brand-200 hover:bg-brand-50"
-          >
-            <button
-              type="button"
-              onClick={() => onSelect(item)}
-              className="inline-flex min-w-0 items-center gap-2 py-1.5 pl-3 pr-1 text-left"
-            >
-              <span className="min-w-0 truncate font-semibold text-slate-800">
-                {title}
-              </span>
-              {subtitle && (
-                <span className="hidden max-w-24 truncate text-slate-400 sm:inline">
-                  {subtitle}
-                </span>
-              )}
-            </button>
-            <button
-              type="button"
-              aria-label={`${title} 최근 검색 삭제`}
-              onClick={(e) => {
-                e.stopPropagation();
-                onRemove(item);
-              }}
-              className="mr-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </span>
-        );
-      })}
+    <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm shadow-slate-100/70">
+      <div className="mb-2 flex items-center gap-2">
+        <Search className="h-3.5 w-3.5 text-slate-400" />
+        <span className="text-xs font-semibold text-slate-600">최근 검색</span>
       </div>
-    </div>
+      <div className="flex max-h-[5.5rem] min-w-0 flex-wrap items-start gap-2 overflow-y-auto pr-1 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-200 hover:[&::-webkit-scrollbar-thumb]:bg-slate-300">
+        {items.map((item) => {
+          const title = item.word || item.query;
+          const subtitle = item.korean || "";
+          return (
+            <span
+              key={getRecentKey(item)}
+              className="group inline-flex max-w-[220px] items-center overflow-hidden rounded-md border border-slate-200 bg-slate-50 text-xs transition hover:border-brand-200 hover:bg-brand-50"
+            >
+              <button
+                type="button"
+                onClick={() => onSelect(item)}
+                className="inline-flex min-w-0 items-center gap-2 py-1.5 pl-3 pr-1 text-left"
+              >
+                <span className="min-w-0 truncate font-semibold text-slate-800">
+                  {title}
+                </span>
+                {subtitle && (
+                  <span className="hidden max-w-24 truncate text-slate-400 sm:inline">
+                    {subtitle}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                aria-label={`${title} 최근 검색 삭제`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemove(item);
+                }}
+                className="mr-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-white hover:text-slate-700"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
