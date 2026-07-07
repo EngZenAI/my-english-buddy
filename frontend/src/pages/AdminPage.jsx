@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -1080,12 +1080,13 @@ function ArticlesTab({ enabled }) {
     setSelectedId(article.id);
     setDetailOpen(true);
   };
-  const requestDeleteArticle = (article) => {
+  const requestDeleteArticle = useCallback((article) => {
     if (!article?.id || deleteMutation.isPending) return;
-    if (window.confirm("이 뉴스 자료와 관련 학습 세션을 삭제할까요?")) {
+    const title = article.title ? `\n\n${article.title}` : "";
+    if (window.confirm(`이 뉴스 자료와 관련 학습 세션을 삭제할까요?${title}`)) {
       deleteMutation.mutate(article.id);
     }
-  };
+  }, [deleteMutation]);
   const startArticleRefresh = () => {
     setRefreshConfirmOpen(false);
     refreshMutation.mutate({ source_key: feedSourceKey, publish: true, max_items: 1 });
@@ -1154,6 +1155,7 @@ function ArticlesTab({ enabled }) {
       id: "actions",
       header: () => <div className="text-right">작업</div>,
       enableSorting: false,
+      size: 132,
       cell: ({ row }) => (
         <div className="flex justify-end gap-1">
           <Button
@@ -1174,7 +1176,7 @@ function ArticlesTab({ enabled }) {
             type="button"
             variant="ghost"
             size="sm"
-            className="h-8 w-8 p-0 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+            className="h-8 px-2 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
             title="삭제"
             aria-label={`${row.original.title} 삭제`}
             disabled={deleteMutation.isPending}
@@ -1184,11 +1186,12 @@ function ArticlesTab({ enabled }) {
             }}
           >
             {deleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+            <span className="text-xs font-bold">삭제</span>
           </Button>
         </div>
       ),
     },
-  ], [deleteMutation.isPending, publishMutation.isPending]);
+  ], [deleteMutation.isPending, publishMutation.isPending, requestDeleteArticle]);
 
   return (
     <div className="grid gap-4">
@@ -1426,7 +1429,7 @@ function ArticlesTab({ enabled }) {
                 variant="outline"
                 className="border-rose-200 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
                 disabled={deleteMutation.isPending || updateMutation.isPending}
-                onClick={() => requestDeleteArticle({ id: editArticleId })}
+                onClick={() => requestDeleteArticle({ id: editArticleId, title: editForm.title })}
               >
                 {deleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                 삭제
@@ -1470,7 +1473,22 @@ function ArticlesTab({ enabled }) {
 
         <div className="rounded-md border border-slate-200 bg-white">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
-            <span className="text-sm font-bold text-slate-600">자료 목록</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-bold text-slate-600">자료 목록</span>
+              {selected && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="border-rose-200 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+                  disabled={deleteMutation.isPending}
+                  onClick={() => requestDeleteArticle(selected)}
+                >
+                  {deleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                  선택 자료 삭제
+                </Button>
+              )}
+            </div>
             <form
               onSubmit={(event) => {
                 event.preventDefault();
@@ -1497,6 +1515,11 @@ function ArticlesTab({ enabled }) {
               </Button>
             </form>
           </div>
+          {deleteMutation.isError && !editArticleId && (
+            <div className="mx-4 mt-4 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">
+              자료 삭제 실패: {deleteMutation.error.message}
+            </div>
+          )}
           <div className="p-4">
             <DataTable
               columns={articleColumns}
