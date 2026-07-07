@@ -33,7 +33,7 @@ from backend.quiz.schemas import (
     QuizReviewScheduleApplyResponse,
     QuizReviewScheduleItem,
 )
-from backend.usage.tracking import extract_token_usage, track_llm_usage
+from backend.usage.tracking import extract_token_usage, mark_latest_usage_failed, track_llm_usage
 
 logger = logging.getLogger(__name__)
 quiz_llm = llm_module.get_llm("quiz_generate")
@@ -60,8 +60,8 @@ CHOICE_QUESTION_TYPES = {
 }
 SAVED_GRAMMAR_BLANK_CHOICE_ALIASES = {"_".join(("to" + "eic", "part5"))}
 GENERATION_ATTEMPTS = 3
-GENERATION_BATCH_SIZE = 5
-GENERATION_SPLIT_THRESHOLD = 6
+GENERATION_BATCH_SIZE = 2
+GENERATION_SPLIT_THRESHOLD = 2
 WORD_CANDIDATES_PER_QUESTION = 1
 
 class _GeneratedChoice(BaseModel):
@@ -283,7 +283,6 @@ def _is_low_quality_objective_prompt(qtype: str, prompt: str, passage: str, targ
     passage_text = " ".join((passage or "").split())
     prompt_lower = prompt_text.lower()
     passage_lower = passage_text.lower()
-    target_lower = (target or "").strip().lower()
     direct_patterns = (
         "뜻으로 가장 알맞",
         "뜻으로 알맞",
@@ -292,7 +291,7 @@ def _is_low_quality_objective_prompt(qtype: str, prompt: str, passage: str, targ
         "meaning of",
         "the word means",
     )
-    if any(pattern in prompt_lower or pattern in passage_lower for pattern in direct_patterns):
+    if any(pattern in passage_lower for pattern in direct_patterns):
         return True
     if passage_lower.startswith("the word means") or passage_lower.startswith("the word is"):
         return True
@@ -305,7 +304,8 @@ def _is_low_quality_objective_prompt(qtype: str, prompt: str, passage: str, targ
             return True
         if not _choice_text_appears_in_text(target, passage_text):
             return True
-        if target_lower and target_lower in prompt_lower and ("뜻" in prompt_text or "의미" in prompt_text):
+        direct_prompt_without_context = any(pattern in prompt_lower for pattern in direct_patterns) and not passage_text
+        if direct_prompt_without_context:
             return True
     if qtype in {"context_choice", "collocation_choice"}:
         if len(passage_text) < 35:
@@ -667,13 +667,14 @@ def _invoke_quiz_llm(operation: str, prompt_value: Any) -> Any:
     model_name = _active_model_name(operation)
     try:
         response = _quiz_llm(operation).invoke(prompt_value)
-    except QUIZ_LLM_ERRORS:
+    except QUIZ_LLM_ERRORS as exc:
         track_llm_usage(
             feature="quiz",
             operation=operation,
             model_name=model_name,
             input_value=prompt_value,
             success=False,
+            error_message=str(exc),
         )
         raise
     elapsed_ms = round((time.perf_counter() - started) * 1000)
@@ -812,6 +813,11 @@ def _generate_llm_questions(
                 raw_generated = _invoke_quiz_llm("generate_quiz", prompt_value)
                 generated = _parse_generated_quiz(raw_generated)
             except QUIZ_LLM_ERRORS as exc:
+                mark_latest_usage_failed(
+                    feature="quiz",
+                    operation="generate_quiz",
+                    error_message=str(exc),
+                )
                 raw_preview = _raw_text(raw_generated).strip()[:500]
                 logger.warning(
                     "LLM quiz generation batch %s/%s attempt %s failed on model %s: %s; raw_preview=%r",
@@ -894,6 +900,14 @@ async def generate_assignment(
     )
     generated_questions = _generate_llm_questions(quiz_words, goal, target_count)
     if not generated_questions:
+        mark_latest_usage_failed(
+            feature="quiz",
+            operation="generate_quiz",
+            error_message=(
+                "No valid quiz questions were generated after LLM retries. "
+                "The LLM response was empty, invalid JSON, or failed quiz quality validation."
+            ),
+        )
         return QuizGenerateResponse(
             ok=False,
             message=(

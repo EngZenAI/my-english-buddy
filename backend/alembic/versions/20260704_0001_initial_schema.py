@@ -365,6 +365,7 @@ def upgrade() -> None:
         sa.Column("output_tokens", sa.Integer()),
         sa.Column("total_tokens", sa.Integer()),
         sa.Column("success", sa.Boolean(), server_default=sa.text("TRUE")),
+        sa.Column("error_message", sa.Text()),
         sa.Column("created_at", sa.DateTime(), server_default=sa.func.now()),
     )
     op.create_index("ix_api_usage_events_user_created", "api_usage_events", ["user_id", "created_at"])

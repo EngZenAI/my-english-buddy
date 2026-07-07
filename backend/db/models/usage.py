@@ -23,6 +23,7 @@ class ApiUsageEvent(Base):
     output_tokens: Mapped[int | None] = mapped_column(Integer)
     total_tokens: Mapped[int | None] = mapped_column(Integer)
     success: Mapped[bool | None] = mapped_column(Boolean, server_default=text("TRUE"))
+    error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
 
 

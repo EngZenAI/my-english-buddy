@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, TypedDict
 
@@ -16,6 +17,8 @@ from backend.agents.tools import execute_auto_safe_actions, normalize_action
 from backend.exceptions import AGENT_PLAN_ERRORS, JSON_PARSE_ERRORS
 from backend.llm import _invoke_tracked_llm
 from backend.prompts.agent import build_agent_prompt
+
+logger = logging.getLogger(__name__)
 
 
 class AgentState(TypedDict, total=False):
@@ -145,6 +148,8 @@ async def _policy_filter(state: AgentState) -> AgentState:
         actions,
         state.get("context") or {},
     )
+    if state["policy_results"]:
+        logger.info("agent_policy_filtered_actions=%s", state["policy_results"])
     return state
 
 
