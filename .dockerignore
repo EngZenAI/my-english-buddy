@@ -1,0 +1,15 @@
+# 빌드에 불필요/민감 파일 제외 (이미지 가볍게 + 비밀 유출 방지)
+.git
+.env
+.env.*
+!.env.example
+**/__pycache__/
+**/*.pyc
+.venv/
+venv/
+frontend/node_modules/
+frontend/dist/
+.vscode/
+.idea/
+*.log
+.DS_Store
