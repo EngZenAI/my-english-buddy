@@ -15,7 +15,7 @@ from pathlib import Path
 
 from backend.exceptions import FILE_IMPORT_ERRORS
 
-_PACKS_DIR = Path(__file__).parent / "assets" / "starter_packs"
+_PACKS_DIR = Path(__file__).resolve().parents[1] / "assets" / "starter_packs"
 
 
 @lru_cache(maxsize=1)
