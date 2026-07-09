@@ -24,7 +24,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import englishBuddyLogo from "@/assets/english-buddy-logo.svg";
+import { BuddyLogo } from "@/components/common/BuddyIcon";
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -230,12 +230,7 @@ function AgentLauncher({ style, dragging, hasNotice, onClick }) {
       {...attributes}
       {...listeners}
     >
-      <img
-        src={englishBuddyLogo}
-        alt=""
-        aria-hidden="true"
-        className="h-10 w-10"
-      />
+      <BuddyLogo className="h-10 w-10" />
       {hasNotice && <span className="absolute right-0 top-0 h-3 w-3 rounded-full bg-rose-500 ring-2 ring-white" />}
     </button>
   );
@@ -349,7 +344,7 @@ export default function AgentPanel({
         className="fixed bottom-20 right-3 z-40 flex h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 shadow-lg hover:bg-slate-50 md:bottom-6"
         aria-label="최소화된 Buddy Agent 복원"
       >
-        <img src={englishBuddyLogo} alt="" aria-hidden="true" className="h-6 w-6" />
+        <BuddyLogo className="h-6 w-6" />
         Agent
       </button>
     );
@@ -377,12 +372,7 @@ export default function AgentPanel({
           <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
             <div className="flex items-center gap-2">
               <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white">
-                <img
-                  src={englishBuddyLogo}
-                  alt=""
-                  aria-hidden="true"
-                  className="h-8 w-8"
-                />
+                <BuddyLogo className="h-8 w-8" />
               </span>
               <div>
                 <div className="text-sm font-semibold text-slate-900">Buddy Agent</div>

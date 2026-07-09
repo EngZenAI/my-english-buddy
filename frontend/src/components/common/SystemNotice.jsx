@@ -1,5 +1,5 @@
-import englishBuddyLogo from "../../assets/english-buddy-logo.svg";
 import { Alert, AlertDescription } from "../ui/alert";
+import { BuddyLogo } from "./BuddyIcon";
 
 export default function SystemNotice({ children, className = "", icon = true, action = null }) {
   return (
@@ -8,13 +8,8 @@ export default function SystemNotice({ children, className = "", icon = true, ac
     >
       <div className="flex min-w-0 items-center gap-3">
         {icon && (
-          <img
-            src={englishBuddyLogo}
-            alt=""
-            className="h-9 w-9 shrink-0"
-            aria-hidden="true"
-          />
-        )}
+        <BuddyLogo className="h-9 w-9 shrink-0" />
+      )}
         <AlertDescription className="max-w-2xl text-sm font-semibold leading-6 text-slate-900">
           {children}
         </AlertDescription>

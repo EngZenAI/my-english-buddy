@@ -1,6 +1,6 @@
 import { ChevronLeft, User, LogIn, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import englishBuddyLogo from "@/assets/english-buddy-logo.svg";
+import { BuddyLogo } from "@/components/common/BuddyIcon";
 
 export default function MobileHeader({
   user,
@@ -29,13 +29,7 @@ export default function MobileHeader({
         {isHome ? (
           <span className="flex min-w-0 items-center gap-2 rounded-lg text-left">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center">
-              <img
-                src={englishBuddyLogo}
-                alt=""
-                aria-hidden="true"
-                className="block h-9 w-9 drop-shadow-[0_8px_18px_rgba(47,125,115,0.18)]"
-                draggable="false"
-              />
+              <BuddyLogo className="block h-9 w-9 drop-shadow-[0_8px_18px_rgba(47,125,115,0.18)]" />
             </span>
             <span className="truncate text-lg font-extrabold tracking-tight text-slate-900">
               English Buddy

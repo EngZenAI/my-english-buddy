@@ -85,6 +85,7 @@ async def get_account_status(session: AsyncSession, user_id: str) -> dict:
             User.hashed_password,
             User.is_active,
             User.is_verified,
+            User.buddy_icon,
         ).where(User.id == user_uuid)
     )
     user = dict(user_result.mappings().first() or {})
@@ -117,6 +118,7 @@ async def get_account_status(session: AsyncSession, user_id: str) -> dict:
         "email": user.get("email") or "",
         "is_active": bool(user.get("is_active", True)),
         "is_verified": bool(user.get("is_verified", False)),
+        "buddy_icon": user.get("buddy_icon") or "cat",
         "has_password": has_password,
         "login_methods": login_methods,
         "oauth_accounts": oauth_accounts,
@@ -146,6 +148,24 @@ async def update_user_password_hash(
         await session.rollback()
         raise ValueError("Account not found")
     await session.commit()
+
+
+async def update_user_buddy_icon(
+    session: AsyncSession,
+    user_id: str,
+    buddy_icon: str,
+) -> str:
+    clean_icon = (buddy_icon or "cat").strip().lower()
+    result = await session.execute(
+        update(User)
+        .where(User.id == _uuid(user_id))
+        .values(buddy_icon=clean_icon)
+    )
+    if result.rowcount != 1:
+        await session.rollback()
+        raise ValueError("Account not found")
+    await session.commit()
+    return clean_icon
 
 
 async def disconnect_oauth_account(
