@@ -54,6 +54,34 @@ def _is_contextual_roleplay_action(action: AgentAction, context: dict[str, Any])
     return bool(tag and tag in _context_tags_with_words(context))
 
 
+def _normalize_roleplay_action(action: AgentAction, context: dict[str, Any]) -> AgentAction | None:
+    payload = dict(action.payload or {})
+    scenario = str(payload.get("scenario") or "").strip()
+    situation = str(payload.get("situation") or "").strip()
+    has_situation = 10 <= len(situation) <= 1200
+
+    if scenario == "tag":
+        tag = str(payload.get("tag") or "").strip()
+        if tag and tag in _context_tags_with_words(context):
+            return action
+        if has_situation:
+            payload["scenario"] = "general"
+            payload["tag"] = None
+            action.payload = payload
+            return action
+        return None
+
+    if scenario in {"general", "opic"}:
+        return action if has_situation else None
+
+    if has_situation:
+        payload["scenario"] = "general"
+        payload["tag"] = None
+        action.payload = payload
+        return action
+    return None
+
+
 def _is_safe_client_action(action: AgentAction, context: dict[str, Any]) -> bool:
     if action.type == OPEN_TAB:
         return str((action.payload or {}).get("tab") or "").strip() in PASSIVE_TABS
@@ -71,6 +99,16 @@ def filter_agent_actions(
     kept: list[AgentAction] = []
     filtered: list[dict[str, Any]] = []
     for action in actions:
+        label = action.label
+        if action.type == START_ROLEPLAY_WITH_SITUATION:
+            action = _normalize_roleplay_action(action, context)
+            if action is None:
+                filtered.append({
+                    "type": START_ROLEPLAY_WITH_SITUATION,
+                    "label": label,
+                    "reason": "client_action_policy",
+                })
+                continue
         if _is_safe_client_action(action, context):
             kept.append(action)
             continue

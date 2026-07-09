@@ -5,6 +5,7 @@ from fastapi_users import schemas
 
 class UserRead(schemas.BaseUser[uuid.UUID]):
     avatar_url: str | None = None
+    buddy_icon: str = "cat"
 
 
 class UserCreate(schemas.BaseUserCreate):

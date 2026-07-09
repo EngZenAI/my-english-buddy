@@ -5,6 +5,7 @@ from backend.db.repositories.account import (
     get_mypage_learning,
     get_mypage_overview,
     get_user_password_hash,
+    update_user_buddy_icon,
     update_user_password_hash,
 )
 from backend.db.repositories.admin import (

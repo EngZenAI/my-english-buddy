@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Lightbulb, UserRound } from "lucide-react";
-import englishBuddyLogo from "@/assets/english-buddy-logo.svg";
+import { BuddyLogo } from "@/components/common/BuddyIcon";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 
@@ -33,7 +33,7 @@ function MessageAvatar({ role, user, className }) {
         {isUser ? (
           user?.email ? getUserInitials(user) : <UserRound className="h-4 w-4" />
         ) : (
-          <img src={englishBuddyLogo} alt="" aria-hidden="true" className="h-5 w-5" />
+          <BuddyLogo className="h-5 w-5" />
         )}
       </AvatarFallback>
     </Avatar>

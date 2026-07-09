@@ -1,5 +1,4 @@
 import { ShieldCheck } from "lucide-react";
-import englishBuddyLogo from "@/assets/english-buddy-logo.svg";
 import {
   Card,
   CardContent,
@@ -8,6 +7,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { BuddyLogo } from "@/components/common/BuddyIcon";
 import { cn } from "@/lib/utils";
 
 export default function AuthCard({
@@ -35,13 +35,7 @@ export default function AuthCard({
                 aria-label="홈으로 이동"
               >
                 <span className="flex h-14 w-14 shrink-0 items-center justify-center">
-                  <img
-                    src={englishBuddyLogo}
-                    alt=""
-                    aria-hidden="true"
-                    className="h-14 w-14"
-                    draggable="false"
-                  />
+                  <BuddyLogo className="h-14 w-14" />
                 </span>
                 <div className="min-w-0">
                   <p className="truncate text-2xl font-extrabold tracking-normal text-[#0f8b83]">

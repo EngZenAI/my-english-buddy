@@ -15,6 +15,7 @@ import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import MyPage from "./pages/MyPage";
 import AdminPage from "./pages/AdminPage";
 import AgentPanel from "@/components/agent/AgentPanel";
+import { BuddyIconProvider } from "@/components/common/BuddyIcon";
 import {
   OPEN_TAB,
   START_QUIZ_WITH_GOAL,
@@ -360,7 +361,8 @@ export default function App() {
     <LoadingPanel message="로그인 완료 후 이동하고 있습니다." />
   );
   return (
-    <AppShell>
+    <BuddyIconProvider user={user}>
+      <AppShell>
       {showMainNav && (
         <ResponsiveNav
           tabs={TABS}
@@ -454,6 +456,7 @@ export default function App() {
         onRequireLogin={() => startLogin({ path: VIEW_PATHS.home, tab })}
         onAction={handleAgentAction}
       />
-    </AppShell>
+      </AppShell>
+    </BuddyIconProvider>
   );
 }

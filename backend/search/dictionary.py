@@ -112,6 +112,7 @@ def search_word(word: str) -> dict:
             provider="free_dictionary_api",
             input_value=key,
             success=False,
+            error_message=str(e),
         )
         print(f"Dictionary API 오류: {e}")
         return {"meanings": [], "english_def": "", "example": "", "phonetic": "", "audio_url": ""}
@@ -143,6 +144,7 @@ def _translate(text: str, source: str, target: str) -> str:
                 input_value=text,
                 output_value=res,
                 success=False,
+                error_message=res.get("error", {}).get("message") or "Google Translate API returned an error.",
             )
             print(f"Google API 오류: {res['error']['message']}")
             return "번역 실패"
@@ -163,6 +165,7 @@ def _translate(text: str, source: str, target: str) -> str:
             provider="google_translate",
             input_value=text,
             success=False,
+            error_message=str(e),
         )
         print(f"번역 오류: {e}")
         return "번역 실패"
@@ -217,6 +220,7 @@ def _translate_many(texts: list[str], source: str, target: str) -> list[str]:
                 output_value=res,
                 units=len(missing),
                 success=False,
+                error_message=res.get("error", {}).get("message") or "Google Translate API returned an error.",
             )
             print(f"Google API 오류: {res['error']['message']}")
             for first_index, _text, key in missing:
@@ -252,6 +256,7 @@ def _translate_many(texts: list[str], source: str, target: str) -> list[str]:
             input_value=[text for _, text, _ in missing],
             units=len(missing),
             success=False,
+            error_message=str(e),
         )
         print(f"번역 오류: {e}")
         for _first_index, _text, key in missing:

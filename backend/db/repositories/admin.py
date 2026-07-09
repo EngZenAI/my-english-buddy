@@ -41,6 +41,7 @@ async def record_api_usage_events(
                 "output_tokens": event.get("output_tokens"),
                 "total_tokens": event.get("total_tokens"),
                 "success": bool(event.get("success", True)),
+                "error_message": event.get("error_message") or "",
             }
         )
 
@@ -50,12 +51,12 @@ async def record_api_usage_events(
                 text(
                     """INSERT INTO api_usage_events
                            (user_id, feature, operation, provider, model, units,
-                            input_chars, output_chars, input_tokens, output_tokens,
-                            total_tokens, success)
+                           input_chars, output_chars, input_tokens, output_tokens,
+                            total_tokens, success, error_message)
                        VALUES
                            (:user_id, :feature, :operation, :provider, :model, :units,
                             :input_chars, :output_chars, :input_tokens, :output_tokens,
-                            :total_tokens, :success)"""
+                            :total_tokens, :success, :error_message)"""
                 ),
                 rows,
             )
@@ -216,12 +217,14 @@ async def get_admin_api_usage(
             """SELECT feature, operation, provider, model,
                       COALESCE(SUM(units), 0)::int AS request_count,
                       COALESCE(SUM(CASE WHEN success THEN 0 ELSE units END), 0)::int AS failed_count,
-                      MAX(created_at) AS last_seen_at
+                      MAX(created_at) AS last_seen_at,
+                      (array_remove(array_agg(NULLIF(error_message, '') ORDER BY created_at DESC), NULL))[1]
+                          AS error_message
                FROM api_usage_events
                WHERE created_at >= CAST(:start_date AS date)
                  AND created_at < CAST(:end_date AS date)
+                 AND success = FALSE
                GROUP BY feature, operation, provider, model
-               HAVING COALESCE(SUM(CASE WHEN success THEN 0 ELSE units END), 0) > 0
                ORDER BY failed_count DESC, request_count DESC
                LIMIT 8"""
         ),

@@ -170,7 +170,7 @@ async def get_current_user_from_token(
     token: str,
 ) -> dict[str, str | bool] | None:
     result = await session.execute(
-        select(User.id, User.email, User.is_superuser, User.avatar_url)
+        select(User.id, User.email, User.is_superuser, User.avatar_url, User.buddy_icon)
         .join(AccessToken, User.id == AccessToken.user_id)
         .where(
             AccessToken.token == token,
@@ -186,6 +186,7 @@ async def get_current_user_from_token(
         "email": user.email,
         "is_superuser": bool(user.is_superuser),
         "avatar_url": user.avatar_url,
+        "buddy_icon": user.buddy_icon or "cat",
     } if user else None
 
 

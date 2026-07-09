@@ -85,6 +85,7 @@ Rules:
 - Write prompts and explanations in Korean. Write passages/examples in English.
 - Do not reveal the answer in the prompt.
 - Respect the user's instruction if present.
+- Use concise reasoning and write the final JSON immediately.
 - Return only one valid JSON object that matches the schema. Do not return
   markdown fences, comments, prose, or null.
 
