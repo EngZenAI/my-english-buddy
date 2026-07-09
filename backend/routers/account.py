@@ -10,10 +10,11 @@ from backend.db.repositories import (
     get_mypage_learning,
     get_mypage_overview,
     get_user_password_hash,
+    update_user_buddy_icon,
     update_user_password_hash,
 )
 from backend.routers.common import CurrentUserDep
-from backend.schemas.account import AccountPasswordIn
+from backend.schemas.account import AccountIconIn, AccountPasswordIn
 
 router = APIRouter(tags=["account"])
 
@@ -88,6 +89,24 @@ async def update_account_password(
         password_helper.hash(new_password),
     )
     return {"ok": True, "has_password": True}
+
+
+@router.patch(
+    "/account/icon",
+    summary="Agent 및 앱 아이콘 설정",
+    description="현재 사용자의 English Buddy/Agent 아이콘 선택값을 저장합니다.",
+)
+async def update_account_icon(
+    payload: AccountIconIn,
+    session: SessionDep,
+    _user: CurrentUserDep,
+):
+    buddy_icon = await update_user_buddy_icon(
+        session,
+        _user["id"],
+        payload.buddy_icon,
+    )
+    return {"ok": True, "buddy_icon": buddy_icon}
 
 
 @router.delete(

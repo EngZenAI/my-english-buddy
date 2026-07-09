@@ -2,8 +2,10 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bell,
+  Bot,
   ChevronDown,
   ChevronRight,
+  Check,
   LockKeyhole,
   Mail,
   UserMinus,
@@ -14,6 +16,7 @@ import { EmptyState, SkeletonBlock } from "../components/AsyncState";
 import MemberNotice from "../components/MemberNotice";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { BuddyLogo, BUDDY_ICON_OPTIONS, useBuddyIcon } from "@/components/common/BuddyIcon";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -321,11 +324,13 @@ function ActivityPanel({ query }) {
 
 function AccountPanel({ user, onOAuthStart }) {
   const queryClient = useQueryClient();
+  const { buddyIcon, setBuddyIconPreference } = useBuddyIcon();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [status, setStatus] = useState("");
   const [passwordOpen, setPasswordOpen] = useState(false);
+  const [iconOpen, setIconOpen] = useState(false);
   const accountQuery = useQuery({
     queryKey: queryKeys.accountStatus,
     queryFn: api.accountStatus,
@@ -374,6 +379,25 @@ function AccountPanel({ user, onOAuthStart }) {
     },
     onError: (error) => {
       setStatus(getErrorDetail(error, "Google 연결을 해제하지 못했습니다."));
+    },
+  });
+
+  const iconMutation = useMutation({
+    mutationFn: (nextIcon) => api.updateAccountIcon(nextIcon),
+    onSuccess: async (data) => {
+      const nextIcon = setBuddyIconPreference(data.buddy_icon);
+      setStatus("Agent 아이콘이 변경되었습니다.");
+      queryClient.setQueryData(queryKeys.me, (old) => {
+        if (!old?.user) return old;
+        return { ...old, user: { ...old.user, buddy_icon: nextIcon } };
+      });
+      queryClient.setQueryData(queryKeys.accountStatus, (old) => (
+        old ? { ...old, buddy_icon: nextIcon } : old
+      ));
+      await queryClient.invalidateQueries({ queryKey: queryKeys.accountStatus });
+    },
+    onError: (error) => {
+      setStatus(getErrorDetail(error, "Agent 아이콘을 저장하지 못했습니다."));
     },
   });
 
@@ -544,6 +568,65 @@ function AccountPanel({ user, onOAuthStart }) {
                   </Button>
                 </div>
               </form>
+            </div>
+          )}
+
+          <AccountRow
+            icon={
+              <RowIcon>
+                <Bot className="h-4 w-4" />
+              </RowIcon>
+            }
+            title="Agent 아이콘"
+            description="Buddy Agent와 앱 로고에 사용할 아이콘을 고릅니다."
+            meta={
+              BUDDY_ICON_OPTIONS.find((option) => option.id === buddyIcon)?.shortLabel || "고양이"
+            }
+            metaTone="success"
+            onClick={() => setIconOpen((open) => !open)}
+            expanded={iconOpen}
+            disabled={iconMutation.isPending}
+          />
+
+          {iconOpen && (
+            <div className="bg-slate-50 px-5 py-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                {BUDDY_ICON_OPTIONS.map((option) => {
+                  const selected = option.id === buddyIcon;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => {
+                        setStatus("");
+                        iconMutation.mutate(option.id);
+                      }}
+                      disabled={iconMutation.isPending || selected}
+                      className={`flex items-center gap-3 rounded-lg border bg-white p-3 text-left shadow-sm transition ${
+                        selected
+                          ? "border-emerald-300 ring-2 ring-emerald-100"
+                          : "border-slate-200 hover:border-emerald-200 hover:bg-emerald-50"
+                      } disabled:cursor-not-allowed disabled:opacity-75`}
+                    >
+                      <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-slate-50">
+                        <BuddyLogo icon={option.id} className="h-10 w-10" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-semibold text-slate-900">
+                          {option.label}
+                        </span>
+                        <span className="mt-0.5 block text-xs leading-5 text-slate-500">
+                          {option.description}
+                        </span>
+                      </span>
+                      {selected && <Check className="h-4 w-4 text-emerald-600" />}
+                    </button>
+                  );
+                })}
+              </div>
+              {iconMutation.isPending && (
+                <p className="mt-3 text-xs text-slate-500">아이콘을 저장하는 중입니다.</p>
+              )}
             </div>
           )}
 

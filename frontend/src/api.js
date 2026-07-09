@@ -38,6 +38,11 @@ export const api = {
         new_password: newPassword,
       }),
     }),
+  updateAccountIcon: (buddyIcon) =>
+    jsonFetch("/api/account/icon", {
+      method: "PATCH",
+      body: JSON.stringify({ buddy_icon: buddyIcon }),
+    }),
   disconnectOAuth: (provider) =>
     jsonFetch(`/api/account/oauth/${encodeURIComponent(provider)}`, {
       method: "DELETE",

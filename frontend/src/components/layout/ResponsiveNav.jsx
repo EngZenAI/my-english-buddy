@@ -17,9 +17,9 @@ import {
   ShieldCheck,
   Video,
 } from "lucide-react";
-import englishBuddyLogo from "@/assets/english-buddy-logo.svg";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { BuddyLogo } from "@/components/common/BuddyIcon";
 import { Separator } from "@/components/ui/separator";
 import {
   DropdownMenu,
@@ -131,13 +131,7 @@ export default function ResponsiveNav({
                   title="English Buddy"
                 >
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center">
-                    <img
-                      src={englishBuddyLogo}
-                      alt=""
-                      aria-hidden="true"
-                      className="block h-10 w-10 drop-shadow-[0_8px_18px_rgba(47,125,115,0.18)]"
-                      draggable="false"
-                    />
+                    <BuddyLogo className="block h-10 w-10 drop-shadow-[0_8px_18px_rgba(47,125,115,0.18)]" />
                   </span>
                   <span className="truncate text-xl font-extrabold tracking-tight text-slate-900">
                     English Buddy
@@ -304,13 +298,7 @@ export default function ResponsiveNav({
               title="English Buddy"
             >
               <span className="flex h-9 w-9 shrink-0 items-center justify-center">
-                <img
-                  src={englishBuddyLogo}
-                  alt=""
-                  aria-hidden="true"
-                  className="block h-9 w-9 drop-shadow-[0_8px_18px_rgba(47,125,115,0.18)]"
-                  draggable="false"
-                />
+                  <BuddyLogo className="block h-9 w-9 drop-shadow-[0_8px_18px_rgba(47,125,115,0.18)]" />
               </span>
               <span className="truncate text-lg font-extrabold tracking-tight text-slate-900">
                 English Buddy

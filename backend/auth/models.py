@@ -22,6 +22,7 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
     __tablename__ = "users"
 
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    buddy_icon: Mapped[str] = mapped_column(String(length=32), nullable=False, default="cat")
 
     oauth_accounts: Mapped[list[OAuthAccount]] = relationship(
         "OAuthAccount", lazy="joined"
