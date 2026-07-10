@@ -18,15 +18,25 @@ from backend.usage.pricing import estimate_llm_cost_usd
 logger = logging.getLogger(__name__)
 
 
+def _nonnegative_int(value: Any, *, nullable: bool = False) -> int | None:
+    if value is None and nullable:
+        return None
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return None if nullable else 0
+
+
 async def record_api_usage_events(
     user_id: str | None,
     events: list[dict[str, Any]],
-) -> None:
+) -> bool:
     if not user_id or not events:
-        return
+        return True
 
     rows = []
     for event in events:
+        raw_units = event.get("units")
         rows.append(
             {
                 "user_id": user_id,
@@ -34,12 +44,13 @@ async def record_api_usage_events(
                 "operation": event.get("operation") or "unknown",
                 "provider": event.get("provider") or "",
                 "model": event.get("model") or "",
-                "units": max(1, int(event.get("units") or 1)),
+                "units": max(0, int(1 if raw_units is None else raw_units)),
                 "input_chars": max(0, int(event.get("input_chars") or 0)),
                 "output_chars": max(0, int(event.get("output_chars") or 0)),
-                "input_tokens": event.get("input_tokens"),
-                "output_tokens": event.get("output_tokens"),
-                "total_tokens": event.get("total_tokens"),
+                "input_tokens": _nonnegative_int(event.get("input_tokens"), nullable=True),
+                "output_tokens": _nonnegative_int(event.get("output_tokens"), nullable=True),
+                "total_tokens": _nonnegative_int(event.get("total_tokens"), nullable=True),
+                "usage_group_id": (str(event.get("usage_group_id") or "").strip()[:200] or None),
                 "success": bool(event.get("success", True)),
                 "error_message": event.get("error_message") or "",
             }
@@ -52,16 +63,19 @@ async def record_api_usage_events(
                     """INSERT INTO api_usage_events
                            (user_id, feature, operation, provider, model, units,
                            input_chars, output_chars, input_tokens, output_tokens,
-                            total_tokens, success, error_message)
+                            total_tokens, usage_group_id, success, error_message)
                        VALUES
                            (:user_id, :feature, :operation, :provider, :model, :units,
                             :input_chars, :output_chars, :input_tokens, :output_tokens,
-                            :total_tokens, :success, :error_message)"""
+                            :total_tokens, :usage_group_id, :success, :error_message)
+                       ON CONFLICT DO NOTHING"""
                 ),
                 rows,
             )
+        return True
     except SQLALCHEMY_ERRORS as exc:
         logger.warning("Failed to record API usage events: %s", exc)
+        return False
 
 
 async def get_admin_api_usage(
@@ -155,13 +169,26 @@ async def get_admin_api_usage(
     result = await session.execute(
         text(
             """SELECT feature, operation, provider, model,
-                      COALESCE(SUM(units), 0)::int AS request_count,
+                      (
+                          COUNT(DISTINCT usage_group_id)
+                              FILTER (WHERE usage_group_id IS NOT NULL)
+                          + COALESCE(SUM(units) FILTER (WHERE usage_group_id IS NULL), 0)
+                      )::int AS request_count,
                       COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
                       COALESCE(SUM(output_tokens), 0)::int AS output_tokens,
                       COALESCE(SUM(total_tokens), 0)::int AS total_tokens,
                       COALESCE(SUM(input_chars), 0)::int AS input_chars,
                       COALESCE(SUM(output_chars), 0)::int AS output_chars,
-                      COALESCE(SUM(CASE WHEN success THEN 0 ELSE units END), 0)::int AS failed_count,
+                      (
+                          COUNT(DISTINCT usage_group_id)
+                              FILTER (WHERE usage_group_id IS NOT NULL AND success = FALSE)
+                          + COALESCE(
+                              SUM(units) FILTER (
+                                  WHERE usage_group_id IS NULL AND success = FALSE
+                              ),
+                              0
+                          )
+                      )::int AS failed_count,
                       MAX(created_at) AS last_used_at
                FROM api_usage_events
                WHERE created_at >= CAST(:start_date AS date)
@@ -253,8 +280,8 @@ async def get_admin_api_usage(
         "providers": providers,
         "anomalies": anomalies,
         "summary": {
-            "request_count": sum(int(item.get("request_count") or 0) for item in usage_rows),
-            "failed_count": sum(int(item.get("failed_count") or 0) for item in usage_rows),
+            "request_count": sum(int(item.get("request_count") or 0) for item in hourly),
+            "failed_count": sum(int(item.get("failed_count") or 0) for item in hourly),
             "estimated_cost_usd": round(sum(float(item.get("estimated_cost_usd") or 0) for item in usage_rows), 4),
         },
     }

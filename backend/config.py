@@ -31,6 +31,15 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = True
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""
+    roleplay_api_key: str = ""
+    openai_api_key: str = ""
+    openai_realtime_model: str = "gpt-realtime-2.1-mini"
+    openai_realtime_voice: str = "marin"
+    openai_realtime_transcribe_model: str = "gpt-4o-mini-transcribe"
+
+    @property
+    def effective_roleplay_api_key(self) -> str:
+        return self.roleplay_api_key or self.openai_api_key
 
     @property
     def async_database_url(self) -> str:

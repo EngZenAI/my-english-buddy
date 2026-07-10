@@ -10,7 +10,6 @@ import {
   Headphones,
   Mic,
   MicOff,
-  Pause,
   Play,
   RotateCcw,
   Send,
@@ -42,12 +41,6 @@ import {
   useMessageScroller,
 } from "@/components/ui/message-scroller";
 import { MessageAvatar } from "@/components/ui/message";
-import {
-  getCachedRoleplayAudio,
-  normalizeTtsText,
-  roleplayTtsCacheKey,
-  saveCachedRoleplayAudio,
-} from "../lib/roleplayAudioCache";
 
 // ──────────────────────────────────────────────────────────────────────
 // 롤플레잉 = 실전 영어 회화 연습 (단어 복습이 아님).
@@ -58,10 +51,47 @@ import {
 // ──────────────────────────────────────────────────────────────────────
 
 // 백엔드 history 항목은 [user, bot, coaching] (coaching은 봇 답변에 붙는 한국어 코칭).
-const ROLEPLAY_TTS_MODEL = "gemini-2.5-flash-preview-tts";
-const ROLEPLAY_TTS_VOICE = "Kore";
 const VOICE_MAX_LISTEN_MS = 45_000;
 const VOICE_IDLE_STOP_MS = 10_000;
+const REALTIME_USAGE_QUEUE_PREFIX = "english-buddy:realtime-usage:";
+const REALTIME_USAGE_QUEUE_MAX = 200;
+const REALTIME_USAGE_QUEUE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function realtimeUsageQueueKey(userId) {
+  return `${REALTIME_USAGE_QUEUE_PREFIX}${userId}`;
+}
+
+function readRealtimeUsageQueue(userId) {
+  if (!userId || typeof window === "undefined") return [];
+  try {
+    const value = JSON.parse(window.localStorage.getItem(realtimeUsageQueueKey(userId)) || "[]");
+    if (!Array.isArray(value)) return [];
+    const cutoff = Date.now() - REALTIME_USAGE_QUEUE_TTL_MS;
+    return value.filter((item) => Number(item?.queuedAt || 0) >= cutoff);
+  } catch {
+    return [];
+  }
+}
+
+function writeRealtimeUsageQueue(userId, queue) {
+  if (!userId || typeof window === "undefined") return;
+  try {
+    const key = realtimeUsageQueueKey(userId);
+    const next = queue.slice(-REALTIME_USAGE_QUEUE_MAX);
+    if (next.length) window.localStorage.setItem(key, JSON.stringify(next));
+    else window.localStorage.removeItem(key);
+  } catch {
+    // Usage tracking must never interrupt the conversation UX.
+  }
+}
+
+function newRealtimeUsageGroupId(prefix, sourceId = "") {
+  const fallback =
+    typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${prefix}:${sourceId || fallback}`.slice(0, 200);
+}
 
 function RoleplayScrollEffect({ signal }) {
   const { scrollToEnd, shouldStickToEndRef } = useMessageScroller();
@@ -243,7 +273,6 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
   const [voiceTranscript, setVoiceTranscript] = useState("");
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
-  const [ttsSource, setTtsSource] = useState("idle"); // idle | generating | cache | generated | browser | error
   const [voiceError, setVoiceError] = useState("");
   const [voiceNotice, setVoiceNotice] = useState("");
   const [autoSpeak, setAutoSpeak] = useState(true);
@@ -256,18 +285,34 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
   const [savedCount, setSavedCount] = useState(null); // 저장 결과 안내
   const [finishNoticeDismissed, setFinishNoticeDismissed] = useState(false);
   const [streaming, setStreaming] = useState(false);
+  const [realtimeConnecting, setRealtimeConnecting] = useState(false);
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [voiceFallbackActive, setVoiceFallbackActive] = useState(false);
   const [scrollSignal, setScrollSignal] = useState(0);
   const [sessionStartedAt, setSessionStartedAt] = useState(null);
   const [elapsedNow, setElapsedNow] = useState(() => Date.now());
+  const messagesRef = useRef([]);
+  const sessionRef = useRef(null);
   const recognitionRef = useRef(null);
+  const recognitionShouldSendRef = useRef(false);
   const listeningIntentRef = useRef(false);
   const recognitionRestartTimerRef = useRef(null);
   const voiceMaxTimerRef = useRef(null);
   const voiceIdleTimerRef = useRef(null);
   const voiceTranscriptRef = useRef("");
   const speechSessionBaseRef = useRef("");
-  const audioRef = useRef(null);
-  const audioCleanupRef = useRef(null);
+  const realtimePeerRef = useRef(null);
+  const realtimeDataChannelRef = useRef(null);
+  const realtimeMediaStreamRef = useRef(null);
+  const realtimeRemoteAudioRef = useRef(null);
+  const realtimeAssistantIdRef = useRef(null);
+  const realtimeAssistantTextRef = useRef("");
+  const realtimePendingUserTextRef = useRef("");
+  const realtimeCoachingKeyRef = useRef("");
+  const realtimeModelRef = useRef("");
+  const realtimeTranscriptionModelRef = useRef("");
+  const realtimeConnectionUsageIdRef = useRef("");
+  const realtimeUsageFlushRef = useRef(false);
   const startAbortRef = useRef(null);
   const streamAbortRef = useRef(null);
   const requestSeqRef = useRef(0);
@@ -305,40 +350,76 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
   const active = messages.length > 0;
   const isVoiceTab = subTab === "voice";
   useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+
+  useEffect(() => {
     voiceTranscriptRef.current = voiceTranscript;
   }, [voiceTranscript]);
 
-  const latestAssistantText = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      if (messages[i].role === "bot" && messages[i].text) return messages[i].text;
-    }
-    return "";
-  }, [messages]);
-  const voicePhase = streaming
+  const voicePhase = realtimeConnecting
     ? {
-        title: "AI가 답변을 작성 중입니다",
-        description: "텍스트 답변이 먼저 도착하고, 이어서 AI 음성을 준비합니다.",
+        title: "음성 대화를 준비하고 있어요",
+        description: "마이크를 연결하고 Tutor를 불러오고 있어요.",
         tone: "primary",
       }
-    : ttsSource === "generating"
-      ? {
-          title: "AI 음성을 생성 중입니다",
-          description: "처음 듣는 문장은 몇 초 걸릴 수 있습니다. 준비되면 자동으로 재생됩니다.",
-          tone: "primary",
-        }
-      : speaking
+    : realtimeConnected
+      ? streaming
         ? {
-            title:
-              ttsSource === "browser"
-                ? "기기 내장 음성으로 재생 중입니다"
-                : "AI 음성을 재생 중입니다",
-            description:
-              ttsSource === "cache"
-                ? "AI 답변을 다시 읽고 있습니다."
-                : ttsSource === "browser"
-                  ? "AI 음성 대신 브라우저/기기 내장 음성을 사용 중입니다."
-                  : "AI 답변을 읽고 있습니다.",
-            tone: ttsSource === "browser" ? "warning" : "primary",
+            title: "Tutor가 말하고 있습니다",
+            description: "중간에 말하면 자연스럽게 끊고 이어서 대화할 수 있습니다.",
+            tone: "primary",
+          }
+        : listening
+          ? {
+              title: "듣고 있어요",
+              description: "영어로 편하게 말하면 Tutor가 바로 답해요.",
+              tone: "destructive",
+            }
+          : {
+              title: "말할 준비가 됐어요",
+              description: "마이크가 켜져 있어요. 영어로 말해보세요.",
+              tone: "primary",
+            }
+      : voiceFallbackActive
+        ? streaming
+          ? {
+              title: "Tutor가 답변을 준비 중입니다",
+              description: "기존 롤플레잉 모델의 답변을 음성으로 재생합니다.",
+              tone: "primary",
+            }
+          : speaking
+            ? {
+                title: "Tutor가 말하고 있습니다",
+                description: "Tutor의 답변을 음성으로 들려드리고 있어요.",
+                tone: "primary",
+              }
+            : listening
+              ? {
+                  title: "듣고 있습니다",
+                  description: "말을 마치면 인식된 문장을 자동으로 전송합니다.",
+                  tone: "destructive",
+                }
+              : {
+                  title: "말할 준비가 됐어요",
+                  description: "말하기 버튼을 누르거나 문장을 직접 입력해보세요.",
+                  tone: "warning",
+                }
+        : streaming
+    ? {
+        title: "Tutor가 답변을 준비하고 있어요",
+        description: "답변이 도착하면 영어 음성으로 들려드릴게요.",
+        tone: "primary",
+      }
+    : speaking
+        ? {
+            title: "Tutor가 말하고 있어요",
+            description: "답변을 영어 음성으로 들려드리고 있어요.",
+            tone: "warning",
           }
         : listening
           ? {
@@ -347,15 +428,23 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
               tone: "destructive",
             }
           : {
-              title: active ? "말할 준비가 됐습니다" : "상황을 먼저 선택하세요",
+              title: active ? "음성 대화를 시작해보세요" : "상황을 먼저 선택하세요",
               description: active
-                ? "말하기를 누르고 영어로 답하세요. AI 답변은 음성으로 재생됩니다."
-                : "상황을 선택하면 AI가 첫 장면을 열고 음성으로 읽어줍니다.",
+                ? "음성 대화 이어하기를 누르면 Tutor와 다시 이야기할 수 있어요."
+                : "상황을 선택하면 Tutor가 먼저 말을 걸어요.",
               tone: "muted",
             };
 
   const scrollToBottom = () => {
     setScrollSignal((value) => value + 1);
+  };
+
+  const updateMessages = (updater) => {
+    setMessages((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      messagesRef.current = next;
+      return next;
+    });
   };
 
   const cancelRoleplayRequests = () => {
@@ -385,6 +474,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
 
   const stopListeningByTimeout = (message) => {
     listeningIntentRef.current = false;
+    recognitionShouldSendRef.current = true;
     clearVoiceTimers();
     recognitionRef.current?.stop?.();
     recognitionRef.current = null;
@@ -403,6 +493,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
 
   const stopListening = () => {
     listeningIntentRef.current = false;
+    recognitionShouldSendRef.current = false;
     clearVoiceTimers();
     recognitionRef.current?.stop?.();
     recognitionRef.current = null;
@@ -410,27 +501,55 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
   };
 
   const stopSpeaking = () => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
-    audioCleanupRef.current?.();
-    audioCleanupRef.current = null;
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     setSpeaking(false);
+  };
+
+  const sendRealtimeEvent = (event) => {
+    const channel = realtimeDataChannelRef.current;
+    if (!channel || channel.readyState !== "open") return false;
+    channel.send(JSON.stringify(event));
+    return true;
+  };
+
+  const closeRealtimeSession = () => {
+    realtimeDataChannelRef.current?.close?.();
+    realtimeDataChannelRef.current = null;
+    realtimePeerRef.current?.close?.();
+    realtimePeerRef.current = null;
+    realtimeMediaStreamRef.current?.getTracks?.().forEach((track) => track.stop());
+    realtimeMediaStreamRef.current = null;
+    if (realtimeRemoteAudioRef.current) {
+      realtimeRemoteAudioRef.current.pause?.();
+      realtimeRemoteAudioRef.current.srcObject = null;
+      realtimeRemoteAudioRef.current = null;
+    }
+    realtimeAssistantIdRef.current = null;
+    realtimeAssistantTextRef.current = "";
+    realtimePendingUserTextRef.current = "";
+    realtimeCoachingKeyRef.current = "";
+    realtimeTranscriptionModelRef.current = "";
+    roleplayRequestInFlightRef.current = false;
+    setRealtimeConnecting(false);
+    setRealtimeConnected(false);
+    setListening(false);
+    setSpeaking(false);
+    setStreaming(false);
   };
 
   const resetConversation = () => {
     cancelRoleplayRequests();
     stopListening();
     stopSpeaking();
+    closeRealtimeSession();
     setMessages([]);
     setSessionStartedAt(null);
     setSession(null);
+    sessionRef.current = null;
     setMsg("");
     setVoiceTranscript("");
     speechSessionBaseRef.current = "";
-    setTtsSource("idle");
+    setVoiceFallbackActive(false);
     setVoiceError("");
     setVoiceNotice("");
     setSummary(null);
@@ -452,8 +571,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
       listeningIntentRef.current = false;
       clearVoiceTimers();
       recognitionRef.current?.abort?.();
-      audioRef.current?.pause?.();
-      audioCleanupRef.current?.();
+      closeRealtimeSession();
       if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     };
   }, []);
@@ -464,8 +582,13 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
       if (variables.requestId !== requestSeqRef.current) return;
       startAbortRef.current = null;
       roleplayRequestInFlightRef.current = false;
-      setMessages((prev) => pairsToMessages(history, prev));
-      if (isVoiceTab) playAssistantVoice(history?.[0]?.[1] || "");
+      updateMessages((prev) => pairsToMessages(history, prev));
+      if (variables.fallbackVoice) {
+        setVoiceFallbackActive(true);
+        setVoiceNotice("음성 대화가 준비됐어요. 말하기 버튼을 눌러 답해보세요.");
+        const firstReply = history?.[history.length - 1]?.[1] || "";
+        if (firstReply) playAssistantVoice(firstReply, { force: true });
+      }
       scrollToBottom();
     },
     onError: (_error, variables) => {
@@ -473,24 +596,466 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
         startAbortRef.current = null;
         roleplayRequestInFlightRef.current = false;
         setSessionStartedAt(null);
+        if (variables.fallbackVoice) {
+          setVoiceFallbackActive(false);
+          setSession(null);
+          sessionRef.current = null;
+          setVoiceError("음성 대화를 시작하지 못했어요. 잠시 후 다시 시도해주세요.");
+        }
       }
     },
   });
 
+  const startFallbackVoiceSession = (
+    cfg,
+    title = "",
+    notice = "음성 대화를 준비하고 있어요.",
+  ) => {
+    cancelRoleplayRequests();
+    closeRealtimeSession();
+    stopSpeaking();
+    setVoiceFallbackActive(true);
+    setVoiceError("");
+    setVoiceNotice(notice);
+    setStreaming(false);
+    setSessionStartedAt(Date.now());
+    setElapsedNow(Date.now());
+    const nextSession = { ...cfg, title };
+    setSession(nextSession);
+    sessionRef.current = nextSession;
+    updateMessages([]);
+    setMsg("");
+    setVoiceTranscript("");
+    setSummary(null);
+    setPickedVocab(new Set());
+    setSavedCount(null);
+    setFinishNoticeDismissed(false);
+
+    roleplayRequestInFlightRef.current = true;
+    const controller = new AbortController();
+    const requestId = requestSeqRef.current + 1;
+    requestSeqRef.current = requestId;
+    startAbortRef.current = controller;
+    startMutation.mutate({
+      cfg,
+      requestId,
+      signal: controller.signal,
+      fallbackVoice: true,
+    });
+  };
+
+  const flushRealtimeUsageQueue = async () => {
+    const userId = user?.id;
+    if (!userId || realtimeUsageFlushRef.current) return;
+    realtimeUsageFlushRef.current = true;
+    try {
+      while (true) {
+        const queue = readRealtimeUsageQueue(userId);
+        writeRealtimeUsageQueue(userId, queue);
+        const item = queue[0];
+        if (!item) break;
+        try {
+          await api.roleplayRealtimeUsage(item.payload, { keepalive: true });
+          const remaining = readRealtimeUsageQueue(userId).filter(
+            (candidate) => candidate.queueId !== item.queueId,
+          );
+          writeRealtimeUsageQueue(userId, remaining);
+        } catch {
+          break;
+        }
+      }
+    } finally {
+      realtimeUsageFlushRef.current = false;
+    }
+  };
+
+  const recordRealtimeUsage = (
+    operation,
+    usage,
+    model = realtimeModelRef.current,
+    { usageGroupId = "", success = true, errorMessage = "" } = {},
+  ) => {
+    const userId = user?.id;
+    if (!userId) return;
+    const groupId = usageGroupId || newRealtimeUsageGroupId(operation);
+    const queueId = `${operation}:${groupId}`;
+    const queue = readRealtimeUsageQueue(userId).filter((item) => item.queueId !== queueId);
+    queue.push({
+      queueId,
+      queuedAt: Date.now(),
+      payload: {
+        usageGroupId: groupId,
+        operation,
+        model,
+        usage: usage || {},
+        success,
+        errorMessage,
+      },
+    });
+    writeRealtimeUsageQueue(userId, queue);
+    void flushRealtimeUsageQueue();
+  };
+
+  useEffect(() => {
+    if (!user?.id) return undefined;
+    void flushRealtimeUsageQueue();
+    const flushWithBeacon = () => {
+      if (!navigator.sendBeacon) return;
+      for (const item of readRealtimeUsageQueue(user.id)) {
+        const body = new Blob(
+          [JSON.stringify({
+            usage_group_id: item.payload.usageGroupId,
+            operation: item.payload.operation,
+            model: item.payload.model,
+            usage: item.payload.usage,
+            success: item.payload.success,
+            error_message: item.payload.errorMessage,
+          })],
+          { type: "application/json" },
+        );
+        navigator.sendBeacon("/api/roleplay/realtime/usage", body);
+      }
+    };
+    window.addEventListener("pagehide", flushWithBeacon);
+    return () => window.removeEventListener("pagehide", flushWithBeacon);
+  }, [user?.id]);
+
+  const appendRealtimeUserTranscript = (transcript) => {
+    const text = (transcript || "").trim();
+    if (!text) return;
+    realtimePendingUserTextRef.current = text;
+    setVoiceTranscript(text);
+    setFinishNoticeDismissed(false);
+    updateMessages((prev) => [
+      ...prev,
+      { role: "user", text, createdAt: new Date().toISOString() },
+    ]);
+    scrollToBottom();
+  };
+
+  const ensureRealtimeAssistantMessage = () => {
+    if (realtimeAssistantIdRef.current) return realtimeAssistantIdRef.current;
+    const id =
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `rt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    realtimeAssistantIdRef.current = id;
+    realtimeAssistantTextRef.current = "";
+    updateMessages((prev) => [
+      ...prev,
+      { id, role: "bot", text: "", coaching: "", streaming: true, createdAt: new Date().toISOString() },
+    ]);
+    return id;
+  };
+
+  const appendRealtimeAssistantDelta = (delta) => {
+    if (!delta) return;
+    const id = ensureRealtimeAssistantMessage();
+    realtimeAssistantTextRef.current = `${realtimeAssistantTextRef.current}${delta}`;
+    updateMessages((prev) =>
+      prev.map((message) =>
+        message.id === id
+          ? { ...message, text: `${message.text || ""}${delta}`, streaming: true }
+          : message,
+      ),
+    );
+    scrollToBottom();
+  };
+
+  const maybeRequestRealtimeCoaching = () => {
+    const userText = realtimePendingUserTextRef.current.trim();
+    const assistantText = realtimeAssistantTextRef.current.trim();
+    const assistantId = realtimeAssistantIdRef.current;
+    const activeSession = sessionRef.current;
+    if (!userText || !assistantText || !assistantId || !activeSession) return;
+    const coachingKey = `${userText}\n---\n${assistantText}`;
+    if (realtimeCoachingKeyRef.current === coachingKey) return;
+    realtimeCoachingKeyRef.current = coachingKey;
+    window.setTimeout(async () => {
+      try {
+        const { coaching } = await api.roleplayRealtimeCoaching({
+          history: messagesToPairs(messagesRef.current),
+          userMessage: userText,
+          assistantReply: assistantText,
+          ...activeSession,
+        });
+        if (!coaching) return;
+        updateMessages((prev) =>
+          prev.map((message) =>
+            message.id === assistantId ? { ...message, coaching } : message,
+          ),
+        );
+        scrollToBottom();
+      } catch {
+        // Realtime speech should not be interrupted by a coaching failure.
+      }
+    }, 0);
+  };
+
+  const finishRealtimeAssistantMessage = () => {
+    const id = realtimeAssistantIdRef.current;
+    if (!id) return;
+    updateMessages((prev) =>
+      prev.map((message) =>
+        message.id === id ? { ...message, streaming: false } : message,
+      ),
+    );
+    setStreaming(false);
+    setSpeaking(false);
+    maybeRequestRealtimeCoaching();
+    realtimeAssistantIdRef.current = null;
+    realtimeAssistantTextRef.current = "";
+    scrollToBottom();
+  };
+
+  const handleRealtimeEvent = (event) => {
+    if (!event?.type) return;
+    if (event.type === "error") {
+      recordRealtimeUsage("realtime_error", event.usage, realtimeModelRef.current, {
+        usageGroupId: newRealtimeUsageGroupId("error", event.event_id),
+        success: false,
+        errorMessage: event.error?.message || event.error?.code || "Realtime API error",
+      });
+      setVoiceError("음성 대화 중 문제가 생겼어요. 잠시 후 다시 시작해주세요.");
+      setStreaming(false);
+      setSpeaking(false);
+      return;
+    }
+    if (event.type === "input_audio_buffer.speech_started") {
+      setListening(true);
+      setVoiceNotice("");
+      return;
+    }
+    if (event.type === "input_audio_buffer.speech_stopped") {
+      setListening(false);
+      return;
+    }
+    if (event.type === "conversation.item.input_audio_transcription.completed") {
+      appendRealtimeUserTranscript(event.transcript);
+      recordRealtimeUsage(
+        "realtime_transcription",
+        event.usage,
+        event.usage?.model || realtimeTranscriptionModelRef.current,
+        {
+          usageGroupId: newRealtimeUsageGroupId(
+            "transcription",
+            event.event_id || `${event.item_id || "item"}:${event.content_index || 0}`,
+          ),
+        },
+      );
+      return;
+    }
+    if (event.type === "conversation.item.input_audio_transcription.failed") {
+      recordRealtimeUsage("realtime_transcription_error", event.usage, realtimeTranscriptionModelRef.current, {
+        usageGroupId: newRealtimeUsageGroupId(
+          "transcription-error",
+          event.event_id || `${event.item_id || "item"}:${event.content_index || 0}`,
+        ),
+        success: false,
+        errorMessage: event.error?.message || "Realtime transcription failed",
+      });
+      return;
+    }
+    if (event.type === "response.created") {
+      setStreaming(true);
+      setSpeaking(true);
+      setVoiceNotice("");
+      ensureRealtimeAssistantMessage();
+      return;
+    }
+    if (
+      event.type === "response.output_audio_transcript.delta" ||
+      event.type === "response.output_text.delta"
+    ) {
+      appendRealtimeAssistantDelta(event.delta || "");
+      return;
+    }
+    if (
+      event.type === "response.output_audio_transcript.done" ||
+      event.type === "response.output_text.done"
+    ) {
+      if (event.transcript && !realtimeAssistantTextRef.current.trim()) {
+        appendRealtimeAssistantDelta(event.transcript);
+      }
+      return;
+    }
+    if (event.type === "response.done") {
+      const response = event.response || {};
+      const success = !response.status || response.status === "completed";
+      recordRealtimeUsage("realtime", response.usage || event.usage, response.model, {
+        usageGroupId: newRealtimeUsageGroupId("response", response.id || event.event_id),
+        success,
+        errorMessage:
+          response.status_details?.error?.message ||
+          response.status_details?.reason ||
+          (success ? "" : `Realtime response ${response.status || "failed"}`),
+      });
+      finishRealtimeAssistantMessage();
+    }
+  };
+
+  const startRealtimeSession = async (cfg, title = "") => {
+    if (realtimeConnecting || realtimeConnected || roleplayRequestInFlightRef.current) return;
+    cancelRoleplayRequests();
+    closeRealtimeSession();
+    stopSpeaking();
+    if (!navigator.mediaDevices?.getUserMedia || typeof RTCPeerConnection === "undefined") {
+      startFallbackVoiceSession(
+        cfg,
+        title,
+        "사용 중인 브라우저에 맞춰 음성 대화를 준비하고 있어요.",
+      );
+      return;
+    }
+    setVoiceFallbackActive(false);
+    roleplayRequestInFlightRef.current = true;
+    setRealtimeConnecting(true);
+    setStreaming(true);
+    setVoiceError("");
+    setVoiceNotice("Tutor와 음성 대화를 준비하고 있어요.");
+    setSessionStartedAt(Date.now());
+    setElapsedNow(Date.now());
+    const nextSession = { ...cfg, title };
+    setSession(nextSession);
+    sessionRef.current = nextSession;
+    updateMessages([]);
+    setMsg("");
+    setVoiceTranscript("");
+    setSummary(null);
+    setPickedVocab(new Set());
+    setSavedCount(null);
+    setFinishNoticeDismissed(false);
+    realtimeConnectionUsageIdRef.current = newRealtimeUsageGroupId("connection");
+
+    let peer = null;
+    let channel = null;
+    let mediaStream = null;
+    try {
+      const tokenData = await api.roleplayRealtimeSession({ ...cfg, title });
+      if (tokenData.mode === "fallback") {
+        roleplayRequestInFlightRef.current = false;
+        startFallbackVoiceSession(cfg, title);
+        return;
+      }
+      if (!tokenData.client_secret) {
+        throw new Error("Realtime client secret was empty.");
+      }
+      realtimeModelRef.current = tokenData.model || "gpt-realtime-2.1-mini";
+      realtimeTranscriptionModelRef.current =
+        tokenData.transcription_model || "gpt-4o-mini-transcribe";
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      realtimeMediaStreamRef.current = mediaStream;
+      peer = new RTCPeerConnection();
+      realtimePeerRef.current = peer;
+
+      const remoteAudio = document.createElement("audio");
+      remoteAudio.autoplay = true;
+      remoteAudio.playsInline = true;
+      remoteAudio.onplaying = () => setSpeaking(true);
+      remoteAudio.onpause = () => setSpeaking(false);
+      realtimeRemoteAudioRef.current = remoteAudio;
+      peer.ontrack = (event) => {
+        remoteAudio.srcObject = event.streams[0];
+      };
+      mediaStream.getTracks().forEach((track) => peer.addTrack(track, mediaStream));
+
+      channel = peer.createDataChannel("oai-events");
+      realtimeDataChannelRef.current = channel;
+      channel.onopen = () => {
+        setRealtimeConnecting(false);
+        setRealtimeConnected(true);
+        setListening(true);
+        setStreaming(true);
+        setVoiceNotice("준비됐어요. Tutor가 먼저 말을 걸 거예요.");
+        roleplayRequestInFlightRef.current = false;
+        sendRealtimeEvent({
+          type: "response.create",
+          response: {
+            output_modalities: ["audio"],
+            instructions:
+              "Start the role-play now: set the scene briefly, then greet the learner and ask your first question.",
+          },
+        });
+      };
+      channel.onmessage = (messageEvent) => {
+        try {
+          handleRealtimeEvent(JSON.parse(messageEvent.data));
+        } catch {
+          // Ignore malformed transport messages.
+        }
+      };
+      channel.onerror = () => {
+        recordRealtimeUsage("realtime_connection", {}, realtimeModelRef.current, {
+          usageGroupId: realtimeConnectionUsageIdRef.current,
+          success: false,
+          errorMessage: "Realtime data channel error",
+        });
+        setVoiceError("음성 대화가 잠시 끊겼어요. 다시 시작해주세요.");
+      };
+      channel.onclose = () => {
+        setRealtimeConnected(false);
+        setListening(false);
+        setStreaming(false);
+        setSpeaking(false);
+      };
+
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      const sdpResponse = await fetch("https://api.openai.com/v1/realtime/calls", {
+        method: "POST",
+        body: offer.sdp,
+        headers: {
+          Authorization: `Bearer ${tokenData.client_secret}`,
+          "Content-Type": "application/sdp",
+        },
+      });
+      if (!sdpResponse.ok) {
+        const detail = await sdpResponse.text().catch(() => "");
+        throw new Error(detail || `Realtime SDP exchange failed: ${sdpResponse.status}`);
+      }
+      await peer.setRemoteDescription({
+        type: "answer",
+        sdp: await sdpResponse.text(),
+      });
+    } catch (error) {
+      recordRealtimeUsage("realtime_connection", {}, realtimeModelRef.current, {
+        usageGroupId: realtimeConnectionUsageIdRef.current,
+        success: false,
+        errorMessage: error?.message || "Realtime connection failed",
+      });
+      closeRealtimeSession();
+      roleplayRequestInFlightRef.current = false;
+      startFallbackVoiceSession(
+        cfg,
+        title,
+        error?.name === "NotAllowedError" || error?.name === "PermissionDeniedError"
+          ? "마이크를 바로 연결하지 못했어요. 말하기 버튼을 누르거나 문장을 직접 입력해주세요."
+          : "연결 방식을 바꿔 음성 대화를 계속할게요.",
+      );
+    }
+  };
+
   // 카드/태그/자유주제 클릭 → 즉시 시작.
   // title: 진행 중 칩에 보여줄 상황 제목(카드 라벨 / 자유주제 텍스트 / #태그).
   const start = ({ tag = null, situation = "", title = "" }) => {
-    if (startMutation.isPending || roleplayRequestInFlightRef.current) return;
+    if (startMutation.isPending || realtimeConnecting || roleplayRequestInFlightRef.current) return;
     cancelRoleplayRequests();
+    if (isVoiceTab) {
+      const cfg = { level, scenario: mode, tag, situation };
+      startRealtimeSession(cfg, title);
+      return;
+    }
     roleplayRequestInFlightRef.current = true;
     const controller = new AbortController();
     const requestId = requestSeqRef.current + 1;
     requestSeqRef.current = requestId;
     startAbortRef.current = controller;
     const cfg = { level, scenario: mode, tag, situation };
+    const nextSession = { ...cfg, title };
     setSessionStartedAt(Date.now());
     setElapsedNow(Date.now());
-    setSession({ ...cfg, title });
+    setSession(nextSession);
+    sessionRef.current = nextSession;
     setMessages([]);
     setMsg("");
     setFinishNoticeDismissed(false);
@@ -527,7 +1092,9 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     startAbortRef.current = controller;
     setSessionStartedAt(Date.now());
     setElapsedNow(Date.now());
-    setSession({ ...cfg, title: launch.title || launch.tag || launch.situation || "Buddy 추천" });
+    const nextSession = { ...cfg, title: launch.title || launch.tag || launch.situation || "Buddy 추천" };
+    setSession(nextSession);
+    sessionRef.current = nextSession;
     setMessages([]);
     setMsg("");
     startMutation.mutate({ cfg, requestId, signal: controller.signal });
@@ -564,101 +1131,23 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     const utterance = new SpeechSynthesisUtterance(clean);
     utterance.lang = "en-US";
     utterance.rate = 0.95;
-    setTtsSource("browser");
     utterance.onstart = () => setSpeaking(true);
     utterance.onend = () => setSpeaking(false);
     utterance.onerror = () => {
       setSpeaking(false);
-      setTtsSource("error");
-      setVoiceError("기기 내장 음성으로도 답변을 읽지 못했어요.");
+      setVoiceError("Tutor 음성을 재생하지 못했어요. 화면의 문장을 확인해주세요.");
     };
     window.speechSynthesis.speak(utterance);
     return true;
   };
 
-  const playAudioBlob = async (blob, source, fallbackText) => {
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    let handledError = false;
-    let cleaned = false;
-    const cleanup = () => {
-      if (cleaned) return;
-      cleaned = true;
-      URL.revokeObjectURL(url);
-      if (audioRef.current === audio) audioRef.current = null;
-      if (audioCleanupRef.current === cleanup) audioCleanupRef.current = null;
-    };
-
-    audioRef.current = audio;
-    audioCleanupRef.current = cleanup;
-    audio.onplay = () => {
-      setSpeaking(true);
-      setTtsSource(source);
-    };
-    audio.onended = () => {
-      setSpeaking(false);
-      cleanup();
-    };
-    audio.onerror = () => {
-      handledError = true;
-      setSpeaking(false);
-      cleanup();
-      setVoiceError(
-        source === "cache"
-          ? "브라우저에 저장된 AI 음성을 재생하지 못해 기기 내장 음성으로 전환했어요."
-          : "AI 음성을 재생하지 못해 기기 내장 음성으로 전환했어요.",
-      );
-      speakWithBrowser(fallbackText);
-    };
-
-    try {
-      await audio.play();
-    } catch (error) {
-      if (handledError) return;
-      setSpeaking(false);
-      cleanup();
-      throw error;
-    }
-  };
-
-  const playAssistantVoice = async (text, { force = false } = {}) => {
-    const clean = normalizeTtsText(text);
+  const playAssistantVoice = (text, { force = false } = {}) => {
+    const clean = (text || "").replace(/\s+/g, " ").trim();
     if ((!autoSpeak && !force) || !clean) return;
     stopSpeaking();
     setVoiceError("");
-    setTtsSource("generating");
-    try {
-      const cacheKey = await roleplayTtsCacheKey(clean, {
-        model: ROLEPLAY_TTS_MODEL,
-        voice: ROLEPLAY_TTS_VOICE,
-      });
-      const cached = await getCachedRoleplayAudio(cacheKey).catch(() => null);
-      if (cached?.blob) {
-        await playAudioBlob(cached.blob, "cache", clean);
-        return;
-      }
-
-      const result = await api.roleplayTtsAudio(clean, {
-        model: ROLEPLAY_TTS_MODEL,
-        voice: ROLEPLAY_TTS_VOICE,
-      });
-      await saveCachedRoleplayAudio({
-        key: result.cacheKey || cacheKey,
-        blob: result.blob,
-        mimeType: result.mimeType,
-        model: result.model,
-        voice: result.voice,
-        text: clean,
-      }).catch(() => {});
-      await playAudioBlob(result.blob, "generated", clean);
-    } catch (error) {
-      const fallbackStarted = speakWithBrowser(clean);
-      if (fallbackStarted) {
-        setVoiceError("AI 음성 대신 기기 내장 음성으로 재생하고 있습니다.");
-      } else {
-        setTtsSource("error");
-        setVoiceError("음성을 재생하지 못했습니다. 잠시 후 다시 시도해주세요.");
-      }
+    if (!speakWithBrowser(clean)) {
+      setVoiceError("이 브라우저에서는 음성 재생을 지원하지 않습니다.");
     }
   };
 
@@ -778,94 +1267,110 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     }
   };
 
-  const startListening = async () => {
-    if (!user || starting || streaming || reachedHardLimit) return;
-    stopSpeaking();
-    const permitted = await requestMicrophonePermission();
-    if (!permitted || !active) return;
-    const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
+  const startFallbackListening = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      setVoiceError("이 브라우저는 음성 인식을 지원하지 않아요. Chrome 또는 Edge에서 사용해주세요.");
+      setVoiceNotice("");
+      setVoiceError("이 브라우저는 음성 인식을 지원하지 않아요. 문장을 직접 입력해 보내주세요.");
       return;
     }
-    setVoiceError("");
-    setVoiceNotice("");
-    setVoiceTranscript("");
-    clearVoiceTimers();
-    speechSessionBaseRef.current = "";
-    listeningIntentRef.current = true;
-    voiceMaxTimerRef.current = window.setTimeout(() => {
-      stopListeningByTimeout(
-        "최대 녹음 시간이 지나 자동으로 멈췄어요. 필요하면 다시 말하기를 눌러 이어서 말하세요.",
-      );
-    }, VOICE_MAX_LISTEN_MS);
-    scheduleVoiceIdleStop();
 
-    const beginRecognition = () => {
-      const recognition = new SpeechRecognition();
-      recognition.lang = "en-US";
-      recognition.interimResults = true;
-      recognition.continuous = true;
-      recognition.onresult = (event) => {
-        let currentTranscript = "";
-        for (let i = 0; i < event.results.length; i += 1) {
-          currentTranscript += ` ${event.results[i][0]?.transcript || ""}`;
-        }
-        const transcript = [speechSessionBaseRef.current, currentTranscript]
-          .filter(Boolean)
-          .join(" ")
-          .replace(/\s+/g, " ")
-          .trim();
-        setVoiceTranscript(transcript);
-        if (transcript) scheduleVoiceIdleStop();
-      };
-      recognition.onerror = (event) => {
-        if (event.error === "no-speech" && listeningIntentRef.current) {
-          return;
-        }
-        listeningIntentRef.current = false;
-        clearVoiceTimers();
-        setVoiceError(
-          event.error === "not-allowed"
-            ? "마이크 권한이 필요합니다. 브라우저 권한을 허용해주세요."
-            : "음성 인식 중 문제가 생겼어요. 다시 시도해주세요."
-        );
-        setListening(false);
-      };
-      recognition.onend = () => {
-        recognitionRef.current = null;
-        if (!listeningIntentRef.current) {
-          setListening(false);
-          return;
-        }
-        speechSessionBaseRef.current = voiceTranscriptRef.current;
-        recognitionRestartTimerRef.current = window.setTimeout(() => {
-          if (!listeningIntentRef.current || streaming || reachedHardLimit) {
-            setListening(false);
-            return;
-          }
-          beginRecognition();
-        }, 180);
-      };
-      recognitionRef.current = recognition;
-      try {
-        recognition.start();
-        setListening(true);
-      } catch {
-        listeningIntentRef.current = false;
-        clearVoiceTimers();
-        setListening(false);
-        recognitionRef.current = null;
-        setVoiceError("음성 인식을 시작하지 못했어요. 잠시 후 다시 시도해주세요.");
+    stopSpeaking();
+    clearVoiceTimers();
+    const recognition = new SpeechRecognition();
+    recognition.lang = "en-US";
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+    recognitionRef.current = recognition;
+    recognitionShouldSendRef.current = true;
+    listeningIntentRef.current = true;
+    speechSessionBaseRef.current = "";
+    setVoiceTranscript("");
+    voiceTranscriptRef.current = "";
+    setVoiceError("");
+
+    recognition.onstart = () => {
+      setListening(true);
+      setVoiceNotice("영어로 말해주세요. 멈추면 인식된 문장을 자동으로 전송합니다.");
+      voiceMaxTimerRef.current = window.setTimeout(() => {
+        stopListeningByTimeout("최대 녹음 시간에 도달해 인식된 문장을 전송합니다.");
+      }, VOICE_MAX_LISTEN_MS);
+      scheduleVoiceIdleStop();
+    };
+    recognition.onresult = (event) => {
+      let finalText = speechSessionBaseRef.current;
+      let interimText = "";
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        const transcript = result[0]?.transcript || "";
+        if (result.isFinal) finalText = `${finalText} ${transcript}`.trim();
+        else interimText = `${interimText} ${transcript}`.trim();
+      }
+      speechSessionBaseRef.current = finalText;
+      const combined = `${finalText} ${interimText}`.trim();
+      voiceTranscriptRef.current = combined;
+      setVoiceTranscript(combined);
+      scheduleVoiceIdleStop();
+    };
+    recognition.onerror = (event) => {
+      recognitionShouldSendRef.current = false;
+      if (event.error === "aborted") return;
+      setVoiceNotice("");
+      setVoiceError(
+        event.error === "not-allowed" || event.error === "service-not-allowed"
+          ? "마이크 권한을 허용하거나 문장을 직접 입력해 보내주세요."
+          : "음성을 인식하지 못했어요. 다시 말하거나 문장을 직접 입력해주세요.",
+      );
+    };
+    recognition.onend = () => {
+      const shouldSend = recognitionShouldSendRef.current;
+      const transcript = voiceTranscriptRef.current.trim();
+      recognitionShouldSendRef.current = false;
+      listeningIntentRef.current = false;
+      clearVoiceTimers();
+      if (recognitionRef.current === recognition) recognitionRef.current = null;
+      setListening(false);
+      if (shouldSend && transcript) {
+        setVoiceNotice("인식된 문장을 전송했어요.");
+        sendText(transcript, { speakReply: true });
+      } else if (shouldSend) {
+        setVoiceNotice("인식된 문장이 없어요. 다시 말하거나 직접 입력해주세요.");
       }
     };
 
-    beginRecognition();
+    try {
+      recognition.start();
+    } catch {
+      recognitionShouldSendRef.current = false;
+      recognitionRef.current = null;
+      setListening(false);
+      setVoiceError("음성 인식을 시작하지 못했어요. 문장을 직접 입력해 보내주세요.");
+    }
+  };
+
+  const startListening = async () => {
+    if (!user || starting || reachedHardLimit) return;
+    if (realtimeConnected || realtimeConnecting) {
+      closeRealtimeSession();
+      setVoiceNotice("음성 대화를 잠시 멈췄어요. 언제든 다시 시작할 수 있어요.");
+      return;
+    }
+    if (voiceFallbackActive) {
+      if (listening) {
+        recognitionShouldSendRef.current = true;
+        recognitionRef.current?.stop?.();
+      } else {
+        startFallbackListening();
+      }
+      return;
+    }
+    if (!session) return;
+    await startRealtimeSession(session, session.title || "");
   };
 
   const sendVoice = () => {
-    stopListening();
+    if (realtimeConnected) return;
     sendText(voiceTranscriptRef.current, { speakReply: true });
   };
 
@@ -899,6 +1404,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     ) {
       return;
     }
+    closeRealtimeSession();
     summaryInFlightRef.current = true;
     summaryMutation.mutate();
   };
@@ -918,7 +1424,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     saveWordsMutation.mutate(items);
   };
 
-  const starting = startMutation.isPending;
+  const starting = startMutation.isPending || realtimeConnecting;
   const sending = streaming;
   const summarizing = summaryMutation.isPending || summaryInFlightRef.current;
   const finishDisabled = summarizing || starting || sending;
@@ -957,7 +1463,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
   const elapsedLabel = sessionStartedAt
     ? formatElapsedTime(elapsedNow - sessionStartedAt)
     : "00:00";
-  const sessionBusy = starting || streaming || summarizing;
+  const sessionBusy = starting || streaming || summarizing || realtimeConnected || listening;
   const emptyScenarioDisabled =
     !user || starting || (mode === "tag" && (tagLoading || usableTags.length === 0));
 
@@ -1018,7 +1524,14 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
                 <select
                   value={isVoiceTab ? "voice" : "play"}
                   disabled={!user}
-                  onChange={(event) => setSubTab(event.target.value)}
+                  onChange={(event) => {
+                    if (event.target.value !== "voice") {
+                      stopListening();
+                      closeRealtimeSession();
+                      setVoiceFallbackActive(false);
+                    }
+                    setSubTab(event.target.value);
+                  }}
                   className="h-9 w-full appearance-none rounded-md border border-brand-300/20 bg-brand-500/40 px-3 pr-9 text-sm font-semibold text-white outline-none ring-offset-[#10171b] transition hover:bg-brand-500/50 focus:ring-2 focus:ring-brand-300 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <option value="play" className="text-slate-900">
@@ -1034,17 +1547,19 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setAutoSpeak((value) => !value)}
-              className="h-9 border-white/20 bg-white/10 px-3 text-white hover:bg-white/20 hover:text-white"
-            >
-              {autoSpeak ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-              <span className="hidden 2xl:inline">자동 스크립트</span>
-              <span className="2xl:hidden">스크립트</span>
-            </Button>
+            {!isVoiceTab && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setAutoSpeak((value) => !value)}
+                className="h-9 border-white/20 bg-white/10 px-3 text-white hover:bg-white/20 hover:text-white"
+              >
+                {autoSpeak ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+                <span className="hidden 2xl:inline">자동 스크립트</span>
+                <span className="2xl:hidden">스크립트</span>
+              </Button>
+            )}
             <Button
               type="button"
               variant="outline"
@@ -1306,7 +1821,8 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
                       {!starting &&
                         messages.map((message, index) => {
                           const isUserMessage = message.role === "user";
-                          const canReplay = message.role === "bot" && message.text && !message.streaming;
+                          const canReplay =
+                            !isVoiceTab && message.role === "bot" && message.text && !message.streaming;
                           const messageTime = message.createdAt
                             ? formatMessageTime(message.createdAt)
                             : "";
@@ -1402,68 +1918,70 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
                     <div className="flex flex-col gap-2 md:flex-row md:items-center">
                       <Button
                         type="button"
-                        variant={listening ? "destructive" : "outline"}
-                        onClick={listening ? stopListening : startListening}
-                        disabled={!user || starting || streaming || reachedHardLimit}
+                        variant={realtimeConnected || listening ? "destructive" : "outline"}
+                        onClick={startListening}
+                        disabled={
+                          !user ||
+                          starting ||
+                          realtimeConnecting ||
+                          reachedHardLimit ||
+                          (!active && !session)
+                        }
                         className="h-10 shrink-0 rounded-md"
                       >
-                        {listening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-                        {listening ? "녹음 중지" : active ? "말하기 시작" : "마이크 테스트"}
+                        {realtimeConnected || listening ? (
+                          <MicOff className="h-4 w-4" />
+                        ) : (
+                          <Mic className="h-4 w-4" />
+                        )}
+                        {realtimeConnected
+                          ? "대화 잠시 멈추기"
+                          : realtimeConnecting
+                            ? "준비 중"
+                            : voiceFallbackActive
+                              ? listening
+                                ? "녹음 중지"
+                                : "말하기"
+                            : active || session
+                              ? "음성 대화 이어하기"
+                              : "상황 선택 필요"}
                       </Button>
                       <Input
                         value={voiceTranscript}
-                        onChange={(event) => setVoiceTranscript(event.target.value)}
-                        onKeyDown={(event) => event.key === "Enter" && sendVoice()}
-                        disabled={!user || !active || starting || streaming || reachedHardLimit}
+                        readOnly={!voiceFallbackActive}
+                        onChange={(event) => {
+                          if (!voiceFallbackActive) return;
+                          voiceTranscriptRef.current = event.target.value;
+                          setVoiceTranscript(event.target.value);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" && voiceFallbackActive) sendVoice();
+                        }}
+                        disabled={!user || !active || streaming}
                         placeholder={
                           reachedHardLimit
                             ? "대화를 마무리해주세요"
+                            : voiceFallbackActive
+                              ? "영어로 말하거나 직접 입력하세요"
                             : active
-                              ? "인식된 문장이 여기에 표시됩니다"
+                              ? "최근 인식된 문장이 여기에 표시됩니다"
                               : "상황을 먼저 선택하세요"
                         }
                         className="h-10 flex-1 bg-white disabled:bg-slate-50"
                       />
-                      <Button
-                        type="button"
-                        onClick={sendVoice}
-                        disabled={
-                          streaming ||
-                          !user ||
-                          !active ||
-                          reachedHardLimit ||
-                          !voiceTranscript.trim()
-                        }
-                        className="h-10 shrink-0 rounded-md"
-                      >
-                        <Send className="h-4 w-4" />
-                        보내기
-                      </Button>
+                      {voiceFallbackActive && (
+                        <Button
+                          type="button"
+                          onClick={sendVoice}
+                          disabled={!voiceTranscript.trim() || streaming || listening}
+                          className="h-10 shrink-0 rounded-md"
+                        >
+                          <Send className="h-4 w-4" />
+                          보내기
+                        </Button>
+                      )}
                     </div>
-                    <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setAutoSpeak((value) => !value)}
-                        className="h-10 rounded-md"
-                      >
-                        {autoSpeak ? <Pause className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-                        {autoSpeak ? "일시정지" : "읽기 켬"}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() =>
-                          speaking
-                            ? stopSpeaking()
-                            : playAssistantVoice(latestAssistantText, { force: true })
-                        }
-                        disabled={!latestAssistantText || streaming}
-                        className="h-10 rounded-md"
-                      >
-                        {speaking ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-                        다시 듣기
-                      </Button>
+                    <div className="grid grid-cols-2 gap-2">
                       <Button
                         type="button"
                         variant="outline"
