@@ -73,6 +73,25 @@ function isSupportedChromeBrowser() {
   );
 }
 
+function useMediaQuery(query) {
+  const getMatches = useCallback(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return false;
+    return window.matchMedia(query).matches;
+  }, [query]);
+  const [matches, setMatches] = useState(getMatches);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return undefined;
+    const mediaQuery = window.matchMedia(query);
+    const handleChange = () => setMatches(mediaQuery.matches);
+    handleChange();
+    mediaQuery.addEventListener?.("change", handleChange);
+    return () => mediaQuery.removeEventListener?.("change", handleChange);
+  }, [query]);
+
+  return matches;
+}
+
 function parseVideoId(value) {
   const raw = (value || "").trim();
   if (/^[A-Za-z0-9_-]{11}$/.test(raw)) return raw;
@@ -183,7 +202,7 @@ function friendlyErrorMessage(error, fallback = "처리하지 못했습니다. �
   return raw.replace(/^\d{3}\s*/, "").trim() || fallback;
 }
 
-function EmbeddedMediaPlayer({ videoId, onPlayer }) {
+function EmbeddedMediaPlayer({ videoId, onPlayer, onBeforeDestroy }) {
   const rawId = useId();
   const elementId = `media-player-${rawId.replace(/[^A-Za-z0-9_-]/g, "")}`;
 
@@ -228,10 +247,11 @@ function EmbeddedMediaPlayer({ videoId, onPlayer }) {
 
     return () => {
       cancelled = true;
+      if (player) onBeforeDestroy?.(player, videoId);
       onPlayer?.(null);
       if (player?.destroy) player.destroy();
     };
-  }, [elementId, onPlayer, videoId]);
+  }, [elementId, onBeforeDestroy, onPlayer, videoId]);
 
   return (
     <div className="aspect-video overflow-hidden rounded-md bg-slate-950">
@@ -542,12 +562,12 @@ function WordSaveDialog({
   );
 }
 
-function PlayerPanel({ videoId, player, currentTime, onPlayer }) {
+function PlayerPanel({ videoId, player, currentTime, onPlayer, onBeforeDestroy }) {
   return (
     <section className="min-h-0">
       <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
         {videoId ? (
-          <EmbeddedMediaPlayer videoId={videoId} onPlayer={onPlayer} />
+          <EmbeddedMediaPlayer videoId={videoId} onPlayer={onPlayer} onBeforeDestroy={onBeforeDestroy} />
         ) : (
           <div className="flex aspect-video items-center justify-center bg-white p-5">
             <div className="w-full max-w-md px-5 py-8 text-center">
@@ -694,6 +714,7 @@ export default function MediaLearningTab({ user, onRequireLogin }) {
   const translationRunRef = useRef(0);
   const translationEnabledRef = useRef(false);
   const translatorStatusRef = useRef("idle");
+  const playbackSnapshotRef = useRef({ videoId: "", time: 0, shouldPlay: false });
   const [meaningStatus, setMeaningStatus] = useState("idle");
   const wordTranslatorRef = useRef(null);
   const wordTranslationCacheRef = useRef(new Map());
@@ -713,6 +734,7 @@ export default function MediaLearningTab({ user, onRequireLogin }) {
     enabled: !!user,
     staleTime: 5 * 60_000,
   });
+  const isDesktopLayout = useMediaQuery("(min-width: 1280px)");
 
   useEffect(() => {
     contentScrollRef.current?.scrollTo({ top: 0 });
@@ -930,6 +952,42 @@ export default function MediaLearningTab({ user, onRequireLogin }) {
     return () => window.clearInterval(timer);
   }, [player]);
 
+  const capturePlaybackSnapshot = useCallback((targetPlayer, targetVideoId = videoId) => {
+    if (!targetPlayer?.getCurrentTime) return;
+    try {
+      const state = Number(targetPlayer.getPlayerState?.());
+      playbackSnapshotRef.current = {
+        videoId: targetVideoId || "",
+        time: targetPlayer.getCurrentTime() || 0,
+        shouldPlay: state === 1 || state === 3,
+      };
+    } catch {
+      playbackSnapshotRef.current = {
+        videoId: targetVideoId || "",
+        time: currentTime || 0,
+        shouldPlay: false,
+      };
+    }
+  }, [currentTime, videoId]);
+
+  const handlePlayerReady = useCallback((nextPlayer) => {
+    setPlayer(nextPlayer);
+    if (!nextPlayer || !videoId) return;
+
+    const snapshot = playbackSnapshotRef.current;
+    if (snapshot.videoId !== videoId || snapshot.time <= 0) return;
+
+    window.setTimeout(() => {
+      try {
+        nextPlayer.seekTo?.(snapshot.time, true);
+        setCurrentTime(snapshot.time);
+        if (snapshot.shouldPlay) nextPlayer.playVideo?.();
+      } catch {
+        // The new iframe can briefly reject commands while it finishes initializing.
+      }
+    }, 0);
+  }, [videoId]);
+
   const segments = transcript?.segments || [];
   const activeIndex = useMemo(() => {
     if (!segments.length) return -1;
@@ -1068,7 +1126,8 @@ export default function MediaLearningTab({ user, onRequireLogin }) {
       videoId={videoId}
       player={player}
       currentTime={currentTime}
-      onPlayer={setPlayer}
+      onPlayer={handlePlayerReady}
+      onBeforeDestroy={capturePlaybackSnapshot}
     />
   );
   const scriptPanel = (
@@ -1157,42 +1216,44 @@ export default function MediaLearningTab({ user, onRequireLogin }) {
         ref={contentScrollRef}
         className="mx-auto grid min-h-0 w-full max-w-[1500px] flex-1 gap-4 overflow-y-auto bg-slate-50 p-4 pb-24 md:p-6 xl:grid-cols-[minmax(420px,0.9fr)_minmax(520px,1.1fr)] xl:overflow-hidden xl:pb-6 2xl:grid-cols-[minmax(520px,0.92fr)_minmax(640px,1.08fr)]"
       >
-        <div
-          className={cn(
-            "contents xl:hidden",
-            isScriptMode && "[&_[data-media-player-panel]]:sr-only [&_[data-media-player-panel]]:pointer-events-none",
-            (isTheaterMode || isVideoMode) && "[&_[data-media-script-panel]]:hidden"
-          )}
-        >
-          <div data-media-player-panel>{playerPanel}</div>
-          <div data-media-script-panel>{scriptPanel}</div>
-        </div>
-
-        <div className="hidden min-h-0 xl:col-span-2 xl:block xl:h-full">
-          {isVideoMode ? (
-            <div className="mx-auto h-full w-full max-w-5xl">{playerPanel}</div>
-          ) : isTheaterMode ? (
-            <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[minmax(720px,1.4fr)_minmax(360px,0.6fr)]">
-              {playerPanel}
-              {scriptPanel}
-            </div>
-          ) : isScriptMode ? (
-            <div className="grid h-full min-h-0 grid-cols-1 overflow-hidden">
-              <div className="pointer-events-none sr-only">{playerPanel}</div>
-              <div className="mx-auto h-full min-h-0 w-full max-w-4xl overflow-hidden">{scriptPanel}</div>
-            </div>
-          ) : (
-            <ResizablePanelGroup direction="horizontal" className="min-h-0 gap-0">
-              <ResizablePanel defaultSize="46%" minSize="34%" maxSize="64%">
-                <div className="h-full pr-3">{playerPanel}</div>
-              </ResizablePanel>
-              <ResizableHandle withHandle className="mx-1 bg-transparent after:bg-slate-200" />
-              <ResizablePanel defaultSize="54%" minSize="36%">
-                <div className="h-full pl-3">{scriptPanel}</div>
-              </ResizablePanel>
-            </ResizablePanelGroup>
-          )}
-        </div>
+        {!isDesktopLayout ? (
+          <div
+            className={cn(
+              "contents",
+              isScriptMode && "[&_[data-media-player-panel]]:sr-only [&_[data-media-player-panel]]:pointer-events-none",
+              (isTheaterMode || isVideoMode) && "[&_[data-media-script-panel]]:hidden"
+            )}
+          >
+            <div data-media-player-panel>{playerPanel}</div>
+            <div data-media-script-panel>{scriptPanel}</div>
+          </div>
+        ) : (
+          <div className="col-span-2 h-full min-h-0">
+            {isVideoMode ? (
+              <div className="mx-auto h-full w-full max-w-5xl">{playerPanel}</div>
+            ) : isTheaterMode ? (
+              <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[minmax(720px,1.4fr)_minmax(360px,0.6fr)]">
+                {playerPanel}
+                {scriptPanel}
+              </div>
+            ) : isScriptMode ? (
+              <div className="grid h-full min-h-0 grid-cols-1 overflow-hidden">
+                <div className="pointer-events-none sr-only">{playerPanel}</div>
+                <div className="mx-auto h-full min-h-0 w-full max-w-4xl overflow-hidden">{scriptPanel}</div>
+              </div>
+            ) : (
+              <ResizablePanelGroup direction="horizontal" className="min-h-0 gap-0">
+                <ResizablePanel defaultSize="46%" minSize="34%" maxSize="64%">
+                  <div className="h-full pr-3">{playerPanel}</div>
+                </ResizablePanel>
+                <ResizableHandle withHandle className="mx-1 bg-transparent after:bg-slate-200" />
+                <ResizablePanel defaultSize="54%" minSize="36%">
+                  <div className="h-full pl-3">{scriptPanel}</div>
+                </ResizablePanel>
+              </ResizablePanelGroup>
+            )}
+          </div>
+        )}
       </div>
 
       <PasteTranscriptDialog
