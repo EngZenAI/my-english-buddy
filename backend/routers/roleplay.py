@@ -34,7 +34,7 @@ from backend.llm import (
     stream_roleplay_reply,
     summarize_roleplay,
 )
-from backend.prompts.roleplay import roleplay_system_prompt
+from backend.prompts.roleplay import realtime_roleplay_instructions
 from backend.routers.common import CurrentUserDep, needs_translation, safe_persist_usage_capture
 from backend.schemas.roleplay import (
     RoleplayContinueIn,
@@ -187,6 +187,8 @@ def _create_realtime_call(
         "type": "realtime",
         "model": model,
         "instructions": instructions,
+        "output_modalities": ["audio"],
+        "max_output_tokens": 160,
         "audio": {
             "input": {
                 "transcription": {
@@ -275,18 +277,12 @@ async def roleplay_realtime_session(
         )
 
     words = await _roleplay_words(session, _user["id"], payload.scenario, payload.tag)
-    instructions = roleplay_system_prompt(
+    instructions = realtime_roleplay_instructions(
         payload.level,
         payload.scenario,
         payload.tag,
         payload.situation,
         words,
-    )
-    instructions += (
-        "\nRealtime voice mode:\n"
-        "- Start the role-play when the session begins if the user has not spoken yet.\n"
-        "- Keep spoken replies natural, concise, and fully in English.\n"
-        "- Do not provide Korean coaching in the spoken reply; coaching is handled separately.\n"
     )
     model = settings.openai_realtime_model
     voice = settings.openai_realtime_voice

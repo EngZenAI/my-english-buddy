@@ -2,6 +2,20 @@ export const REALTIME_IDLE_TIMEOUT_MS = 60_000;
 export const REALTIME_MAX_CONNECTION_MS = 55 * 60_000;
 export const REALTIME_DISCONNECT_GRACE_MS = 5_000;
 export const REALTIME_CONNECT_TIMEOUT_MS = 15_000;
+export const REALTIME_OPENING_INPUT_DELAY_MS = 750;
+
+export function buildRealtimeOpeningEvent() {
+  return {
+    type: "response.create",
+    response: { output_modalities: ["audio"] },
+  };
+}
+
+export function setRealtimeAudioInputEnabled(mediaStream, enabled) {
+  for (const track of mediaStream?.getAudioTracks?.() || []) {
+    track.enabled = enabled;
+  }
+}
 
 export function buildRealtimeHistoryEvents(messages) {
   return (messages || [])

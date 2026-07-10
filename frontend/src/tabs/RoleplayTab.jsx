@@ -44,9 +44,12 @@ import {
   REALTIME_CONNECT_TIMEOUT_MS,
   REALTIME_IDLE_TIMEOUT_MS,
   REALTIME_MAX_CONNECTION_MS,
+  REALTIME_OPENING_INPUT_DELAY_MS,
   buildRealtimeHistoryEvents,
+  buildRealtimeOpeningEvent,
   cleanupRealtimeResources,
   realtimeErrorInfo,
+  setRealtimeAudioInputEnabled,
 } from "@/lib/realtimeRoleplay";
 import {
   MessageScroller,
@@ -223,60 +226,43 @@ const OPIC_CARDS = [
   },
 ];
 
-// 역할이 둘인 상황은 AI가 첫 턴에 "어느 역할을 맡을래?"를 먼저 묻고, 학습자가 고른
-// 역할의 반대를 맡아 시작하도록 situation에 지시한다. (소개팅처럼 역할 구분이 없는 건 바로 시작)
+// AI와 학습자의 역할을 고정해 카드 클릭 즉시 상황 속 첫 대사로 시작한다.
 const GENERAL_CARDS = [
   {
     label: "카페 ☕",
     situation:
-      "This is a café role-play with two roles: barista or customer. FIRST, briefly set " +
-      "the scene and ask the learner which role they want to play — barista or customer. " +
-      "After they choose, take the OTHER role and begin. Menu: Americano, caffè latte, " +
-      "cappuccino, hot chocolate, croissant, blueberry muffin. Handle the order, suggest " +
-      "items, confirm size and payment, and add light small talk about the weather or day.",
+      "You are a café barista and the learner is a customer. Greet them and take their order. " +
+      "Offer a drink or pastry, confirm the size, and make brief small talk.",
   },
   {
     label: "레스토랑 서빙 🍽️",
     situation:
-      "This is a restaurant role-play with two roles: the server (waiter) or the diner. " +
-      "FIRST set the scene and ask the learner which role they want — server or diner. " +
-      "After they choose, take the OTHER role and begin. Cover greeting and seating, taking " +
-      "the order from the menu (starters: soup, salad; mains: steak, pasta, burger, grilled " +
-      "fish; drinks: wine, beer, soda), recommending the special, checking how everything is, " +
-      "and bringing the bill. Keep it natural and friendly.",
+      "You are a restaurant server and the learner is a diner. Welcome and seat them, then " +
+      "take their order, recommend a special, and later check on the meal.",
   },
   {
     label: "공항 체크인 ✈️",
     situation:
-      "This is an airport check-in role-play with two roles: the passenger or the check-in " +
-      "agent. FIRST set the scene and ask the learner which role they want — passenger or " +
-      "agent. After they choose, take the OTHER role and begin. Cover passport and " +
-      "destination, bags to check vs carry-on, window or aisle seat, and the boarding gate " +
-      "and time, with brief small talk about the trip.",
+      "You are an airport check-in agent and the learner is a passenger. Greet them and ask " +
+      "for their passport and destination, then discuss bags, seat choice, and boarding.",
   },
   {
     label: "면접 💼",
     situation:
-      "This is a job-interview role-play for a Marketing Associate position, with two " +
-      "roles: the candidate or the interviewer. FIRST set the scene and ask the learner " +
-      "which role they want — candidate or interviewer. After they choose, take the OTHER " +
-      "role and begin. Use common questions (tell me about yourself, why this job, a " +
-      "strength and a weakness, a challenge you solved) and follow up naturally.",
+      "You are interviewing the learner for a Marketing Associate position. Welcome them " +
+      "and begin with a natural interview question, then ask brief follow-ups.",
   },
   {
     label: "소개팅 💗",
     situation:
-      "This is a casual first-date role-play at a cozy café; you are the learner's date. " +
-      "Set the scene warmly and start. Take turns asking and sharing about hobbies, work, " +
-      "favorite food, travel, and music. Show interest, react warmly, and keep it light.",
+      "You are the learner's date at a cozy café. Greet them warmly and start a light " +
+      "conversation about hobbies, food, travel, or music.",
   },
   {
     label: "집 구하기 🏠",
     situation:
-      "This is an apartment-viewing role-play with two roles: the prospective tenant or the " +
-      "real-estate agent. FIRST set the scene and ask the learner which role they want — " +
-      "tenant or agent. After they choose, take the OTHER role and begin. It's a two-bedroom " +
-      "apartment; cover monthly rent, deposit, location, nearby transit, amenities, and move-in date.",
+      "You are a real-estate agent showing the learner a two-bedroom apartment. Welcome them " +
+      "and begin the tour, then discuss rent, deposit, transit, amenities, and move-in date.",
   },
 ];
 
@@ -337,6 +323,8 @@ export default function RoleplayTab({ user, isActive = true, onRequireLogin, age
   const realtimeMaxTimerRef = useRef(null);
   const realtimeDisconnectTimerRef = useRef(null);
   const realtimeConnectTimerRef = useRef(null);
+  const realtimeInputEnableTimerRef = useRef(null);
+  const realtimeOpeningGenerationRef = useRef(null);
   const realtimeFailureRecordedRef = useRef(false);
   const realtimeLastStartRef = useRef(null);
   const startAbortRef = useRef(null);
@@ -556,6 +544,7 @@ export default function RoleplayTab({ user, isActive = true, onRequireLogin, age
       realtimeMaxTimerRef,
       realtimeDisconnectTimerRef,
       realtimeConnectTimerRef,
+      realtimeInputEnableTimerRef,
     ]) {
       if (timerRef.current) window.clearTimeout(timerRef.current);
       timerRef.current = null;
@@ -571,6 +560,7 @@ export default function RoleplayTab({ user, isActive = true, onRequireLogin, age
     realtimePeerRef.current = null;
     realtimeMediaStreamRef.current = null;
     realtimeRemoteAudioRef.current = null;
+    realtimeOpeningGenerationRef.current = null;
     if (markInterrupted && realtimeAssistantIdRef.current) {
       const interruptedId = realtimeAssistantIdRef.current;
       updateMessages((prev) =>
@@ -1017,6 +1007,7 @@ export default function RoleplayTab({ user, isActive = true, onRequireLogin, age
     if (event.type === "response.done") {
       const response = event.response || {};
       const success = !response.status || response.status === "completed";
+      const openingCompleted = realtimeOpeningGenerationRef.current === generation;
       recordRealtimeUsage("realtime", response.usage || event.usage, response.model, {
         usageGroupId: newRealtimeUsageGroupId("response", response.id || event.event_id),
         success,
@@ -1026,7 +1017,24 @@ export default function RoleplayTab({ user, isActive = true, onRequireLogin, age
           (success ? "" : `Realtime response ${response.status || "failed"}`),
       });
       finishRealtimeAssistantMessage();
-      armRealtimeIdleTimer(generation);
+      if (openingCompleted) {
+        realtimeOpeningGenerationRef.current = null;
+        realtimeInputEnableTimerRef.current = window.setTimeout(() => {
+          realtimeInputEnableTimerRef.current = null;
+          if (
+            generation !== realtimeGenerationRef.current ||
+            realtimePhaseRef.current !== "connected"
+          ) {
+            return;
+          }
+          setRealtimeAudioInputEnabled(realtimeMediaStreamRef.current, true);
+          setListening(true);
+          setVoiceNotice("이제 영어로 말해보세요.");
+          armRealtimeIdleTimer(generation);
+        }, REALTIME_OPENING_INPUT_DELAY_MS);
+      } else {
+        armRealtimeIdleTimer(generation);
+      }
     }
   };
 
@@ -1065,7 +1073,10 @@ export default function RoleplayTab({ user, isActive = true, onRequireLogin, age
       setFinishNoticeDismissed(false);
     }
 
-    if (!navigator.mediaDevices?.getUserMedia || typeof RTCPeerConnection === "undefined") {
+    if (
+      typeof RTCPeerConnection === "undefined" ||
+      !navigator.mediaDevices?.getUserMedia
+    ) {
       roleplayRequestInFlightRef.current = false;
       updateRealtimePhase("failed");
       setStreaming(false);
@@ -1114,6 +1125,7 @@ export default function RoleplayTab({ user, isActive = true, onRequireLogin, age
       }
       resources.mediaStream = mediaStream;
       realtimeMediaStreamRef.current = mediaStream;
+      if (!resume) setRealtimeAudioInputEnabled(mediaStream, false);
       peer = new RTCPeerConnection();
       resources.peer = peer;
       realtimePeerRef.current = peer;
@@ -1145,7 +1157,7 @@ export default function RoleplayTab({ user, isActive = true, onRequireLogin, age
           realtimeConnectTimerRef.current = null;
         }
         updateRealtimePhase("connected");
-        setListening(true);
+        setListening(resume);
         setStreaming(!resume);
         setVoiceNotice(
           resume
@@ -1159,15 +1171,9 @@ export default function RoleplayTab({ user, isActive = true, onRequireLogin, age
           for (const historyEvent of buildRealtimeHistoryEvents(messagesRef.current)) {
             channel.send(JSON.stringify(historyEvent));
           }
-        } else {
-          channel.send(JSON.stringify({
-            type: "response.create",
-            response: {
-              output_modalities: ["audio"],
-              instructions:
-                "Start the role-play now: set the scene briefly, then greet the learner and ask your first question.",
-            },
-          }));
+        } else if (realtimeOpeningGenerationRef.current !== generation) {
+          realtimeOpeningGenerationRef.current = generation;
+          channel.send(JSON.stringify(buildRealtimeOpeningEvent()));
         }
       };
       channel.onmessage = (messageEvent) => {
