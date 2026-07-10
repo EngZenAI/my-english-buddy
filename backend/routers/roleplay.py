@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import threading
+import time
 from _thread import LockType
 
 import requests
@@ -19,7 +20,12 @@ from backend.db.repositories import (
     record_api_usage_events,
     save_roleplay_session,
 )
-from backend.exceptions import ROLEPLAY_CONTEXT_ERRORS, ROLEPLAY_RUNTIME_ERRORS, log_exception
+from backend.exceptions import (
+    ROLEPLAY_CONTEXT_ERRORS,
+    ROLEPLAY_RUNTIME_ERRORS,
+    RealtimeUpstreamError,
+    log_exception,
+)
 from backend.llm import (
     LLMConcurrencyLimitError,
     coach_roleplay_turn,
@@ -28,7 +34,7 @@ from backend.llm import (
     stream_roleplay_reply,
     summarize_roleplay,
 )
-from backend.prompts.roleplay import roleplay_system_prompt
+from backend.prompts.roleplay import realtime_roleplay_instructions
 from backend.routers.common import CurrentUserDep, needs_translation, safe_persist_usage_capture
 from backend.schemas.roleplay import (
     RoleplayContinueIn,
@@ -112,55 +118,147 @@ def _realtime_safety_identifier(user_id: str) -> str:
     return hashlib.sha256(seed).hexdigest()
 
 
-def _create_realtime_client_secret(
+REALTIME_RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+
+
+def _realtime_retry_delay(response: requests.Response | None) -> float:
+    if response is not None:
+        raw = response.headers.get("retry-after", "")
+        try:
+            return min(2.0, max(0.0, float(raw)))
+        except ValueError:
+            pass
+    return 0.35
+
+
+def _realtime_error_parts(response: requests.Response) -> tuple[str, str | None]:
+    try:
+        payload = response.json()
+    except requests.exceptions.JSONDecodeError:
+        return "upstream_error", None
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error, dict):
+        return "upstream_error", None
+    return str(error.get("type") or "upstream_error"), error.get("code")
+
+
+def _raise_realtime_upstream_error(
+    *,
+    response: requests.Response | None = None,
+    request_error: requests.RequestException | None = None,
+) -> None:
+    upstream_status = response.status_code if response is not None else None
+    request_id = response.headers.get("x-request-id") if response is not None else None
+    if upstream_status == 429:
+        raise RealtimeUpstreamError(
+            status_code=429,
+            code="realtime_rate_limited",
+            message="음성 대화 요청이 많습니다. 잠시 후 다시 시도해주세요.",
+            retryable=True,
+            request_id=request_id,
+        )
+    if upstream_status is None or upstream_status >= 500:
+        raise RealtimeUpstreamError(
+            status_code=503,
+            code="realtime_unavailable",
+            message="음성 대화 연결이 일시적으로 불안정합니다. 다시 시도해주세요.",
+            retryable=True,
+            request_id=request_id,
+        ) from request_error
+    raise RealtimeUpstreamError(
+        status_code=502,
+        code="realtime_configuration_error",
+        message="음성 대화 설정을 확인하지 못했습니다.",
+        retryable=False,
+        request_id=request_id,
+    )
+
+
+def _create_realtime_call(
     *,
     user_id: str,
+    sdp: str,
     instructions: str,
     model: str,
     voice: str,
     transcription_model: str,
-) -> dict:
-    body = {
-        "expires_after": {"anchor": "created_at", "seconds": 600},
-        "session": {
-            "type": "realtime",
-            "model": model,
-            "instructions": instructions,
-            "audio": {
-                "input": {
-                    "transcription": {
-                        "model": transcription_model,
-                    },
+) -> tuple[str, str | None]:
+    session_config = {
+        "type": "realtime",
+        "model": model,
+        "instructions": instructions,
+        "output_modalities": ["audio"],
+        "max_output_tokens": 160,
+        "audio": {
+            "input": {
+                "transcription": {
+                    "model": transcription_model,
                 },
-                "output": {
-                    "voice": voice,
-                },
+            },
+            "output": {
+                "voice": voice,
             },
         },
     }
-    response = requests.post(
-        "https://api.openai.com/v1/realtime/client_secrets",
-        headers={
-            "Authorization": f"Bearer {settings.effective_roleplay_api_key}",
-            "Content-Type": "application/json",
-            "OpenAI-Safety-Identifier": _realtime_safety_identifier(user_id),
-        },
-        json=body,
-        timeout=20,
-    )
-    if response.status_code >= 400:
-        detail = response.text[:1000]
-        raise HTTPException(
-            status_code=502,
-            detail=f"OpenAI Realtime 세션 발급에 실패했습니다: {detail}",
+    headers = {
+        "Authorization": f"Bearer {settings.effective_roleplay_api_key}",
+        "OpenAI-Safety-Identifier": _realtime_safety_identifier(user_id),
+    }
+    files = {
+        "sdp": (None, sdp),
+        "session": (None, json.dumps(session_config, ensure_ascii=False)),
+    }
+    for attempt in range(1, 3):
+        response: requests.Response | None = None
+        try:
+            response = requests.post(
+                "https://api.openai.com/v1/realtime/calls",
+                headers=headers,
+                files=files,
+                timeout=(10, 25),
+            )
+        except (requests.ConnectTimeout, requests.ConnectionError) as exc:
+            logger.warning(
+                "OpenAI Realtime connection failed error=%s attempt=%s",
+                type(exc).__name__,
+                attempt,
+            )
+            if attempt == 1:
+                time.sleep(_realtime_retry_delay(None))
+                continue
+            _raise_realtime_upstream_error(request_error=exc)
+        except requests.ReadTimeout as exc:
+            logger.warning(
+                "OpenAI Realtime read timeout attempt=%s",
+                attempt,
+            )
+            _raise_realtime_upstream_error(request_error=exc)
+
+        if response.ok:
+            return response.text, response.headers.get("x-request-id")
+
+        error_type, error_code = _realtime_error_parts(response)
+        request_id = response.headers.get("x-request-id")
+        logger.warning(
+            "OpenAI Realtime call failed status=%s type=%s code=%s request_id=%s attempt=%s",
+            response.status_code,
+            error_type,
+            error_code,
+            request_id,
+            attempt,
         )
-    return response.json()
+        if attempt == 1 and response.status_code in REALTIME_RETRYABLE_STATUSES:
+            time.sleep(_realtime_retry_delay(response))
+            continue
+        _raise_realtime_upstream_error(response=response)
+
+    raise AssertionError("Realtime call retry loop exited unexpectedly")
 
 
 @router.post(
     "/roleplay/realtime/session",
-    summary="Realtime 음성 롤플레잉 세션 발급",
-    description="브라우저 WebRTC 연결에 사용할 OpenAI Realtime ephemeral client secret을 발급합니다.",
+    summary="Realtime 음성 롤플레잉 WebRTC 연결",
+    description="브라우저 SDP offer와 서버 측 세션 설정으로 OpenAI WebRTC 연결을 초기화합니다.",
 )
 async def roleplay_realtime_session(
     payload: RoleplayRealtimeSessionIn,
@@ -168,54 +266,66 @@ async def roleplay_realtime_session(
     _user: CurrentUserDep,
 ):
     if not settings.effective_roleplay_api_key:
-        return {
-            "client_secret": "",
-            "mode": "fallback",
-            "reason": "roleplay_api_key_missing",
-        }
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "realtime_configuration_error",
+                "message": "음성 대화 API 설정이 필요합니다.",
+                "retryable": False,
+                "request_id": None,
+            },
+        )
 
     words = await _roleplay_words(session, _user["id"], payload.scenario, payload.tag)
-    instructions = roleplay_system_prompt(
+    instructions = realtime_roleplay_instructions(
         payload.level,
         payload.scenario,
         payload.tag,
         payload.situation,
         words,
     )
-    instructions += (
-        "\nRealtime voice mode:\n"
-        "- Start the role-play when the session begins if the user has not spoken yet.\n"
-        "- Keep spoken replies natural, concise, and fully in English.\n"
-        "- Do not provide Korean coaching in the spoken reply; coaching is handled separately.\n"
-    )
     model = settings.openai_realtime_model
     voice = settings.openai_realtime_voice
     transcription_model = settings.openai_realtime_transcribe_model
     try:
-        data = await run_in_threadpool(
-            _create_realtime_client_secret,
+        answer_sdp, request_id = await run_in_threadpool(
+            _create_realtime_call,
             user_id=str(_user["id"]),
+            sdp=payload.sdp,
             instructions=instructions,
             model=model,
             voice=voice,
             transcription_model=transcription_model,
         )
-    except HTTPException:
-        raise
+    except RealtimeUpstreamError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={
+                "code": exc.code,
+                "message": exc.message,
+                "retryable": exc.retryable,
+                "request_id": exc.request_id,
+            },
+        ) from exc
     except ROLEPLAY_RUNTIME_ERRORS:
         log_exception(logger, "OpenAI Realtime session creation failed")
         raise HTTPException(
-            status_code=502,
-            detail="OpenAI Realtime 세션 발급에 실패했습니다. 잠시 후 다시 시도해주세요.",
+            status_code=503,
+            detail={
+                "code": "realtime_unavailable",
+                "message": "음성 대화 연결이 일시적으로 불안정합니다. 다시 시도해주세요.",
+                "retryable": True,
+                "request_id": None,
+            },
         )
 
     return {
-        "client_secret": data.get("value") or data.get("client_secret", {}).get("value") or "",
+        "answer_sdp": answer_sdp,
         "mode": "realtime",
         "model": model,
         "voice": voice,
         "transcription_model": transcription_model,
-        "expires_at": data.get("expires_at") or data.get("client_secret", {}).get("expires_at"),
+        "request_id": request_id,
     }
 
 

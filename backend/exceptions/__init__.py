@@ -22,6 +22,7 @@ from backend.exceptions.categories import (
     SQLALCHEMY_ERRORS,
 )
 from backend.exceptions.handling import log_exception
+from backend.exceptions.realtime import RealtimeUpstreamError
 
 __all__ = [
     "AGENT_JOB_ERRORS",
@@ -45,5 +46,6 @@ __all__ = [
     "ROLEPLAY_CONTEXT_ERRORS",
     "SQLALCHEMY_ERRORS",
     "RECORD_MAPPING_ERRORS",
+    "RealtimeUpstreamError",
     "log_exception",
 ]

@@ -32,6 +32,26 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  REALTIME_DISCONNECT_GRACE_MS,
+  REALTIME_CONNECT_TIMEOUT_MS,
+  REALTIME_IDLE_TIMEOUT_MS,
+  REALTIME_MAX_CONNECTION_MS,
+  REALTIME_OPENING_INPUT_DELAY_MS,
+  buildRealtimeHistoryEvents,
+  buildRealtimeOpeningEvent,
+  cleanupRealtimeResources,
+  realtimeErrorInfo,
+  setRealtimeAudioInputEnabled,
+} from "@/lib/realtimeRoleplay";
+import {
   MessageScroller,
   MessageScrollerButton,
   MessageScrollerContent,
@@ -206,64 +226,47 @@ const OPIC_CARDS = [
   },
 ];
 
-// 역할이 둘인 상황은 AI가 첫 턴에 "어느 역할을 맡을래?"를 먼저 묻고, 학습자가 고른
-// 역할의 반대를 맡아 시작하도록 situation에 지시한다. (소개팅처럼 역할 구분이 없는 건 바로 시작)
+// AI와 학습자의 역할을 고정해 카드 클릭 즉시 상황 속 첫 대사로 시작한다.
 const GENERAL_CARDS = [
   {
     label: "카페 ☕",
     situation:
-      "This is a café role-play with two roles: barista or customer. FIRST, briefly set " +
-      "the scene and ask the learner which role they want to play — barista or customer. " +
-      "After they choose, take the OTHER role and begin. Menu: Americano, caffè latte, " +
-      "cappuccino, hot chocolate, croissant, blueberry muffin. Handle the order, suggest " +
-      "items, confirm size and payment, and add light small talk about the weather or day.",
+      "You are a café barista and the learner is a customer. Greet them and take their order. " +
+      "Offer a drink or pastry, confirm the size, and make brief small talk.",
   },
   {
     label: "레스토랑 서빙 🍽️",
     situation:
-      "This is a restaurant role-play with two roles: the server (waiter) or the diner. " +
-      "FIRST set the scene and ask the learner which role they want — server or diner. " +
-      "After they choose, take the OTHER role and begin. Cover greeting and seating, taking " +
-      "the order from the menu (starters: soup, salad; mains: steak, pasta, burger, grilled " +
-      "fish; drinks: wine, beer, soda), recommending the special, checking how everything is, " +
-      "and bringing the bill. Keep it natural and friendly.",
+      "You are a restaurant server and the learner is a diner. Welcome and seat them, then " +
+      "take their order, recommend a special, and later check on the meal.",
   },
   {
     label: "공항 체크인 ✈️",
     situation:
-      "This is an airport check-in role-play with two roles: the passenger or the check-in " +
-      "agent. FIRST set the scene and ask the learner which role they want — passenger or " +
-      "agent. After they choose, take the OTHER role and begin. Cover passport and " +
-      "destination, bags to check vs carry-on, window or aisle seat, and the boarding gate " +
-      "and time, with brief small talk about the trip.",
+      "You are an airport check-in agent and the learner is a passenger. Greet them and ask " +
+      "for their passport and destination, then discuss bags, seat choice, and boarding.",
   },
   {
     label: "면접 💼",
     situation:
-      "This is a job-interview role-play for a Marketing Associate position, with two " +
-      "roles: the candidate or the interviewer. FIRST set the scene and ask the learner " +
-      "which role they want — candidate or interviewer. After they choose, take the OTHER " +
-      "role and begin. Use common questions (tell me about yourself, why this job, a " +
-      "strength and a weakness, a challenge you solved) and follow up naturally.",
+      "You are interviewing the learner for a Marketing Associate position. Welcome them " +
+      "and begin with a natural interview question, then ask brief follow-ups.",
   },
   {
     label: "소개팅 💗",
     situation:
-      "This is a casual first-date role-play at a cozy café; you are the learner's date. " +
-      "Set the scene warmly and start. Take turns asking and sharing about hobbies, work, " +
-      "favorite food, travel, and music. Show interest, react warmly, and keep it light.",
+      "You are the learner's date at a cozy café. Greet them warmly and start a light " +
+      "conversation about hobbies, food, travel, or music.",
   },
   {
     label: "집 구하기 🏠",
     situation:
-      "This is an apartment-viewing role-play with two roles: the prospective tenant or the " +
-      "real-estate agent. FIRST set the scene and ask the learner which role they want — " +
-      "tenant or agent. After they choose, take the OTHER role and begin. It's a two-bedroom " +
-      "apartment; cover monthly rent, deposit, location, nearby transit, amenities, and move-in date.",
+      "You are a real-estate agent showing the learner a two-bedroom apartment. Welcome them " +
+      "and begin the tour, then discuss rent, deposit, transit, amenities, and move-in date.",
   },
 ];
 
-export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }) {
+export default function RoleplayTab({ user, isActive = true, onRequireLogin, agentLaunch = null }) {
   const [subTab, setSubTab] = useState("play"); // play | voice
   const [sideTab, setSideTab] = useState("coach");
   const [level, setLevel] = useState("intermediate");
@@ -285,9 +288,9 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
   const [savedCount, setSavedCount] = useState(null); // 저장 결과 안내
   const [finishNoticeDismissed, setFinishNoticeDismissed] = useState(false);
   const [streaming, setStreaming] = useState(false);
-  const [realtimeConnecting, setRealtimeConnecting] = useState(false);
-  const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [realtimePhase, setRealtimePhase] = useState("idle");
   const [voiceFallbackActive, setVoiceFallbackActive] = useState(false);
+  const [pendingConversationAction, setPendingConversationAction] = useState(null);
   const [scrollSignal, setScrollSignal] = useState(0);
   const [sessionStartedAt, setSessionStartedAt] = useState(null);
   const [elapsedNow, setElapsedNow] = useState(() => Date.now());
@@ -313,12 +316,25 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
   const realtimeTranscriptionModelRef = useRef("");
   const realtimeConnectionUsageIdRef = useRef("");
   const realtimeUsageFlushRef = useRef(false);
+  const realtimePhaseRef = useRef("idle");
+  const realtimeGenerationRef = useRef(0);
+  const realtimeResourcesRef = useRef(null);
+  const realtimeIdleTimerRef = useRef(null);
+  const realtimeMaxTimerRef = useRef(null);
+  const realtimeDisconnectTimerRef = useRef(null);
+  const realtimeConnectTimerRef = useRef(null);
+  const realtimeInputEnableTimerRef = useRef(null);
+  const realtimeOpeningGenerationRef = useRef(null);
+  const realtimeFailureRecordedRef = useRef(false);
+  const realtimeLastStartRef = useRef(null);
   const startAbortRef = useRef(null);
   const streamAbortRef = useRef(null);
   const requestSeqRef = useRef(0);
   const roleplayRequestInFlightRef = useRef(false);
   const summaryInFlightRef = useRef(false);
   const agentLaunchIdRef = useRef(null);
+  const realtimeConnecting = realtimePhase === "connecting";
+  const realtimeConnected = realtimePhase === "connected";
 
   // 라벨은 태그 모드 칩 + 정리 페이지의 '단어장 추가' 태그 선택에 쓰이므로 로그인 시 로드.
   const labelsQuery = useQuery({
@@ -384,6 +400,18 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
               title: "말할 준비가 됐어요",
               description: "마이크가 켜져 있어요. 영어로 말해보세요.",
               tone: "primary",
+            }
+      : realtimePhase === "failed"
+        ? {
+            title: "음성 연결을 확인해주세요",
+            description: "다시 연결하거나 대체 음성 모드로 이어갈 수 있어요.",
+            tone: "destructive",
+          }
+        : realtimePhase === "paused"
+          ? {
+              title: "음성 대화가 일시정지됐어요",
+              description: "대화 기록은 그대로이며 언제든 다시 연결할 수 있어요.",
+              tone: "warning",
             }
       : voiceFallbackActive
         ? streaming
@@ -505,44 +533,94 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     setSpeaking(false);
   };
 
-  const sendRealtimeEvent = (event) => {
-    const channel = realtimeDataChannelRef.current;
-    if (!channel || channel.readyState !== "open") return false;
-    channel.send(JSON.stringify(event));
-    return true;
+  const updateRealtimePhase = (phase) => {
+    realtimePhaseRef.current = phase;
+    setRealtimePhase(phase);
   };
 
-  const closeRealtimeSession = () => {
-    realtimeDataChannelRef.current?.close?.();
+  const clearRealtimeTimers = () => {
+    for (const timerRef of [
+      realtimeIdleTimerRef,
+      realtimeMaxTimerRef,
+      realtimeDisconnectTimerRef,
+      realtimeConnectTimerRef,
+      realtimeInputEnableTimerRef,
+    ]) {
+      if (timerRef.current) window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  const closeRealtimeSession = ({ phase = "idle", markInterrupted = false } = {}) => {
+    realtimeGenerationRef.current += 1;
+    clearRealtimeTimers();
+    cleanupRealtimeResources(realtimeResourcesRef.current);
+    realtimeResourcesRef.current = null;
     realtimeDataChannelRef.current = null;
-    realtimePeerRef.current?.close?.();
     realtimePeerRef.current = null;
-    realtimeMediaStreamRef.current?.getTracks?.().forEach((track) => track.stop());
     realtimeMediaStreamRef.current = null;
-    if (realtimeRemoteAudioRef.current) {
-      realtimeRemoteAudioRef.current.pause?.();
-      realtimeRemoteAudioRef.current.srcObject = null;
-      realtimeRemoteAudioRef.current = null;
+    realtimeRemoteAudioRef.current = null;
+    realtimeOpeningGenerationRef.current = null;
+    if (markInterrupted && realtimeAssistantIdRef.current) {
+      const interruptedId = realtimeAssistantIdRef.current;
+      updateMessages((prev) =>
+        prev.map((message) =>
+          message.id === interruptedId
+            ? { ...message, streaming: false, interrupted: true }
+            : message,
+        ),
+      );
     }
     realtimeAssistantIdRef.current = null;
     realtimeAssistantTextRef.current = "";
     realtimePendingUserTextRef.current = "";
     realtimeCoachingKeyRef.current = "";
-    realtimeTranscriptionModelRef.current = "";
     roleplayRequestInFlightRef.current = false;
-    setRealtimeConnecting(false);
-    setRealtimeConnected(false);
+    updateRealtimePhase(phase);
     setListening(false);
     setSpeaking(false);
     setStreaming(false);
+  };
+
+  const pauseRealtimeSession = (notice) => {
+    if (!["connecting", "connected"].includes(realtimePhaseRef.current)) return;
+    closeRealtimeSession({ phase: "paused", markInterrupted: true });
+    setVoiceError("");
+    setVoiceNotice(notice);
+  };
+
+  const armRealtimeIdleTimer = (generation) => {
+    if (realtimeIdleTimerRef.current) window.clearTimeout(realtimeIdleTimerRef.current);
+    realtimeIdleTimerRef.current = window.setTimeout(() => {
+      if (
+        generation !== realtimeGenerationRef.current ||
+        realtimePhaseRef.current !== "connected"
+      ) {
+        return;
+      }
+      pauseRealtimeSession("1분 동안 응답이 없어 음성 연결을 잠시 멈췄어요.");
+    }, REALTIME_IDLE_TIMEOUT_MS);
+  };
+
+  const armRealtimeMaxTimer = (generation) => {
+    if (realtimeMaxTimerRef.current) window.clearTimeout(realtimeMaxTimerRef.current);
+    realtimeMaxTimerRef.current = window.setTimeout(() => {
+      if (
+        generation !== realtimeGenerationRef.current ||
+        realtimePhaseRef.current !== "connected"
+      ) {
+        return;
+      }
+      pauseRealtimeSession("연결 시간이 길어져 안전하게 일시정지했어요. 바로 이어갈 수 있어요.");
+    }, REALTIME_MAX_CONNECTION_MS);
   };
 
   const resetConversation = () => {
     cancelRoleplayRequests();
     stopListening();
     stopSpeaking();
-    closeRealtimeSession();
-    setMessages([]);
+    closeRealtimeSession({ phase: "idle" });
+    updateMessages([]);
     setSessionStartedAt(null);
     setSession(null);
     sessionRef.current = null;
@@ -556,6 +634,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     setPickedVocab(new Set());
     setSavedCount(null);
     setFinishNoticeDismissed(false);
+    setPendingConversationAction(null);
   };
 
   useEffect(() => {
@@ -571,8 +650,36 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
       listeningIntentRef.current = false;
       clearVoiceTimers();
       recognitionRef.current?.abort?.();
-      closeRealtimeSession();
+      closeRealtimeSession({ phase: "idle" });
       if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isActive) return;
+    stopListening();
+    stopSpeaking();
+    setVoiceFallbackActive(false);
+    pauseRealtimeSession("다른 탭으로 이동해 음성 연결을 잠시 멈췄어요.");
+    if (sessionRef.current) setVoiceNotice("다른 탭으로 이동해 음성 기능을 잠시 멈췄어요.");
+  }, [isActive]);
+
+  useEffect(() => {
+    const pauseForHiddenPage = (force = false) => {
+      if (!force && document.visibilityState !== "hidden") return;
+      stopListening();
+      stopSpeaking();
+      setVoiceFallbackActive(false);
+      pauseRealtimeSession("화면을 벗어나 음성 연결을 잠시 멈췄어요.");
+      if (sessionRef.current) setVoiceNotice("화면을 벗어나 음성 기능을 잠시 멈췄어요.");
+    };
+    const handleVisibilityChange = () => pauseForHiddenPage(false);
+    const handlePageHide = () => pauseForHiddenPage(true);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", handlePageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pagehide", handlePageHide);
     };
   }, []);
 
@@ -610,19 +717,26 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     cfg,
     title = "",
     notice = "음성 대화를 준비하고 있어요.",
+    { resume = false } = {},
   ) => {
     cancelRoleplayRequests();
-    closeRealtimeSession();
+    closeRealtimeSession({ phase: "idle", markInterrupted: resume });
     stopSpeaking();
     setVoiceFallbackActive(true);
     setVoiceError("");
     setVoiceNotice(notice);
     setStreaming(false);
-    setSessionStartedAt(Date.now());
+    setSessionStartedAt((current) => current || Date.now());
     setElapsedNow(Date.now());
-    const nextSession = { ...cfg, title };
-    setSession(nextSession);
-    sessionRef.current = nextSession;
+    const nextSession = resume && sessionRef.current ? sessionRef.current : { ...cfg, title };
+    if (!resume || !sessionRef.current) {
+      setSession(nextSession);
+      sessionRef.current = nextSession;
+    }
+    if (resume && messagesRef.current.length) {
+      setVoiceNotice("대체 음성 모드로 전환했어요. 말하기 버튼으로 대화를 이어가세요.");
+      return;
+    }
     updateMessages([]);
     setMsg("");
     setVoiceTranscript("");
@@ -808,29 +922,37 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     scrollToBottom();
   };
 
-  const handleRealtimeEvent = (event) => {
-    if (!event?.type) return;
+  const handleRealtimeEvent = (event, generation) => {
+    if (!event?.type || generation !== realtimeGenerationRef.current) return;
     if (event.type === "error") {
-      recordRealtimeUsage("realtime_error", event.usage, realtimeModelRef.current, {
-        usageGroupId: newRealtimeUsageGroupId("error", event.event_id),
-        success: false,
-        errorMessage: event.error?.message || event.error?.code || "Realtime API error",
-      });
+      if (!realtimeFailureRecordedRef.current) {
+        realtimeFailureRecordedRef.current = true;
+        recordRealtimeUsage("realtime_error", event.usage, realtimeModelRef.current, {
+          usageGroupId: newRealtimeUsageGroupId("error", event.event_id),
+          success: false,
+          errorMessage: event.error?.message || event.error?.code || "Realtime API error",
+        });
+      }
+      closeRealtimeSession({ phase: "failed", markInterrupted: true });
       setVoiceError("음성 대화 중 문제가 생겼어요. 잠시 후 다시 시작해주세요.");
-      setStreaming(false);
-      setSpeaking(false);
+      setVoiceNotice("");
       return;
     }
     if (event.type === "input_audio_buffer.speech_started") {
+      if (realtimeIdleTimerRef.current) window.clearTimeout(realtimeIdleTimerRef.current);
+      realtimeIdleTimerRef.current = null;
       setListening(true);
       setVoiceNotice("");
       return;
     }
     if (event.type === "input_audio_buffer.speech_stopped") {
       setListening(false);
+      armRealtimeIdleTimer(generation);
       return;
     }
     if (event.type === "conversation.item.input_audio_transcription.completed") {
+      if (realtimeIdleTimerRef.current) window.clearTimeout(realtimeIdleTimerRef.current);
+      realtimeIdleTimerRef.current = null;
       appendRealtimeUserTranscript(event.transcript);
       recordRealtimeUsage(
         "realtime_transcription",
@@ -854,9 +976,12 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
         success: false,
         errorMessage: event.error?.message || "Realtime transcription failed",
       });
+      armRealtimeIdleTimer(generation);
       return;
     }
     if (event.type === "response.created") {
+      if (realtimeIdleTimerRef.current) window.clearTimeout(realtimeIdleTimerRef.current);
+      realtimeIdleTimerRef.current = null;
       setStreaming(true);
       setSpeaking(true);
       setVoiceNotice("");
@@ -882,6 +1007,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     if (event.type === "response.done") {
       const response = event.response || {};
       const success = !response.status || response.status === "completed";
+      const openingCompleted = realtimeOpeningGenerationRef.current === generation;
       recordRealtimeUsage("realtime", response.usage || event.usage, response.model, {
         usageGroupId: newRealtimeUsageGroupId("response", response.id || event.event_id),
         success,
@@ -891,160 +1017,279 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
           (success ? "" : `Realtime response ${response.status || "failed"}`),
       });
       finishRealtimeAssistantMessage();
+      if (openingCompleted) {
+        realtimeOpeningGenerationRef.current = null;
+        realtimeInputEnableTimerRef.current = window.setTimeout(() => {
+          realtimeInputEnableTimerRef.current = null;
+          if (
+            generation !== realtimeGenerationRef.current ||
+            realtimePhaseRef.current !== "connected"
+          ) {
+            return;
+          }
+          setRealtimeAudioInputEnabled(realtimeMediaStreamRef.current, true);
+          setListening(true);
+          setVoiceNotice("이제 영어로 말해보세요.");
+          armRealtimeIdleTimer(generation);
+        }, REALTIME_OPENING_INPUT_DELAY_MS);
+      } else {
+        armRealtimeIdleTimer(generation);
+      }
     }
   };
 
-  const startRealtimeSession = async (cfg, title = "") => {
-    if (realtimeConnecting || realtimeConnected || roleplayRequestInFlightRef.current) return;
+  const startRealtimeSession = async (cfg, title = "", { resume = false } = {}) => {
+    if (realtimePhaseRef.current === "connecting" || roleplayRequestInFlightRef.current) return;
     cancelRoleplayRequests();
-    closeRealtimeSession();
+    closeRealtimeSession({ phase: "idle", markInterrupted: resume });
     stopSpeaking();
-    if (!navigator.mediaDevices?.getUserMedia || typeof RTCPeerConnection === "undefined") {
-      startFallbackVoiceSession(
-        cfg,
-        title,
-        "사용 중인 브라우저에 맞춰 음성 대화를 준비하고 있어요.",
-      );
-      return;
-    }
+    const generation = realtimeGenerationRef.current + 1;
+    realtimeGenerationRef.current = generation;
+    const controller = new AbortController();
+    const nextSession = resume && sessionRef.current ? sessionRef.current : { ...cfg, title };
+    realtimeLastStartRef.current = { cfg: nextSession, title: nextSession.title || title, resume };
+    realtimeFailureRecordedRef.current = false;
+    realtimeConnectionUsageIdRef.current = newRealtimeUsageGroupId("connection");
+    realtimeModelRef.current ||= "gpt-realtime-2.1-mini";
+    realtimeTranscriptionModelRef.current ||= "gpt-4o-mini-transcribe";
+
     setVoiceFallbackActive(false);
     roleplayRequestInFlightRef.current = true;
-    setRealtimeConnecting(true);
-    setStreaming(true);
+    updateRealtimePhase("connecting");
+    setStreaming(!resume);
     setVoiceError("");
     setVoiceNotice("Tutor와 음성 대화를 준비하고 있어요.");
-    setSessionStartedAt(Date.now());
+    setSessionStartedAt((current) => (resume ? current || Date.now() : Date.now()));
     setElapsedNow(Date.now());
-    const nextSession = { ...cfg, title };
     setSession(nextSession);
     sessionRef.current = nextSession;
-    updateMessages([]);
-    setMsg("");
-    setVoiceTranscript("");
-    setSummary(null);
-    setPickedVocab(new Set());
-    setSavedCount(null);
-    setFinishNoticeDismissed(false);
-    realtimeConnectionUsageIdRef.current = newRealtimeUsageGroupId("connection");
+    if (!resume) {
+      updateMessages([]);
+      setMsg("");
+      setVoiceTranscript("");
+      setSummary(null);
+      setPickedVocab(new Set());
+      setSavedCount(null);
+      setFinishNoticeDismissed(false);
+    }
+
+    if (
+      typeof RTCPeerConnection === "undefined" ||
+      !navigator.mediaDevices?.getUserMedia
+    ) {
+      roleplayRequestInFlightRef.current = false;
+      updateRealtimePhase("failed");
+      setStreaming(false);
+      setVoiceError("이 브라우저에서는 Realtime 음성 연결을 사용할 수 없습니다.");
+      setVoiceNotice("");
+      return;
+    }
 
     let peer = null;
     let channel = null;
     let mediaStream = null;
-    try {
-      const tokenData = await api.roleplayRealtimeSession({ ...cfg, title });
-      if (tokenData.mode === "fallback") {
-        roleplayRequestInFlightRef.current = false;
-        startFallbackVoiceSession(cfg, title);
+    let remoteAudio = null;
+    const resources = {
+      abortController: controller,
+      peer: null,
+      channel: null,
+      mediaStream: null,
+      audio: null,
+      cleaned: false,
+    };
+    realtimeResourcesRef.current = resources;
+
+    const failConnection = (technicalMessage, userMessage) => {
+      if (
+        generation !== realtimeGenerationRef.current ||
+        realtimeFailureRecordedRef.current
+      ) {
         return;
       }
-      if (!tokenData.client_secret) {
-        throw new Error("Realtime client secret was empty.");
-      }
-      realtimeModelRef.current = tokenData.model || "gpt-realtime-2.1-mini";
-      realtimeTranscriptionModelRef.current =
-        tokenData.transcription_model || "gpt-4o-mini-transcribe";
+      realtimeFailureRecordedRef.current = true;
+      recordRealtimeUsage("realtime_connection", {}, realtimeModelRef.current, {
+        usageGroupId: realtimeConnectionUsageIdRef.current,
+        success: false,
+        errorMessage: technicalMessage,
+      });
+      closeRealtimeSession({ phase: "failed", markInterrupted: true });
+      setVoiceError(userMessage);
+      setVoiceNotice("");
+    };
+
+    try {
       mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (generation !== realtimeGenerationRef.current) {
+        mediaStream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      resources.mediaStream = mediaStream;
       realtimeMediaStreamRef.current = mediaStream;
+      if (!resume) setRealtimeAudioInputEnabled(mediaStream, false);
       peer = new RTCPeerConnection();
+      resources.peer = peer;
       realtimePeerRef.current = peer;
 
-      const remoteAudio = document.createElement("audio");
+      remoteAudio = document.createElement("audio");
+      resources.audio = remoteAudio;
       remoteAudio.autoplay = true;
       remoteAudio.playsInline = true;
-      remoteAudio.onplaying = () => setSpeaking(true);
-      remoteAudio.onpause = () => setSpeaking(false);
+      remoteAudio.onplaying = () => {
+        if (generation === realtimeGenerationRef.current) setSpeaking(true);
+      };
+      remoteAudio.onpause = () => {
+        if (generation === realtimeGenerationRef.current) setSpeaking(false);
+      };
       realtimeRemoteAudioRef.current = remoteAudio;
       peer.ontrack = (event) => {
+        if (generation !== realtimeGenerationRef.current) return;
         remoteAudio.srcObject = event.streams[0];
       };
       mediaStream.getTracks().forEach((track) => peer.addTrack(track, mediaStream));
 
       channel = peer.createDataChannel("oai-events");
+      resources.channel = channel;
       realtimeDataChannelRef.current = channel;
       channel.onopen = () => {
-        setRealtimeConnecting(false);
-        setRealtimeConnected(true);
-        setListening(true);
-        setStreaming(true);
-        setVoiceNotice("준비됐어요. Tutor가 먼저 말을 걸 거예요.");
+        if (generation !== realtimeGenerationRef.current) return;
+        if (realtimeConnectTimerRef.current) {
+          window.clearTimeout(realtimeConnectTimerRef.current);
+          realtimeConnectTimerRef.current = null;
+        }
+        updateRealtimePhase("connected");
+        setListening(resume);
+        setStreaming(!resume);
+        setVoiceNotice(
+          resume
+            ? "다시 연결됐어요. 영어로 말하면 대화를 이어갈 수 있어요."
+            : "준비됐어요. Tutor가 먼저 말을 걸 거예요.",
+        );
         roleplayRequestInFlightRef.current = false;
-        sendRealtimeEvent({
-          type: "response.create",
-          response: {
-            output_modalities: ["audio"],
-            instructions:
-              "Start the role-play now: set the scene briefly, then greet the learner and ask your first question.",
-          },
-        });
+        armRealtimeMaxTimer(generation);
+        armRealtimeIdleTimer(generation);
+        if (resume) {
+          for (const historyEvent of buildRealtimeHistoryEvents(messagesRef.current)) {
+            channel.send(JSON.stringify(historyEvent));
+          }
+        } else if (realtimeOpeningGenerationRef.current !== generation) {
+          realtimeOpeningGenerationRef.current = generation;
+          channel.send(JSON.stringify(buildRealtimeOpeningEvent()));
+        }
       };
       channel.onmessage = (messageEvent) => {
+        if (generation !== realtimeGenerationRef.current) return;
         try {
-          handleRealtimeEvent(JSON.parse(messageEvent.data));
+          handleRealtimeEvent(JSON.parse(messageEvent.data), generation);
         } catch {
           // Ignore malformed transport messages.
         }
       };
       channel.onerror = () => {
-        recordRealtimeUsage("realtime_connection", {}, realtimeModelRef.current, {
-          usageGroupId: realtimeConnectionUsageIdRef.current,
-          success: false,
-          errorMessage: "Realtime data channel error",
-        });
-        setVoiceError("음성 대화가 잠시 끊겼어요. 다시 시작해주세요.");
+        failConnection(
+          "Realtime data channel error",
+          "음성 대화가 잠시 끊겼어요. 다시 연결해주세요.",
+        );
       };
       channel.onclose = () => {
-        setRealtimeConnected(false);
-        setListening(false);
-        setStreaming(false);
-        setSpeaking(false);
+        if (generation !== realtimeGenerationRef.current) return;
+        failConnection(
+          "Realtime data channel closed unexpectedly",
+          "음성 연결이 종료됐어요. 다시 연결해주세요.",
+        );
+      };
+      peer.onconnectionstatechange = () => {
+        if (generation !== realtimeGenerationRef.current) return;
+        if (peer.connectionState === "connected") {
+          if (realtimeDisconnectTimerRef.current) {
+            window.clearTimeout(realtimeDisconnectTimerRef.current);
+            realtimeDisconnectTimerRef.current = null;
+          }
+          return;
+        }
+        if (peer.connectionState === "failed") {
+          failConnection("Realtime peer connection failed", "음성 연결이 끊겼어요. 다시 연결해주세요.");
+          return;
+        }
+        if (peer.connectionState === "disconnected" && !realtimeDisconnectTimerRef.current) {
+          realtimeDisconnectTimerRef.current = window.setTimeout(() => {
+            realtimeDisconnectTimerRef.current = null;
+            if (
+              generation === realtimeGenerationRef.current &&
+              peer.connectionState === "disconnected"
+            ) {
+              failConnection(
+                "Realtime peer disconnected for 5 seconds",
+                "네트워크 연결이 끊겼어요. 다시 연결해주세요.",
+              );
+            }
+          }, REALTIME_DISCONNECT_GRACE_MS);
+        }
       };
 
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
-      const sdpResponse = await fetch("https://api.openai.com/v1/realtime/calls", {
-        method: "POST",
-        body: offer.sdp,
-        headers: {
-          Authorization: `Bearer ${tokenData.client_secret}`,
-          "Content-Type": "application/sdp",
-        },
+      const sessionData = await api.roleplayRealtimeSession({
+        ...cfg,
+        title,
+        sdp: offer.sdp,
+        signal: controller.signal,
       });
-      if (!sdpResponse.ok) {
-        const detail = await sdpResponse.text().catch(() => "");
-        throw new Error(detail || `Realtime SDP exchange failed: ${sdpResponse.status}`);
+      if (generation !== realtimeGenerationRef.current) return;
+      if (!sessionData.answer_sdp) {
+        throw new Error("Realtime SDP answer was empty.");
       }
+      realtimeModelRef.current = sessionData.model || realtimeModelRef.current;
+      realtimeTranscriptionModelRef.current =
+        sessionData.transcription_model || realtimeTranscriptionModelRef.current;
+      realtimeConnectTimerRef.current = window.setTimeout(() => {
+        realtimeConnectTimerRef.current = null;
+        if (
+          generation === realtimeGenerationRef.current &&
+          realtimePhaseRef.current === "connecting"
+        ) {
+          failConnection(
+            "Realtime data channel open timeout",
+            "음성 채널 연결 시간이 초과됐어요. 다시 연결해주세요.",
+          );
+        }
+      }, REALTIME_CONNECT_TIMEOUT_MS);
       await peer.setRemoteDescription({
         type: "answer",
-        sdp: await sdpResponse.text(),
+        sdp: sessionData.answer_sdp,
       });
     } catch (error) {
-      recordRealtimeUsage("realtime_connection", {}, realtimeModelRef.current, {
-        usageGroupId: realtimeConnectionUsageIdRef.current,
-        success: false,
-        errorMessage: error?.message || "Realtime connection failed",
-      });
-      closeRealtimeSession();
-      roleplayRequestInFlightRef.current = false;
-      startFallbackVoiceSession(
-        cfg,
-        title,
-        error?.name === "NotAllowedError" || error?.name === "PermissionDeniedError"
-          ? "마이크를 바로 연결하지 못했어요. 말하기 버튼을 누르거나 문장을 직접 입력해주세요."
-          : "연결 방식을 바꿔 음성 대화를 계속할게요.",
+      if (generation !== realtimeGenerationRef.current || error?.name === "AbortError") return;
+      const info = realtimeErrorInfo(error);
+      const permissionDenied =
+        error?.name === "NotAllowedError" || error?.name === "PermissionDeniedError";
+      const technicalMessage = [
+        info.code,
+        info.requestId ? `request_id=${info.requestId}` : "",
+        error?.name || "",
+      ].filter(Boolean).join(" ");
+      failConnection(
+        technicalMessage || "Realtime connection failed",
+        permissionDenied
+          ? "마이크 권한을 허용한 뒤 다시 연결해주세요."
+          : info.message,
       );
     }
   };
 
   // 카드/태그/자유주제 클릭 → 즉시 시작.
   // title: 진행 중 칩에 보여줄 상황 제목(카드 라벨 / 자유주제 텍스트 / #태그).
-  const start = ({ tag = null, situation = "", title = "" }) => {
+  const startImmediately = ({ tag = null, situation = "", title = "" }) => {
     if (startMutation.isPending || realtimeConnecting || roleplayRequestInFlightRef.current) return;
     cancelRoleplayRequests();
     if (isVoiceTab) {
       const cfg = { level, scenario: mode, tag, situation };
-      startRealtimeSession(cfg, title);
+      void startRealtimeSession(cfg, title, { resume: false });
       return;
     }
+    closeRealtimeSession({ phase: "idle", markInterrupted: true });
+    stopListening();
+    stopSpeaking();
+    setVoiceFallbackActive(false);
     roleplayRequestInFlightRef.current = true;
     const controller = new AbortController();
     const requestId = requestSeqRef.current + 1;
@@ -1056,10 +1301,21 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     setElapsedNow(Date.now());
     setSession(nextSession);
     sessionRef.current = nextSession;
-    setMessages([]);
+    updateMessages([]);
     setMsg("");
+    setSummary(null);
+    setPickedVocab(new Set());
+    setSavedCount(null);
     setFinishNoticeDismissed(false);
     startMutation.mutate({ cfg, requestId, signal: controller.signal });
+  };
+
+  const start = (params) => {
+    if (messagesRef.current.length || summary) {
+      setPendingConversationAction({ kind: "start", params });
+      return;
+    }
+    startImmediately(params);
   };
 
   const startFromAgent = (launch) => {
@@ -1095,7 +1351,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     const nextSession = { ...cfg, title: launch.title || launch.tag || launch.situation || "Buddy 추천" };
     setSession(nextSession);
     sessionRef.current = nextSession;
-    setMessages([]);
+    updateMessages([]);
     setMsg("");
     startMutation.mutate({ cfg, requestId, signal: controller.signal });
   };
@@ -1105,12 +1361,41 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
   }, [agentLaunch, user]);
 
   const changeLevel = (l) => {
-    setLevel(l);
+    if (messagesRef.current.length || summary) {
+      setPendingConversationAction({ kind: "level", value: l });
+      return;
+    }
     resetConversation();
+    setLevel(l);
   };
   const changeMode = (m) => {
-    setMode(m);
+    if (messagesRef.current.length || summary) {
+      setPendingConversationAction({ kind: "mode", value: m });
+      return;
+    }
     resetConversation();
+    setMode(m);
+  };
+
+  const requestResetConversation = () => {
+    if (messagesRef.current.length || summary) {
+      setPendingConversationAction({ kind: "reset" });
+      return;
+    }
+    resetConversation();
+  };
+
+  const confirmConversationAction = () => {
+    const action = pendingConversationAction;
+    setPendingConversationAction(null);
+    if (!action) return;
+    if (action.kind === "start") {
+      startImmediately(action.params);
+      return;
+    }
+    resetConversation();
+    if (action.kind === "level") setLevel(action.value);
+    if (action.kind === "mode") setMode(action.value);
   };
 
   // 토큰 보호: 일정 턴부터 마무리 권장, 더 길어지면 정리만 가능하게 막는다.
@@ -1352,7 +1637,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
   const startListening = async () => {
     if (!user || starting || reachedHardLimit) return;
     if (realtimeConnected || realtimeConnecting) {
-      closeRealtimeSession();
+      closeRealtimeSession({ phase: "paused", markInterrupted: true });
       setVoiceNotice("음성 대화를 잠시 멈췄어요. 언제든 다시 시작할 수 있어요.");
       return;
     }
@@ -1366,7 +1651,30 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
       return;
     }
     if (!session) return;
-    await startRealtimeSession(session, session.title || "");
+    await startRealtimeSession(session, session.title || "", {
+      resume: messagesRef.current.length > 0,
+    });
+  };
+
+  const retryRealtimeConnection = () => {
+    const lastStart = realtimeLastStartRef.current;
+    const activeSession = sessionRef.current || lastStart?.cfg;
+    if (!activeSession || realtimePhaseRef.current === "connecting") return;
+    void startRealtimeSession(activeSession, activeSession.title || lastStart?.title || "", {
+      resume: messagesRef.current.length > 0,
+    });
+  };
+
+  const continueWithFallbackVoice = () => {
+    const lastStart = realtimeLastStartRef.current;
+    const activeSession = sessionRef.current || lastStart?.cfg;
+    if (!activeSession) return;
+    startFallbackVoiceSession(
+      activeSession,
+      activeSession.title || lastStart?.title || "",
+      "대체 음성 모드를 준비하고 있어요.",
+      { resume: messagesRef.current.length > 0 },
+    );
   };
 
   const sendVoice = () => {
@@ -1404,7 +1712,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
     ) {
       return;
     }
-    closeRealtimeSession();
+    closeRealtimeSession({ phase: "idle" });
     summaryInFlightRef.current = true;
     summaryMutation.mutate();
   };
@@ -1463,9 +1771,9 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
   const elapsedLabel = sessionStartedAt
     ? formatElapsedTime(elapsedNow - sessionStartedAt)
     : "00:00";
-  const sessionBusy = starting || streaming || summarizing || realtimeConnected || listening;
+  const sessionBusy = starting || summarizing;
   const emptyScenarioDisabled =
-    !user || starting || (mode === "tag" && (tagLoading || usableTags.length === 0));
+    !user || starting || summarizing || (mode === "tag" && (tagLoading || usableTags.length === 0));
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[#f6f7f8] text-slate-950">
@@ -1527,7 +1835,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
                   onChange={(event) => {
                     if (event.target.value !== "voice") {
                       stopListening();
-                      closeRealtimeSession();
+                      closeRealtimeSession({ phase: "paused", markInterrupted: true });
                       setVoiceFallbackActive(false);
                     }
                     setSubTab(event.target.value);
@@ -1564,7 +1872,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
               type="button"
               variant="outline"
               size="sm"
-              onClick={resetConversation}
+              onClick={requestResetConversation}
               className="h-9 border-white/20 bg-white/10 px-3 text-white hover:bg-white/20 hover:text-white"
             >
               <RotateCcw className="h-4 w-4" />
@@ -1985,7 +2293,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
                       <Button
                         type="button"
                         variant="outline"
-                        onClick={resetConversation}
+                        onClick={requestResetConversation}
                         className="h-10 rounded-md"
                       >
                         <RotateCcw className="h-4 w-4" />
@@ -2007,6 +2315,27 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
                     )}
                     {voiceError && (
                       <p className="text-xs font-medium text-rose-600">{voiceError}</p>
+                    )}
+                    {realtimePhase === "failed" && (
+                      <div className="grid grid-cols-2 gap-2 rounded-md border border-rose-200 bg-rose-50 p-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={retryRealtimeConnection}
+                          disabled={starting}
+                        >
+                          다시 연결
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={continueWithFallbackVoice}
+                          disabled={starting}
+                        >
+                          대체 음성 모드
+                        </Button>
+                      </div>
                     )}
                   </div>
                 ) : (
@@ -2211,7 +2540,7 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
                         <Button
                           type="button"
                           variant="outline"
-                          onClick={resetConversation}
+                          onClick={requestResetConversation}
                           className="w-full rounded-md"
                         >
                           새 대화 시작
@@ -2238,6 +2567,33 @@ export default function RoleplayTab({ user, onRequireLogin, agentLaunch = null }
           </Card>
         </aside>
       </div>
+      <Dialog
+        open={Boolean(pendingConversationAction)}
+        onOpenChange={(open) => {
+          if (!open) setPendingConversationAction(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>새 대화를 시작할까요?</DialogTitle>
+            <DialogDescription>
+              현재 대화는 아직 정리되지 않았습니다. 새 대화를 시작하면 지금 기록과 코칭이 사라집니다.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPendingConversationAction(null)}
+            >
+              취소
+            </Button>
+            <Button type="button" onClick={confirmConversationAction}>
+              새 대화 시작
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

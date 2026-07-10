@@ -33,6 +33,7 @@ class RoleplaySaveWordsIn(BaseModel):
 
 
 class RoleplayRealtimeSessionIn(BaseModel):
+    sdp: str = Field(min_length=1, max_length=100_000)
     level: str = "intermediate"
     scenario: str = "general"
     tag: str | None = None

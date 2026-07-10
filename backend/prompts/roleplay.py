@@ -20,11 +20,56 @@ ROLEPLAY_LEVEL_GUIDES = {
     ),
 }
 
+REALTIME_LEVEL_GUIDES = {
+    "beginner": "Use simple words, short sentences, and speak clearly.",
+    "intermediate": "Use natural everyday English and one follow-up at a time.",
+    "advanced": "Use natural native-level English and nuanced follow-ups.",
+}
+REALTIME_TARGET_WORD_LIMIT = 6
+
 
 def roleplay_level_guide(level: str) -> str:
     """Return the instruction text for a roleplay difficulty level."""
     return ROLEPLAY_LEVEL_GUIDES.get(
         (level or "").lower(), ROLEPLAY_LEVEL_GUIDES["intermediate"]
+    )
+
+
+def realtime_roleplay_instructions(
+    level: str,
+    scenario: str,
+    tag: str | None,
+    situation: str,
+    words: list,
+) -> str:
+    """Build a compact Realtime-only prompt to reduce repeated input cost."""
+    scenario = (scenario or "general").lower()
+    situation = (situation or "").strip()
+    if scenario == "opic":
+        context = "Act as the other person in this OPIc role-play."
+        if situation:
+            context += f" Setup: {situation}"
+    elif scenario == "tag":
+        context = f"Chat as a friendly native friend about: {tag or 'everyday life'}."
+        target_words = [
+            str(word.get("word") or "").strip()
+            for word in (words or [])
+            if str(word.get("word") or "").strip()
+        ][:REALTIME_TARGET_WORD_LIMIT]
+        if target_words:
+            context += f" Create natural chances to use: {', '.join(target_words)}."
+    else:
+        context = f"Setup: {situation}" if situation else "Use a friendly everyday situation."
+
+    level_guide = REALTIME_LEVEL_GUIDES.get(
+        (level or "").lower(), REALTIME_LEVEL_GUIDES["intermediate"]
+    )
+    return (
+        "Role-play in English as the learner's counterpart.\n"
+        f"{context}\n"
+        f"{level_guide}\n"
+        "Start with the counterpart's first line now; never explain or ask about roles. "
+        "Use 1-2 short sentences and usually one question. Never speak coaching."
     )
 
 
