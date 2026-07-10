@@ -1,6 +1,16 @@
 // 백엔드 REST API 클라이언트.
 // dev 환경에서는 Vite 프록시가 /api·/auth를 백엔드로 넘긴다.
 
+export class ApiError extends Error {
+  constructor(message, { status, detail, body } = {}) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+    this.body = body;
+  }
+}
+
 async function jsonFetch(url, options = {}) {
   const res = await fetch(url, {
     credentials: "same-origin",
@@ -9,7 +19,18 @@ async function jsonFetch(url, options = {}) {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`${res.status} ${text}`);
+    let body = null;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      body = null;
+    }
+    const detail = body?.detail;
+    const message =
+      (detail && typeof detail === "object" ? detail.message : detail) ||
+      text ||
+      `요청에 실패했습니다 (${res.status})`;
+    throw new ApiError(message, { status: res.status, detail, body });
   }
   return res.json();
 }
@@ -342,7 +363,9 @@ export const api = {
   roleplayRealtimeSession: (opts = {}) =>
     jsonFetch("/api/roleplay/realtime/session", {
       method: "POST",
+      signal: opts.signal,
       body: JSON.stringify({
+        sdp: opts.sdp,
         level: opts.level ?? "intermediate",
         scenario: opts.scenario ?? "general",
         tag: opts.tag ?? null,

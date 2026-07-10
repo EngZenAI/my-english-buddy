@@ -326,6 +326,7 @@ export default function App() {
         <RoleplayTab
           key={roleplayInstanceKey}
           user={user}
+          isActive={tab === "roleplay"}
           onRequireLogin={() => startLogin({ path: VIEW_PATHS.home, tab: "roleplay" })}
           agentLaunch={roleplayLaunch}
         />
