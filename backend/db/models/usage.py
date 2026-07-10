@@ -22,9 +22,19 @@ class ApiUsageEvent(Base):
     input_tokens: Mapped[int | None] = mapped_column(Integer)
     output_tokens: Mapped[int | None] = mapped_column(Integer)
     total_tokens: Mapped[int | None] = mapped_column(Integer)
+    usage_group_id: Mapped[str | None] = mapped_column(Text)
     success: Mapped[bool | None] = mapped_column(Boolean, server_default=text("TRUE"))
     error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
 
 
 Index("ix_api_usage_events_user_created", ApiUsageEvent.user_id, ApiUsageEvent.created_at)
+Index(
+    "uq_api_usage_events_group_fragment",
+    ApiUsageEvent.user_id,
+    ApiUsageEvent.usage_group_id,
+    ApiUsageEvent.operation,
+    ApiUsageEvent.model,
+    unique=True,
+    postgresql_where=ApiUsageEvent.usage_group_id.is_not(None),
+)

@@ -4,7 +4,8 @@ from typing import Any
 
 USD_PER_MILLION = 1_000_000
 
-# IBM watsonx.ai pricing 기준: 2026-07-06.
+# IBM watsonx.ai pricing 기준: 2026-07-10.
+# OpenAI pricing 기준: 2026-07-10.
 TOKEN_COST_PROFILES = {
     "ibm/granite-4-h-small": {
         "input_per_million": 0.0636,
@@ -16,6 +17,26 @@ TOKEN_COST_PROFILES = {
     },
     "meta-llama/llama-3-3-70b-instruct": {
         "total_per_million": 0.7526,
+    },
+    "gpt-realtime-2.1-mini:text": {
+        "input_per_million": 0.60,
+        "output_per_million": 2.40,
+    },
+    "gpt-realtime-2.1-mini:text_cached": {
+        "input_per_million": 0.06,
+        "output_per_million": 0.0,
+    },
+    "gpt-realtime-2.1-mini:audio": {
+        "input_per_million": 10.00,
+        "output_per_million": 20.00,
+    },
+    "gpt-realtime-2.1-mini:audio_cached": {
+        "input_per_million": 0.30,
+        "output_per_million": 0.0,
+    },
+    "gpt-4o-mini-transcribe": {
+        "input_per_million": 1.25,
+        "output_per_million": 5.00,
     },
 }
 

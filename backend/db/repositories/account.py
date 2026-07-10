@@ -47,10 +47,12 @@ async def get_activity_summary(session: AsyncSession, user_id: str) -> dict:
 
     result = await session.execute(
         text(
-            """SELECT feature, operation, units AS count, created_at
+            """SELECT feature, operation, SUM(units)::int AS count,
+                      MAX(created_at) AS created_at
                FROM api_usage_events
                WHERE user_id = :user_id
-               ORDER BY created_at DESC, id DESC
+               GROUP BY feature, operation, COALESCE(usage_group_id, 'event:' || id::text)
+               ORDER BY created_at DESC
                LIMIT 10"""
         ),
         {"user_id": user_id},

@@ -19,6 +19,7 @@ class ApiUsageRecord:
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
+    usage_group_id: str | None = None
     success: bool = True
     error_message: str = ""
 

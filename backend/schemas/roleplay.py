@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class RoleplayStartIn(BaseModel):
@@ -32,5 +32,28 @@ class RoleplaySaveWordsIn(BaseModel):
     tag: str | None = None
 
 
-class RoleplayTtsIn(BaseModel):
-    text: str
+class RoleplayRealtimeSessionIn(BaseModel):
+    level: str = "intermediate"
+    scenario: str = "general"
+    tag: str | None = None
+    situation: str = ""
+    title: str = ""
+
+
+class RoleplayRealtimeCoachingIn(BaseModel):
+    history: list
+    user_message: str
+    assistant_reply: str
+    level: str = "intermediate"
+    scenario: str = "general"
+    tag: str | None = None
+    situation: str = ""
+
+
+class RoleplayRealtimeUsageIn(BaseModel):
+    usage_group_id: str | None = Field(default=None, max_length=200)
+    operation: str = "realtime"
+    model: str = ""
+    usage: dict = Field(default_factory=dict)
+    success: bool = True
+    error_message: str = ""

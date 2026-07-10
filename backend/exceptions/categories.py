@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import binascii
 import csv
 import json
 import smtplib
-import wave
 from zipfile import BadZipFile
 
 import httpx
@@ -92,15 +90,6 @@ GOOGLE_AVATAR_SYNC_ERRORS = (
     ValueError,
     KeyError,
     TypeError,
-)
-ROLEPLAY_TTS_ERRORS = (
-    requests.RequestException,
-    ValueError,
-    KeyError,
-    IndexError,
-    TypeError,
-    binascii.Error,
-    wave.Error,
 )
 ROLEPLAY_RUNTIME_ERRORS = (
     requests.RequestException,

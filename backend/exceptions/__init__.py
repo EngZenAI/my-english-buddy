@@ -19,7 +19,6 @@ from backend.exceptions.categories import (
     RECORD_MAPPING_ERRORS,
     ROLEPLAY_CONTEXT_ERRORS,
     ROLEPLAY_RUNTIME_ERRORS,
-    ROLEPLAY_TTS_ERRORS,
     SQLALCHEMY_ERRORS,
 )
 from backend.exceptions.handling import log_exception
@@ -44,7 +43,6 @@ __all__ = [
     "QUIZ_LLM_ERRORS",
     "ROLEPLAY_RUNTIME_ERRORS",
     "ROLEPLAY_CONTEXT_ERRORS",
-    "ROLEPLAY_TTS_ERRORS",
     "SQLALCHEMY_ERRORS",
     "RECORD_MAPPING_ERRORS",
     "log_exception",

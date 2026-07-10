@@ -339,29 +339,54 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ items, tag }),
     }),
-  roleplayTtsAudio: async (text, opts = {}) => {
-    const res = await fetch("/api/roleplay/tts", {
+  roleplayRealtimeSession: (opts = {}) =>
+    jsonFetch("/api/roleplay/realtime/session", {
       method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        text,
+        level: opts.level ?? "intermediate",
+        scenario: opts.scenario ?? "general",
+        tag: opts.tag ?? null,
+        situation: opts.situation ?? "",
+        title: opts.title ?? "",
       }),
-    });
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      throw new Error(`${res.status} ${detail}`);
-    }
-    const blob = await res.blob();
-    return {
-      blob,
-      cacheKey: res.headers.get("X-TTS-Cache-Key") || "",
-      source: res.headers.get("X-TTS-Source") || "generated",
-      model: res.headers.get("X-TTS-Model") || opts.model || "gemini-2.5-flash-preview-tts",
-      voice: res.headers.get("X-TTS-Voice") || opts.voice || "Kore",
-      mimeType: blob.type || res.headers.get("Content-Type") || "audio/wav",
-    };
-  },
+    }),
+  roleplayRealtimeCoaching: ({
+    history,
+    userMessage,
+    assistantReply,
+    level,
+    scenario,
+    tag,
+    situation,
+  }) =>
+    jsonFetch("/api/roleplay/realtime/coaching", {
+      method: "POST",
+      body: JSON.stringify({
+        history,
+        user_message: userMessage,
+        assistant_reply: assistantReply,
+        level: level ?? "intermediate",
+        scenario: scenario ?? "general",
+        tag: tag ?? null,
+        situation: situation ?? "",
+      }),
+    }),
+  roleplayRealtimeUsage: (
+    { usageGroupId, operation, model, usage, success = true, errorMessage = "" },
+    { keepalive = false } = {},
+  ) =>
+    jsonFetch("/api/roleplay/realtime/usage", {
+      method: "POST",
+      keepalive,
+      body: JSON.stringify({
+        usage_group_id: usageGroupId || null,
+        operation,
+        model,
+        usage,
+        success,
+        error_message: errorMessage,
+      }),
+    }),
   // 학습노트: 저장된 롤플레잉
   roleplaySessions: () => jsonFetch("/api/roleplay/sessions"),
   roleplayDeleteSession: (id) =>
